@@ -104,6 +104,13 @@ def do_build_yaml(ftype, ds_name, r, alpha, lr, num_iters, batch_size,
 
 def do_start(config_path, gpus):
     try:
+        if not config_path:
+            return "请先填写配置路径", ""
+        issues = launcher.preflight(config_path)
+        if issues:
+            note = "\n".join(f"- {i}" for i in issues)
+            if any(not i.startswith("警告") for i in issues):
+                return f"**预检未通过，未启动：**\n{note}", ""
         log = launcher.start_local(config_path, int(gpus))
         return f"已启动，日志: {log}", launcher.tail_log(log, 20)
     except Exception as exc:
@@ -252,7 +259,8 @@ def build_ui() -> gr.Blocks:
    都保留 checkpoint，在「试听」页用不同 step 逐一 A/B 对比
 3. 过拟合信号（立即回退到更早 checkpoint）：生成忽略输入文本、无论输什么都相似、
    生成停不下来（检查数据尾静音是否 >0.5s）
-4. 最终客观复核：用 Whisper 对生成音频转写，与输入文本算相似度（文本贴合度）""")
+4. 客观对比：`uv run python -m voxft.eval base <lora_dir> --lang th`（需 qc 组）——
+   批量合成→Whisper 转写→输出各 checkpoint 的平均文本贴合度排名""")
 
         with gr.Tab("试听"):
             with gr.Row():

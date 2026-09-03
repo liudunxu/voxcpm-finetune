@@ -23,6 +23,7 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语高质量语料的下�
 uv sync                              # 安装依赖
 uv run voxft-ui                      # 启动微调工作台（端口 6006）
 uv run python -m voxft.data.download --source fleurs_th --max-samples 100
+uv run python -m voxft.eval base checkpoints/<run>/latest --lang th   # 效果客观对比（需 --group qc）
 uv run pytest                        # 测试
 # 训练（在 GPU 机器上，由页面生成的命令）：
 cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetune.py --config_path <生成的yaml>

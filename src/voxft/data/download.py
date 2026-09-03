@@ -28,8 +28,103 @@ def _detect_cols(row: dict) -> tuple[str | None, str | None, str | None]:
     return audio, text, speaker
 
 
-def _download_hf(source: Source, dest: Path, max_samples: int | None,
-                 progress=None) -> int:
+_GATED_HINT = ("为受限（gated）数据集：请先在 "
+               "数据集页面同意条款，并在 .env 配置有效的 HF_TOKEN")
+
+
+def _check_gated(exc: Exception, repo: str) -> None:
+    msg = str(exc)
+    if "gated" in msg.lower() or "401" in msg or "403" in msg:
+        raise RuntimeError(f"{repo} {_GATED_HINT} "
+                           f"(https://huggingface.co/datasets/{repo})") from exc
+
+
+def _parquet_files(repo: str, config: str, split: str, token: str) -> list[str]:
+    """查询 HF parquet 导出分片（相对仓库根的文件名列表）。"""
+    import os
+    import requests
+
+    endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
+    params = {}
+    if config:
+        params["config"] = config
+    if split:
+        params["split"] = split
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    r = requests.get(f"{endpoint}/api/datasets/{repo}/parquet",
+                     params=params, headers=headers, timeout=30)
+    if r.status_code in (401, 403):
+        _check_gated(RuntimeError(str(r.status_code)), repo)
+    r.raise_for_status()
+    files: list[str] = []
+    for splits in r.json().values():
+        for fl in splits.values():
+            files.extend(fl)
+    return files
+
+
+def _write_record(f, audio_dir: Path, n: int, wav, sr: int, text: str,
+                  speaker: str | None) -> None:
+    path = audio_dir / f"{n:07d}.wav"
+    sf.write(path, wav, sr)
+    rec = {"audio": str(path), "text": text}
+    if speaker:
+        rec["speaker"] = speaker
+    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def _download_parquet(source: Source, files: list[str], dest: Path,
+                      max_samples: int | None, token: str, progress=None) -> int:
+    """逐分片下载（hf_hub_download 自带断点续传与缓存）并解析。"""
+    import io
+
+    import pandas as pd
+    import torchaudio
+    from huggingface_hub import hf_hub_download
+
+    audio_dir = dest / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    manifest = dest / "manifest.jsonl"
+    n = 0
+    with manifest.open("w", encoding="utf-8") as f:
+        for fi, fname in enumerate(files):
+            if max_samples is not None and n >= max_samples:
+                break
+            repo_file = fname.split("/resolve/")[-1]
+            if progress:
+                progress(f"{source.id}: 分片 {fi + 1}/{len(files)}")
+            local = hf_hub_download(repo_id=source.repo, filename=repo_file,
+                                    repo_type="dataset", token=token or None)
+            df = pd.read_parquet(local)
+            t_col = next((c for c in ("sentence", "text", "transcript") if c in df.columns), None)
+            s_col = next((c for c in ("client_id", "speaker_id", "speaker", "speaker_name")
+                          if c in df.columns), None)
+            if t_col is None or "audio" not in df.columns:
+                continue
+            for _, row in df.iterrows():
+                if max_samples is not None and n >= max_samples:
+                    break
+                text = str(row[t_col] or "").strip()
+                if not text:
+                    continue
+                a = row["audio"]
+                raw = a["bytes"] if isinstance(a, dict) else a
+                if raw is None:
+                    continue
+                try:
+                    wav, sr = torchaudio.load(io.BytesIO(raw))
+                except Exception:
+                    continue
+                _write_record(f, audio_dir, n, wav.mean(0).numpy(), sr, text,
+                              str(row[s_col]) if s_col else None)
+                n += 1
+                if progress and n % 200 == 0:
+                    progress(f"{source.id}: 已写入 {n} 条")
+    return n
+
+
+def _download_stream(source: Source, dest: Path, max_samples: int | None,
+                     progress=None) -> int:
     from datasets import load_dataset
 
     kwargs = {"split": source.split, "streaming": True}
@@ -41,13 +136,7 @@ def _download_hf(source: Source, dest: Path, max_samples: int | None,
     try:
         ds = load_dataset(source.repo, **kwargs)
     except Exception as exc:
-        msg = str(exc)
-        if "gated" in msg.lower() or "401" in msg or "403" in msg:
-            raise RuntimeError(
-                f"{source.repo} 为受限（gated）数据集：请先在 "
-                f"https://huggingface.co/datasets/{source.repo} 页面同意条款，"
-                f"并在 .env 配置有效的 HF_TOKEN"
-            ) from exc
+        _check_gated(exc, source.repo)
         raise
 
     audio_dir = dest / "audio"
@@ -63,16 +152,26 @@ def _download_hf(source: Source, dest: Path, max_samples: int | None,
                 continue
             a = row[a_col]
             array, sr = a.get("array"), a.get("sampling_rate") or 16000
-            path = audio_dir / f"{n:07d}.wav"
-            sf.write(path, array, sr)
-            rec = {"audio": str(path), "text": str(row[t_col]).strip()}
-            if s_col:
-                rec["speaker"] = str(row[s_col])
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            _write_record(f, audio_dir, n, array, sr, str(row[t_col]).strip(),
+                          str(row[s_col]) if s_col else None)
             n += 1
             if progress and n % 100 == 0:
                 progress(f"{source.id}: 已下载 {n} 条")
     return n
+
+
+def _download_hf(source: Source, dest: Path, max_samples: int | None,
+                 progress=None) -> int:
+    token = env("HF_TOKEN")
+    try:
+        files = _parquet_files(source.repo, source.config, source.split, token)
+    except Exception as exc:
+        _check_gated(exc, source.repo)
+        print(f"[{source.id}] parquet 索引不可用（{exc}），回退流式下载")
+        files = []
+    if files:
+        return _download_parquet(source, files, dest, max_samples, token, progress)
+    return _download_stream(source, dest, max_samples, progress)
 
 
 def _download_aishell3(source: Source, dest: Path, max_samples: int | None,

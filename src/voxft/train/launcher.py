@@ -24,14 +24,73 @@ def gpu_command(config_path: str | Path, gpus: int = 1,
     return cmd
 
 
+def preflight(config_path: str | Path) -> list[str]:
+    """训练前预检；返回问题列表（空 = 通过）。把报错提前到启动前。"""
+    import json
+    import yaml
+
+    issues: list[str] = []
+    cfg_path = Path(config_path)
+    if not cfg_path.exists():
+        return [f"配置文件不存在: {cfg_path}"]
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+
+    if not TRAIN_SCRIPT.exists():
+        issues.append(f"官方训练脚本不存在: {TRAIN_SCRIPT}（执行过 git submodule update --init？）")
+
+    for key, required in (("train_manifest", True), ("val_manifest", False)):
+        p = str(cfg.get(key, "") or "")
+        if not p:
+            if required:
+                issues.append(f"{key} 未配置")
+            continue
+        mp = Path(p)
+        if not mp.exists():
+            issues.append(f"{key} 不存在: {mp}")
+            continue
+        with mp.open(encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i >= 3:
+                    break
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    issues.append(f"{key} 第 {i + 1} 行不是合法 JSON")
+                    continue
+                if not Path(rec.get("audio", "")).exists():
+                    issues.append(f"{key} 第 {i + 1} 行音频不存在: {rec.get('audio')}")
+
+    pre = str(cfg.get("pretrained_path", "") or "")
+    if pre and not Path(pre).is_dir() and pre.count("/") != 1:
+        issues.append(f"pretrained_path 既非本地目录也非 HF 仓库 ID（owner/name）: {pre}")
+
+    save = Path(cfg.get("save_path", ""))
+    try:
+        save.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        issues.append(f"save_path 不可写: {save} ({exc})")
+
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            issues.append("警告：本机无 CUDA，训练请在 GPU 服务器执行（本机仅生成命令）")
+    except Exception:
+        pass
+    return issues
+
+
 _PROC: subprocess.Popen | None = None
 
 
 def start_local(config_path: str | Path, gpus: int = 1) -> Path:
-    """在本机（需有 GPU）以后台子进程启动训练，日志写入 <save_path 同级>/train.log。"""
+    """在本机（需有 GPU）以后台子进程启动训练，日志写入 run 目录下 train.log。"""
     global _PROC
     if _PROC is not None and _PROC.poll() is None:
         raise RuntimeError("已有训练任务在运行；先停止或等待其结束")
+    issues = preflight(config_path)
+    fatal = [i for i in issues if not i.startswith("警告")]
+    if fatal:
+        raise RuntimeError("预检未通过：\n" + "\n".join(issues))
     import yaml
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
     log_path = Path(cfg["save_path"]) / "train.log"
