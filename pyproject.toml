@@ -32,6 +32,13 @@ voxft-ui = "voxft.ui.app:main"
 requires = ["uv_build>=0.11.2,<0.12.0"]
 build-backend = "uv_build"
 
+[tool.uv]
+concurrent-downloads = 3
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
 [[tool.uv.index]]
 name = "pytorch-cu124"
 url = "https://download.pytorch.org/whl/cu124"
