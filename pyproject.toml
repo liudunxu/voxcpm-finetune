@@ -1,0 +1,46 @@
+[project]
+name = "voxft"
+version = "0.1.0"
+description = "VoxCPM 2 微调工作台：Tagalog/泰语高质量语料加工、LoRA/全量微调、wandb 监控、HF 同步"
+requires-python = "==3.11.*"
+dependencies = [
+    "gradio>=4.44",
+    "datasets>=3.0",
+    "huggingface_hub>=0.25",
+    "soundfile>=0.12",
+    "librosa>=0.10",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    "tbparse>=0.0.8",
+    "wandb>=0.18",
+    "safetensors>=0.4",
+    "torch>=2.5",
+    "torchaudio>=2.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "tensorboardx>=2.6.5",
+]
+qc = ["faster-whisper>=1.0"]
+
+[project.scripts]
+voxft-ui = "voxft.ui.app:main"
+
+[build-system]
+requires = ["uv_build>=0.11.2,<0.12.0"]
+build-backend = "uv_build"
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu124", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
+    { index = "pytorch-cu124", marker = "sys_platform == 'linux'" },
+]
