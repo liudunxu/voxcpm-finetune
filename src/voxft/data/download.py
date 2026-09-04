@@ -172,10 +172,23 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
             name = Path(repo_file).name
             if progress:
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 下载 {name}")
-            local = hf_hub_download(repo_id=source.repo, filename=repo_file,
-                                    revision=revision,
-                                    repo_type="dataset", token=token or None,
-                                    **({"tqdm_class": bar} if bar else {}))
+            dl_kwargs = dict(repo_id=source.repo, filename=repo_file,
+                             revision=revision,
+                             repo_type="dataset", token=token or None)
+            if bar:
+                dl_kwargs["tqdm_class"] = bar
+            for attempt in range(3):
+                try:
+                    local = hf_hub_download(**dl_kwargs)
+                    break
+                except Exception as exc:
+                    if attempt == 2:
+                        raise RuntimeError(f"{source.id}: 分片 {name} 下载失败"
+                                           f"（已重试 3 次）: {exc}") from exc
+                    if progress:
+                        progress(f"{source.id}: 分片 {name} 下载出错（{exc}），"
+                                 f"5 秒后重试 {attempt + 2}/3")
+                    time.sleep(5)
             if progress:
                 size_mb = Path(local).stat().st_size / 1024 / 1024
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 下载完成"
