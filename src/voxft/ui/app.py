@@ -114,7 +114,8 @@ def do_download(source_id, max_samples):
         return
 
     def fn(log):
-        sid = source_id.split(" — ")[0]
+        from ..data.registry import source_id_from_display
+        sid = source_id_from_display(source_id)
         log(f"开始下载 {sid}（max_samples={max_samples or '全量'}）")
         dest = download.download_source(sid,
                                         int(max_samples) if max_samples else None,

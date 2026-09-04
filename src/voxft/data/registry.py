@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+PREFERRED_TAG = "【首选】"
+
+
 @dataclass(frozen=True)
 class Source:
     id: str
@@ -62,8 +65,9 @@ class Source:
         return v
 
     def display(self) -> str:
-        tag = "【首选】" if self.preferred else ""
-        return f"{tag}{self.id} — {self.label} [{self.license}]"
+        """下拉框显示文本；反解回 id 一律走 source_id_from_display，别自己 split。"""
+        tag = f" {PREFERRED_TAG}" if self.preferred else ""
+        return f"{self.id}{tag} — {self.label} [{self.license}]"
 
     def separator(self) -> str:
         if self.sent_sep:
@@ -213,6 +217,13 @@ def row_passes(src: Source, get) -> bool:
             if op == "<=" and fv > float(val):
                 return False
     return True
+
+
+def source_id_from_display(label: str) -> str:
+    """把下拉框的显示文本反解成数据源 id；已是纯 id 时原样返回。"""
+    sid = (label or "").split(" — ")[0].replace(PREFERRED_TAG, "").strip()
+    get_source(sid)  # 解析不出就直接抛，别把脏字符串带到下载环节
+    return sid
 
 
 def preferred_sources() -> dict[tuple[str, str], Source]:

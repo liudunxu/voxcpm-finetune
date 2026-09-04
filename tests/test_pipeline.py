@@ -232,3 +232,14 @@ def test_yodas_th_session_from_utt_id():
     assert not row_passes(src, {"grade_avg": "A", "dnsmos_overall": 3.5}.get)
     assert not row_passes(src, {"grade_avg": "S+", "dnsmos_overall": 3.0}.get)
     assert row_passes(src, {"grade_avg": "S+", "dnsmos_overall": 3.4}.get)
+
+
+def test_display_label_round_trips_to_source_id():
+    """下拉框显示文本必须能反解回 id——加【首选】标记时踩过这个坑。"""
+    from voxft.data.registry import SOURCES, source_id_from_display
+    for src in SOURCES:
+        assert source_id_from_display(src.display()) == src.id
+        assert source_id_from_display(src.id) == src.id
+    import pytest
+    with pytest.raises(KeyError):
+        source_id_from_display("不存在的源 — 说明 [x]")
