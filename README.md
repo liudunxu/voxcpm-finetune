@@ -7,8 +7,15 @@
 ## 快速开始
 
 ```bash
+git clone --recurse-submodules <repo>   # 必须带 --recurse-submodules
 uv sync                # Mac 开发机（含 torch CPU/MPS 轮子）
 uv run voxft-ui        # 打开微调工作台：http://0.0.0.0:6006
+```
+
+已经克隆过但 `third_party/VoxCPM` 是空目录的（训练预检报"官方训练脚本不存在"），补一条：
+
+```bash
+git submodule update --init --recursive
 ```
 
 GPU 服务器（Linux）上同样 `uv sync`（自动解析 cu124 轮子）；大数据目录建议指到大盘：
