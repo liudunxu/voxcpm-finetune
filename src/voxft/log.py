@@ -96,6 +96,27 @@ class LogBar:
     def set_postfix(self, ordered_dict=None, refresh=True, **kwargs) -> None:
         pass
 
+    def set_postfix_str(self, s="", refresh=True) -> None:
+        pass
+
+    def set_transfer_postfix_str(self, s="", refresh=True) -> None:
+        pass
+
+    def update_transfer(self, n: int = 0) -> None:
+        pass
+
+    @property
+    def total(self):
+        return self._total
+
+    @total.setter
+    def total(self, value) -> None:
+        self._total = value or 0
+
+    @property
+    def format_dict(self) -> dict:
+        return {"rate": None}
+
     def refresh(self) -> None:
         pass
 
