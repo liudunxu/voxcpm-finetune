@@ -24,7 +24,11 @@ def _ensure_wandb(run_name: str):
 
 
 def sync_once(tb_dir: str | Path, run_name: str, state: dict) -> int:
-    """增量同步一次；返回本轮转发的标量条数。state 记录各 tag 已同步的最大 step。"""
+    """增量同步一次；返回本轮转发的标量条数。
+
+    state["_max_step"] 记录已上报的全局最大 step；wandb 要求 step 单调，
+    event 文件里验证指标可能晚于更晚的训练步落盘，早于它的直接丢弃。
+    """
     wandb = _ensure_wandb(run_name)
     if wandb is None:
         return 0
@@ -32,30 +36,40 @@ def sync_once(tb_dir: str | Path, run_name: str, state: dict) -> int:
 
     reader = SummaryReader(str(tb_dir))
     n = 0
+    max_step = state.get("_max_step", -1)
     try:
         scalars = reader.scalars
+        pending: dict[int, dict[str, float]] = {}
         for _, row in scalars.iterrows():
             tag, step, value = row["tag"], int(row["step"]), float(row["value"])
             if step <= state.get(tag, -1):
                 continue
             state[tag] = step
-            wandb.log({tag: value}, step=step)
-            n += 1
+            if step <= max_step:
+                continue  # 晚到的旧步数，wandb 会拒收
+            pending.setdefault(step, {})[tag] = value
+        for step in sorted(pending):
+            wandb.log(pending[step], step=step)
+            n += len(pending[step])
+            max_step = step
     except Exception:
         pass
+    state["_max_step"] = max_step
     try:
         tensors = reader.tensors
         for _, row in tensors.iterrows():
             tag, step = row["tag"], int(row["step"])
             key = f"audio:{tag}:{step}"
-            if state.get(key):
+            if state.get(key) or step <= max_step:
                 continue
             state[key] = True
             import numpy as np
             arr = np.asarray(row["value"], dtype=np.float32).reshape(-1)
             wandb.log({tag: wandb.Audio(arr, sample_rate=AUDIO_SR)}, step=step)
+            max_step = step
     except Exception:
         pass
+    state["_max_step"] = max_step
     return n
 
 
