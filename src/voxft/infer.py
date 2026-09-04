@@ -70,9 +70,9 @@ def switch_lora(lora_dir: str | None) -> str:
 def synthesize(text: str, base_path: str | None = None,
                lora_dir: str | None = None,
                ref_audio: str | None = None, ref_text: str | None = None,
-               cfg_value: float = 2.0, inference_timesteps: int = 10,
+               cfg_value: float = 2.0, inference_timesteps: int = 20,
                seed: int | None = None) -> tuple[str, float]:
-    """生成语音，返回 (wav 路径, 耗时秒)。默认参数对齐 OmniVoice 生产配置。"""
+    """生成语音，返回 (wav 路径, 耗时秒)。"""
     model = get_model(base_path, lora_dir)
     t0 = time.time()
     kwargs = {

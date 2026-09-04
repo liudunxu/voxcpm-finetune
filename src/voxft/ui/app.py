@@ -389,7 +389,7 @@ def build_ui() -> gr.Blocks:
                 a_ref_text = gr.Textbox("", label="参考音频转写（可选）")
             with gr.Row():
                 a_cfg = gr.Slider(1.0, 4.0, 2.0, step=0.1, label="cfg_value")
-                a_steps = gr.Slider(4, 32, 10, step=1, label="inference_timesteps")
+                a_steps = gr.Slider(4, 32, 20, step=1, label="inference_timesteps")
             a_btn = gr.Button("合成", variant="primary")
             a_out = gr.Audio(label="输出（48kHz）")
             a_info = gr.Markdown()

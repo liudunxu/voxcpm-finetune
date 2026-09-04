@@ -48,7 +48,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 其配音生产链路：基座模型 + 参考音频零样本克隆（不用 LoRA），强依赖 `reference_wav_path` 克隆与逐语言文本归一化。据此：
 - **微调方式首选 LoRA**：全量微调更易损害参考音频克隆泛化（生产核心能力）；r=32 说话人适配 / r=64 语言风格适配，`enable_dit: true` 必开
 - **数据必须保留克隆能力**：30–50% 样本带同说话人 `ref_audio`（本项目默认 0.4）；干净单人录音，杜绝多人/背景噪声样本
-- **试听/推理默认参数**（直接对齐生产）：`cfg_value=2.0`、`inference_timesteps=10`、`retry_badcase=True`（max_times=3、ratio_threshold=6.0）；音频坏例重试时降 CFG 至 1.2–1.6 并加步数
+- **试听/推理默认参数**：`cfg_value=2.0`、`inference_timesteps=20`（生产基线 10，本项目默认 20 换更高音质）、`retry_badcase=True`（max_times=3、ratio_threshold=6.0）；音频坏例重试时降 CFG 至 1.2–1.6 并加步数
 - 跨语言（中文→Tagalog/泰语）：目标语言数据为主 + 中文 10–20% 混入，防止中文音色能力退化
 
 ## Submodule 升级
