@@ -100,14 +100,15 @@ def synthesize(text: str, base_path: str | None = None,
 
 
 def list_lora_dirs() -> list[str]:
-    """列出 checkpoints 下所有 LoRA checkpoint 目录。"""
+    """列出 checkpoints 下所有 LoRA checkpoint 目录（按时间从新到旧）。"""
     from .lora.merge import is_lora_dir
-    out = []
+    dirs: list[Path] = []
     if CHECKPOINT_DIR.exists():
-        for d in sorted(CHECKPOINT_DIR.rglob("step_*")):
+        for d in CHECKPOINT_DIR.rglob("step_*"):
             if is_lora_dir(d):
-                out.append(str(d))
-        for d in sorted(CHECKPOINT_DIR.iterdir()):
+                dirs.append(d)
+        for d in CHECKPOINT_DIR.iterdir():
             if d.is_dir() and is_lora_dir(d / "latest"):
-                out.append(str(d / "latest"))
-    return out
+                dirs.append(d / "latest")
+    dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+    return [str(d) for d in dirs]

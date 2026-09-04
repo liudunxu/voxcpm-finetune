@@ -64,25 +64,28 @@ def _ds_choices_update():
 
 
 def _config_files() -> list[str]:
-    """configs/ 下已生成的训练配置（新的在前）。"""
+    """configs/ 下已生成的训练配置（按时间从新到旧）。"""
     from ..paths import CONFIG_DIR
     if not CONFIG_DIR.exists():
         return []
-    return sorted((str(p) for p in CONFIG_DIR.glob("*.yaml")), reverse=True)
+    files = sorted(CONFIG_DIR.glob("*.yaml"),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    return [str(p) for p in files]
 
 
 def _upload_choices() -> list[str]:
-    """可上传的本地目录：合并输出目录 + 各 LoRA run 的 latest。"""
+    """可上传的本地目录：合并输出目录 + 各 LoRA run 的 latest（按时间从新到旧）。"""
     from ..lora.merge import is_lora_dir
-    out = []
+    dirs: list = []
     merged = CHECKPOINT_DIR / "merged"
     if merged.exists():
-        out.append(str(merged))
+        dirs.append(merged)
     if CHECKPOINT_DIR.exists():
-        for d in sorted(CHECKPOINT_DIR.iterdir(), reverse=True):
+        for d in CHECKPOINT_DIR.iterdir():
             if d.is_dir() and is_lora_dir(d / "latest"):
-                out.append(str(d / "latest"))
-    return out
+                dirs.append(d / "latest")
+    dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+    return [str(d) for d in dirs]
 
 
 # ---------------- Tab 1: 数据集 ----------------
