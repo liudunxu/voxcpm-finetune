@@ -158,20 +158,27 @@ def do_start(config_path, gpus):
     tlog = get_log("train")
     try:
         if not config_path:
-            return "请先填写配置路径", ""
+            yield "请先填写配置路径", ""
+            return
         issues = launcher.preflight(config_path)
         if issues:
             for i in issues:
                 tlog(f"预检: {i}")
             note = "\n".join(f"- {i}" for i in issues)
             if any(not i.startswith("警告") for i in issues):
-                return f"**预检未通过，未启动：**\n{note}", ""
+                yield f"**预检未通过，未启动：**\n{note}", ""
+                return
         log = launcher.start_local(config_path, int(gpus))
+        msg = f"已启动，日志实时刷新（进程退出后自动停止）: {log}"
         tlog(f"训练已启动: {config_path}（gpus={gpus}），日志 {log}")
-        return f"已启动，日志: {log}", launcher.tail_log(log, 20)
+        # 训练进程加载模型/数据需要时间，日志会稍后才出现
+        while launcher.status()["running"]:
+            yield msg, launcher.tail_log(log, 20)
+            time.sleep(2)
+        yield msg, launcher.tail_log(log, 20)
     except Exception as exc:
         tlog(f"启动失败: {exc}")
-        return f"失败: {exc}", ""
+        yield f"失败: {exc}", ""
 
 
 def do_refresh_log(config_path):
