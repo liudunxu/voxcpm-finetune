@@ -39,10 +39,28 @@ echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
 ## 典型流程（中文 → 泰语/Tagalog）
 
 1. **数据集页**：选数据源（泰语首选 CMKL Porjai 700h；Tagalog 首选 FLEURS+CV22）→ 下载 → 加工（16k/裁尾静音/响度归一化/3-30s/可选 UTMOS·Whisper 质检）
-2. **混合**：目标语言 ~85% + 中文 ~15%（防灾难性遗忘）
+2. **混合**：目标语言为主 + 中文防遗忘（短剧泰语+Tagalog 场景见下方「数据策略」）
 3. **训练页**：生成配置（默认 LoRA，r=32/64）→ 本机启动或复制命令到 GPU 机；中断后用同一配置重启即自动从 `latest/` 断点续训
 4. **验证效果**：看 `loss/diff`、`val/loss` 曲线（wandb/TensorBoard）→ 听验证音频 → 试听页 A/B 对比各 checkpoint → 必要时 Whisper 回写核对文本贴合度；出现"忽略文本/停不下来"即回退更早 checkpoint
 5. **模型管理页**：merge LoRA 导出完整模型 → 上传 HuggingFace
+
+## 数据策略（短剧配音：泰语 + Tagalog）
+
+场景：短剧翻译配音，音色靠**参考音频零样本克隆**（对齐 OmniVoice 生产），LoRA 只做语言风格适配，不能伤害克隆能力。
+
+**数据源优先级**
+
+| 语种 | 首选 | 补充 |
+|---|---|---|
+| 泰语 | `cv22_th`（量大、有 `client_id`）+ `fleurs_th`（干净锚点） | `thai20k`、Porjai 700h（录音棚级，体积大先小样本试） |
+| Tagalog | `cv22_tl` + `fleurs_tl` | 其余候选见下 |
+
+**关键规则**
+- **无说话人列的数据源（FLEURS/thai20k/Porjai）：加工时 `ref_audio 比例` 必须设 0**——跨说话人乱配会教模型忽略参考音色，直接损害克隆；有 `client_id` 的 CV22 才用默认 0.4
+- CV22 噪音多：加工必开 **UTMOS（≥3.5）+ Whisper 转写校验**（语言选 th/tl），先在 HF 页面同意条款并配 `HF_TOKEN`
+- `tagalog_tts` / `filipino_emotion` 无文本列，暂不可直接用（需先 Whisper 转写）
+- 一个 LoRA 覆盖两语种：混合权重建议 **泰语 45% + Tagalog 45% + 中文 10%**（中文仅防灾难性遗忘，不需要中文输出可降到 5%）
+- **验收以克隆优先**：同一参考音频，基座 vs LoRA A/B 对比，音色还原度不降 + 目标语言发音更准才算通过；音色掉就减步数或降学习率
 
 ## 命令速查
 

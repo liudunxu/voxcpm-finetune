@@ -59,6 +59,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - **HF 生态**：`datasets` 锁定 `<4`（5.x 硬依赖 torchcodec，且其库与 cu124 torch 冲突）；`hf`/`huggingface-cli` 不读项目 `.env`，命令行需手动 `export`；`snapshot_download` 的进度条不传给单文件，进度监控用缓存目录大小轮询；xet 下载分两阶段（downloading→reconstructing），进度"回退"属正常
 - **训练默认**：`batch_size=2 + 梯度累积=8`（等效 16，官方示例）防 OOM；启动带 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`；`save/valid_interval=250`；训练结束自动只保留最新 5 次 LoRA 运行
 - **推理**：`load_denoiser=False`（去噪器依赖 modelscope，试听不需要）
+- **数据**：无说话人列的数据源（FLEURS 全系 / thai20k / Porjai）加工时 `ref_audio` 比例必须 0，跨说话人配对会损害克隆；场景化配比见 README「数据策略」
 
 ## Submodule 升级
 ```bash

@@ -21,17 +21,17 @@ SOURCES: list[Source] = [
     Source(
         "porjai_th", "th", "CMKL Porjai 标准泰语（700h，TTS 专用，主力语料）",
         "hf_dataset", "CMKL/Porjai-Thai-voice-dataset-central", "", "train",
-        "CC-BY-SA-4.0", "录音棚级干净语料；体积大，建议先小样本试跑",
+        "CC-BY-SA-4.0", "录音棚级干净语料；体积大，建议先小样本试跑；无说话人列，加工时 ref_audio 比例用 0",
     ),
     Source(
         "fleurs_th", "th", "FLEURS 泰语（~12h，干净朗读）",
         "hf_dataset", "google/fleurs", "th_th", "train",
-        "CC-BY-4.0", "高质锚点，也适合作验证集来源",
+        "CC-BY-4.0", "高质锚点，也适合作验证集来源；无说话人列，加工时 ref_audio 比例用 0",
     ),
     Source(
         "thai20k", "th", "hotdogs/thai-speech-20k（1-10 万条）",
         "hf_dataset", "hotdogs/thai-speech-20k", "", "train",
-        "CC-BY-4.0", "补充语料",
+        "CC-BY-4.0", "补充语料；仅 text/audio 列，无说话人，加工时 ref_audio 比例用 0",
     ),
     Source(
         "cv22_th", "th", "Common Voice 22 泰语（量大但噪，gated）",
@@ -42,7 +42,7 @@ SOURCES: list[Source] = [
     Source(
         "fleurs_tl", "tl", "FLEURS Tagalog（~12h，干净朗读）",
         "hf_dataset", "google/fleurs", "fil_ph", "train",
-        "CC-BY-4.0", "高质锚点",
+        "CC-BY-4.0", "高质锚点；无说话人列，加工时 ref_audio 比例用 0",
     ),
     Source(
         "cv22_tl", "tl", "Common Voice 22 Tagalog（量大，gated）",
@@ -52,12 +52,12 @@ SOURCES: list[Source] = [
     Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",
         "hf_dataset", "welyjesch/tagalog_tts", "", "train",
-        "未知", "候选，商用前先核实许可",
+        "未知", "仅 audio 列、无文本，暂不可直接用（需先 Whisper 转写）；商用前先核实许可",
     ),
     Source(
         "filipino_emotion", "tl", "filipino-emotion-tts（1-10 万条，情感语音）",
         "hf_dataset", "danielquillanroxas/filipino-emotion-tts", "", "train",
-        "未知", "候选，商用前先核实许可",
+        "未知", "仅 audio+情绪标签、无文本，暂不可直接用（需先 Whisper 转写）；商用前先核实许可",
     ),
     # ---- 中文（混合防遗忘，建议占比 10-20%） ----
     Source(
@@ -68,7 +68,7 @@ SOURCES: list[Source] = [
     Source(
         "fleurs_zh", "zh", "FLEURS 普通话（~10h，干净朗读）",
         "hf_dataset", "google/fleurs", "cmn_hans_cn", "train",
-        "CC-BY-4.0", "少量高质补充",
+        "CC-BY-4.0", "少量高质补充；无说话人列，加工时 ref_audio 比例用 0",
     ),
 ]
 
