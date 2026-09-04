@@ -223,7 +223,7 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
                      progress=None) -> int:
     from datasets import load_dataset
 
-    kwargs = {"split": source.split, "streaming": True}
+    kwargs = {"split": source.split, "streaming": True, "trust_remote_code": True}
     if source.config:
         kwargs["name"] = source.config
     token = env("HF_TOKEN")

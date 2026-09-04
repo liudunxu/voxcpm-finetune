@@ -42,7 +42,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - LoRA：lr=1e-4、`enable_dit: true`（音质关键）、r=32（说话人）/64（语言风格）；全量：lr=1e-5（LoRA 的 1/10）
 - 防过拟合忽略文本：`training_cfg_rate=0.1`（勿设 0）、`weight_decay=0.01`、1–3 epoch 即停
 - 推理侧 LoRA 配置必须与训练完全一致；`load_lora` 返回的 `skipped_keys` 应为空
-- Common Voice 22 为 gated 数据集：需先在 HF 页面同意条款再配 `HF_TOKEN`
+- Common Voice 22 官方已从 HF 撤架：数据源已切换到社区镜像 `fsicoli/common_voice_22_0`（非 gated，脚本式数据集，流式下载带 `trust_remote_code`）
 
 ## 来自 OmniVoice 生产实践的结论（/Users/dunxu.liu/workspace/others/OmniVoice）
 其配音生产链路：基座模型 + 参考音频零样本克隆（不用 LoRA），强依赖 `reference_wav_path` 克隆与逐语言文本归一化。据此：

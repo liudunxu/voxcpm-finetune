@@ -34,9 +34,9 @@ SOURCES: list[Source] = [
         "CC-BY-4.0", "补充语料；仅 text/audio 列，无说话人，加工时 ref_audio 比例用 0",
     ),
     Source(
-        "cv22_th", "th", "Common Voice 22 泰语（量大但噪，gated）",
-        "hf_dataset", "mozilla-foundation/common_voice_22_0", "th", "train",
-        "CC0", "需先在 HF 页面同意条款并配置 HF_TOKEN；务必走质检",
+        "cv22_th", "th", "Common Voice 22 泰语（量大但噪）",
+        "hf_dataset", "fsicoli/common_voice_22_0", "th", "train",
+        "CC0", "官方已撤架，此为社区镜像（无需同意条款）；有 client_id 可做同说话人配对；务必走质检",
     ),
     # ---- Tagalog ----
     Source(
@@ -45,9 +45,9 @@ SOURCES: list[Source] = [
         "CC-BY-4.0", "高质锚点；无说话人列，加工时 ref_audio 比例用 0",
     ),
     Source(
-        "cv22_tl", "tl", "Common Voice 22 Tagalog（量大，gated）",
-        "hf_dataset", "mozilla-foundation/common_voice_22_0", "tl", "train",
-        "CC0", "主力体量来源；需同意条款 + HF_TOKEN；务必走质检",
+        "cv22_tl", "tl", "Common Voice 22 Tagalog（量大）",
+        "hf_dataset", "fsicoli/common_voice_22_0", "tl", "train",
+        "CC0", "官方已撤架，此为社区镜像（无需同意条款）；主力体量来源；有 client_id；务必走质检",
     ),
     Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",

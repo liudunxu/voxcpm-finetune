@@ -32,7 +32,7 @@ echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
 ## 密钥
 
 复制 `.env.example` 为 `.env` 并填写：
-- `HF_TOKEN` — 下载 gated 数据集（Common Voice 22 需先在 [HF 页面](https://huggingface.co/datasets/mozilla-foundation/common_voice_22_0) 同意条款）与上传模型/数据集（默认仓库 `FrankLiuDundun/voxcpm-finetune-lora`）
+- `HF_TOKEN` — 下载受限数据集与上传模型/数据集（默认仓库 `FrankLiuDundun/voxcpm-finetune-lora`）。Common Voice 22 官方已撤架，现走社区镜像，无需同意条款
 - `WANDB_API_KEY` — 训练时自动把 TensorBoard 指标/验证音频桥接到 wandb
 - `VOXCPM_BASE_PATH` — 本地基座目录（不填默认从 `openbmb/VoxCPM2` 拉取）
 
@@ -79,7 +79,7 @@ uv run pytest
 | CMKL Porjai（泰 700h） | CC-BY-SA-4.0 |
 | FLEURS | CC-BY-4.0 |
 | hotdogs/thai-speech-20k | CC-BY-4.0 |
-| Common Voice 22 | CC0（gated，需同意条款） |
+| Common Voice 22（社区镜像 fsicoli） | CC0（官方已撤架，镜像无需条款） |
 | AISHELL-3 | Apache-2.0 |
 | welyjesch/tagalog_tts、filipino-emotion-tts | 未知，商用前核实 |
 | Speech-data/Filipino-Tagalog | CC-BY-NC-ND（非商用） |
