@@ -247,11 +247,43 @@ class MultiheadAttention(nn.Module):
 # ---------------- 评分器封装 ----------------
 
 _WEIGHTS_NAME = "utmos22_strong_step7459_v1.pt"
+_WEIGHTS_SIZE = 411_179_119
 _GITHUB_URL = ("https://github.com/tarepan/SpeechMOS/releases/download/"
                f"v1.0.0/{_WEIGHTS_NAME}")
+# GitHub 直连国内不稳，镜像兜底
+_MIRROR_URLS = [
+    _GITHUB_URL,
+    f"https://ghproxy.net/{_GITHUB_URL}",
+    f"https://gh-proxy.com/{_GITHUB_URL}",
+    f"https://ghfast.top/{_GITHUB_URL}",
+]
 _SCORER: "tuple[UTMOS22Strong, str] | None" = None
 _SCORER_TRIED = False
 _SCORER_ERR = ""
+
+
+def _download_weights(local) -> None:
+    """HF 仓库 → GitHub → 镜像依次尝试；校验文件大小防半截/错误页。"""
+    try:
+        from huggingface_hub import hf_hub_download
+        p = hf_hub_download("tarepan/SpeechMOS", _WEIGHTS_NAME)
+        local.write_bytes(open(p, "rb").read())
+        return
+    except Exception:
+        pass
+    import urllib.request
+    errs = []
+    for url in _MIRROR_URLS:
+        try:
+            tmp = local.with_suffix(".part")
+            urllib.request.urlretrieve(url, tmp)
+            if tmp.stat().st_size != _WEIGHTS_SIZE:
+                raise IOError(f"大小不符: {tmp.stat().st_size} != {_WEIGHTS_SIZE}")
+            tmp.rename(local)
+            return
+        except Exception as exc:
+            errs.append(f"{url}: {exc}")
+    raise RuntimeError("所有权重源均失败:\n" + "\n".join(errs))
 
 
 def get_scorer():
@@ -268,14 +300,7 @@ def get_scorer():
         for attempt in range(2):
             if not local.exists():
                 local.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    from huggingface_hub import hf_hub_download
-                    p = hf_hub_download("tarepan/SpeechMOS", _WEIGHTS_NAME)
-                    local.write_bytes(open(p, "rb").read())
-                except Exception:
-                    # HF 仓库不可达时回退 GitHub release
-                    import urllib.request
-                    urllib.request.urlretrieve(_GITHUB_URL, local)
+                _download_weights(local)
             try:
                 model.load_state_dict(torch.load(local, map_location="cpu",
                                                  weights_only=True))
