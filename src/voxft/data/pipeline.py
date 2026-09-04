@@ -116,10 +116,14 @@ def process_dataset(source_id: str, out_name: str | None = None,
         if progress:
             progress("加载 UTMOS 评分器（首次需下载权重 ~1.2GB，可能需几分钟）...")
         if get_scorer() is None:
-            raise RuntimeError(f"UTMOS 评分器不可用，无法质检: {last_error()}")
-        from ..qc.utmos import score_wav
-        if progress:
-            progress(f"UTMOS 质检已启用（阈值 {opts.utmos_min}）")
+            if progress:
+                progress(f"警告: UTMOS 评分器不可用（{last_error()}），"
+                         "跳过 UTMOS 质检，仅用其余质检项继续")
+            score_wav = None
+        else:
+            from ..qc.utmos import score_wav
+            if progress:
+                progress(f"UTMOS 质检已启用（阈值 {opts.utmos_min}）")
     else:
         score_wav = None
 

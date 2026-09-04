@@ -264,18 +264,26 @@ def get_scorer():
 
     try:
         local = MODEL_DIR / "utmos" / _WEIGHTS_NAME
-        if not local.exists():
-            local.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                from huggingface_hub import hf_hub_download
-                p = hf_hub_download("tarepan/SpeechMOS", _WEIGHTS_NAME)
-                local.write_bytes(open(p, "rb").read())
-            except Exception:
-                # HF 仓库不可达时回退 GitHub release
-                import urllib.request
-                urllib.request.urlretrieve(_GITHUB_URL, local)
         model = UTMOS22Strong()
-        model.load_state_dict(torch.load(local, map_location="cpu", weights_only=True))
+        for attempt in range(2):
+            if not local.exists():
+                local.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    from huggingface_hub import hf_hub_download
+                    p = hf_hub_download("tarepan/SpeechMOS", _WEIGHTS_NAME)
+                    local.write_bytes(open(p, "rb").read())
+                except Exception:
+                    # HF 仓库不可达时回退 GitHub release
+                    import urllib.request
+                    urllib.request.urlretrieve(_GITHUB_URL, local)
+            try:
+                model.load_state_dict(torch.load(local, map_location="cpu",
+                                                 weights_only=True))
+                break
+            except Exception:
+                local.unlink(missing_ok=True)  # 权重损坏（下载不完整），删除重试
+                if attempt == 1:
+                    raise RuntimeError(f"权重两次下载均损坏: {local}")
         device = env("VOXFT_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
         model.to(device).eval()
         _SCORER = (model, device)
