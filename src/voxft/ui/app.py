@@ -263,10 +263,10 @@ def do_merge(base, lora_dir, out):
         return
 
     def fn(log):
-        base = launcher.resolve_base_path(base or env("VOXCPM_BASE_PATH")
-                                          or "openbmb/VoxCPM2", progress=log)
-        log(f"开始合并: 基座={base} lora={lora_dir} → {out}")
-        p = merge_lora(base, lora_dir, out)
+        base_path = launcher.resolve_base_path(base or env("VOXCPM_BASE_PATH")
+                                               or "openbmb/VoxCPM2", progress=log)
+        log(f"开始合并: 基座={base_path} lora={lora_dir} → {out}")
+        p = merge_lora(base_path, lora_dir, out)
         log(f"合并完成 → {p}")
         return None
 
