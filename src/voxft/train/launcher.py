@@ -31,18 +31,51 @@ def resolve_base_path(path: str, progress=None) -> str:
     """
     if not path or Path(path).is_dir():
         return path
-    from functools import partial
+    import threading
 
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import HfApi, snapshot_download
+    from huggingface_hub.constants import HF_HUB_CACHE
 
-    from ..log import LogBar
+    from ..log import _fmt_size
     from ..paths import env
+    token = env("HF_TOKEN") or None
     if progress:
-        progress(f"基座模型本地不存在，开始下载 {path}（模型较大，请耐心等待）")
-    kwargs = {"token": env("HF_TOKEN") or None}
+        import os
+        progress(f"基座模型本地不存在，开始下载 {path}（模型较大，请耐心等待；"
+                 f"endpoint={os.environ.get('HF_ENDPOINT') or 'https://huggingface.co'}）")
+    total = 0
     if progress:
-        kwargs["tqdm_class"] = partial(LogBar, log=progress)
-    local = snapshot_download(path, **kwargs)
+        try:
+            info = HfApi(token=token).repo_info(path, files_metadata=True)
+            total = sum(s.size or 0 for s in info.siblings)
+        except Exception:
+            pass
+
+    cache_dir = HF_HUB_CACHE / f"models--{path.replace('/', '--')}"
+
+    def _dir_size(d: Path) -> int:
+        return sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) \
+            if d.exists() else 0
+
+    stop = threading.Event()
+
+    def watcher():
+        # tqdm_class 不会传给单文件下载，聚合条对超大文件无输出，直接轮询目录大小
+        while not stop.wait(5):
+            done = _dir_size(cache_dir)
+            if total:
+                progress(f"基座下载中: {_fmt_size(done)}/{_fmt_size(total)}"
+                         f" ({min(100, 100 * done / total):.0f}%)")
+            else:
+                progress(f"基座下载中: {_fmt_size(done)}")
+
+    t = threading.Thread(target=watcher, daemon=True) if progress else None
+    if t:
+        t.start()
+    try:
+        local = snapshot_download(path, token=token)
+    finally:
+        stop.set()
     if progress:
         progress(f"基座模型就绪 → {local}")
     return local
