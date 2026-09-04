@@ -25,12 +25,16 @@ class Source:
     speaker_cols: tuple[str, ...] = ()
     emotion_col: str = ""               # 情绪标签列 → 写入 manifest 的 emotion 字段
     session_col: str = ""               # 同一次录音的分组列 → 拼接只在组内进行
+    session_prefix_sep: str = ""        # 会话值取分隔符前的前缀（如 utt_id 的 YouTube video id）
     label_names: tuple[str, ...] = ()   # emotion_col 是 ClassLabel 整数时的取值表
 
     # ---- 行级过滤：(列, 操作, 值)，操作 in / not_in / >= / <= ----
     row_filters: tuple[tuple[str, str, object], ...] = ()
 
     # ---- 加工策略 ----
+    accept_langs: tuple[str, ...] = ()  # 允许的检测语种（留空=按 lang 推导）
+    role: str = "anchor"           # expressive 表现力主力 / anchor 发音·口语锚点 / antiforget 中文防遗忘
+    preferred: bool = False        # 该语种该角色下的首选源
     expressive: bool = False       # 情感/口语语料：去念稿感主力，参与控制前缀生成
     pseudo_speaker: bool = False   # 无说话人列但值得聚类出伪说话人，以启用 ref 配对
     sent_sep: str = ""             # 拼接时的句间分隔（留空按语种取默认）
@@ -40,6 +44,26 @@ class Source:
             if c in columns:
                 return c
         return None
+
+    def languages(self) -> tuple[str, ...]:
+        """Whisper 转写/质检时允许的语种。
+
+        Tagalog 默认放行 en：短剧台词是 Taglish，句内英文词多的样本 Whisper 常判成
+        en，只认 tl 会把最该保留的 code-switch 样本全部误杀。
+        """
+        if self.accept_langs:
+            return self.accept_langs
+        return ("tl", "en") if self.lang == "tl" else (self.lang,)
+
+    def session_of(self, value) -> str:
+        v = "" if value is None else str(value).strip()
+        if v and self.session_prefix_sep:
+            v = v.split(self.session_prefix_sep)[0]
+        return v
+
+    def display(self) -> str:
+        tag = "【首选】" if self.preferred else ""
+        return f"{tag}{self.id} — {self.label} [{self.license}]"
 
     def separator(self) -> str:
         if self.sent_sep:
@@ -51,7 +75,7 @@ class Source:
 SOURCES: list[Source] = [
     # ---- 泰语 ----
     Source(
-        "thai_ser", "th", "THAI-SER 泰语情感语音（2.8 万条/41h，200 名演员，表现力主力）",
+        "thai_ser", "th", "THAI-SER 泰语情感语音（2.8 万条/41h，200 名演员，5 情绪）",
         "hf_dataset", "airesearch/thai-ser", "", "train",
         "CC-BY-SA-4.0",
         "有 actor_id（可 ref 配对）与情绪标签；impro 为即兴对话，去念稿感最值钱。"
@@ -63,10 +87,24 @@ SOURCES: list[Source] = [
         emotion_col="majority_emo",
         session_col="session_id",
         row_filters=(("agreement", ">=", 0.7),),  # 标注一致性低的丢掉
-        expressive=True,
+        role="expressive", preferred=True, expressive=True,
     ),
     Source(
-        "porjai_th", "th", "CMKL Porjai 标准泰语（700h，TTS 专用，发音锚点）",
+        "yodas_th", "th", "YODAS2-Sidon 泰语 TTS 精选（14 万条/156h，YouTube 真实口语，4199 说话人）",
+        "hf_dataset", "Chalermdej/yodas2_sidon_th_tts", "", "train",
+        "CC-BY-3.0",
+        "口语锚点首选：来源是 YouTube 自然说话（不是朗读腔），已用 DNSMOS + 三路 ASR 交叉校验并分级。"
+        "有 speaker_id 可 ref 配对，许可商用友好。中位 3.5s 偏短，按同一视频（utt_id 前缀）"
+        "顺序拼到 ~8s 以还原连续语流；整包 26.6GB，试跑用 max_samples",
+        has_speaker=True, qc="none", concat_target=8.0,
+        text_cols=("text",), speaker_cols=("speaker_id",),
+        session_col="utt_id", session_prefix_sep="-",
+        row_filters=(("grade_avg", "in", ("S+", "S")),
+                     ("dnsmos_overall", ">=", 3.2)),
+        role="anchor", preferred=True,
+    ),
+    Source(
+        "porjai_th", "th", "CMKL Porjai 标准泰语（700h，TTS 专用，录音棚朗读）",
         "hf_dataset", "CMKL/Porjai-Thai-voice-dataset-central", "", "train",
         "CC-BY-SA-4.0", "录音棚级干净语料；体积大，建议先小样本试跑",
         has_speaker=False, qc="none",
@@ -91,13 +129,13 @@ SOURCES: list[Source] = [
     ),
     # ---- Tagalog ----
     Source(
-        "filipino_emotion", "tl", "filipino-emotion-tts（1.1 万条，6 情绪，表现力主力）",
+        "filipino_emotion", "tl", "filipino-emotion-tts（1.1 万条，6 情绪）",
         "hf_dataset", "danielquillanroxas/filipino-emotion-tts", "", "train",
         "未知", "中位 3.0s，带情绪标签；无文本列，加工自动转写；商用前先核实许可",
         has_speaker=False, qc="none", needs_transcribe=True,
         emotion_col="label",
         label_names=("angry", "fearful", "happy", "neutral", "sad", "surprised"),
-        expressive=True, pseudo_speaker=True,
+        role="expressive", preferred=True, expressive=True, pseudo_speaker=True,
     ),
     Source(
         "fleurs_tl", "tl", "FLEURS Tagalog（~12h，干净朗读，发音锚点）",
@@ -118,6 +156,15 @@ SOURCES: list[Source] = [
                      ("num_words", ">=", 4)),
     ),
     Source(
+        "filswitch", "tl", "FilSwitch（2.7K 条 Taglish 语料，句内中英混杂）",
+        "hf_dataset", "qwerttyuiiop/FilSwitch", "", "train",
+        "未声明", "中位 8.5s、2-32s，时长分布最贴 VoxCPM；新闻/社媒口播风格，"
+        "教的是句内英文词与数字怎么念（对应线上「RAW 被念成英文」类反馈），不是情绪。"
+        "不做语种过滤，否则英文占比高的样本会被 Whisper 判成 en 而误杀；商用前先核实许可",
+        has_speaker=False, qc="none", pseudo_speaker=True,
+        role="anchor", preferred=True,
+    ),
+    Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",
         "hf_dataset", "welyjesch/tagalog_tts", "", "train",
         "未知", "仅 audio 列，加工自动转写；商用前先核实许可",
@@ -127,14 +174,14 @@ SOURCES: list[Source] = [
     Source(
         "aishell3", "zh", "AISHELL-3（~440h 多说话人朗读，录音棚级）",
         "openslr", "https://www.openslr.org/resources/93/data_aishell3.tgz", "", "",
-        "Apache-2.0", "约 20GB，下载耗时；中文混合首选（有说话人，可 ref 配对）",
-        has_speaker=True, qc="none",
+        "Apache-2.0", "约 20GB，下载耗时；有说话人列可 ref 配对，中文防遗忘首选",
+        has_speaker=True, qc="none", role="antiforget", preferred=True,
     ),
     Source(
         "fleurs_zh", "zh", "FLEURS 普通话（~10h，干净朗读）",
         "hf_dataset", "google/fleurs", "cmn_hans_cn", "train",
         "CC-BY-4.0", "少量高质补充",
-        has_speaker=False, qc="none", pseudo_speaker=True,
+        has_speaker=False, qc="none", pseudo_speaker=True, role="antiforget",
     ),
 ]
 
@@ -166,3 +213,8 @@ def row_passes(src: Source, get) -> bool:
             if op == "<=" and fv > float(val):
                 return False
     return True
+
+
+def preferred_sources() -> dict[tuple[str, str], Source]:
+    """每个 (语种, 角色) 下的首选源，用于页面标注与混合建议。"""
+    return {(s.lang, s.role): s for s in SOURCES if s.preferred}

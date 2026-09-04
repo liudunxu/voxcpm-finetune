@@ -193,3 +193,42 @@ def test_thai_ser_column_mapping():
     assert src.separator() == " "                  # 泰语不加句点
     assert not row_passes(src, {"agreement": 0.4}.get)
     assert row_passes(src, {"agreement": 0.9}.get)
+
+
+def test_taglish_languages_accept_english():
+    """Tagalog 源必须放行 en：只认 tl 会把句内英文多的 code-switch 样本全部误杀。"""
+    assert set(get_source("filipino_emotion").languages()) == {"tl", "en"}
+    assert set(get_source("filswitch").languages()) == {"tl", "en"}
+    assert get_source("thai_ser").languages() == ("th",)
+    assert get_source("aishell3").languages() == ("zh",)
+
+
+def test_filswitch_is_anchor_not_expressive():
+    """FilSwitch 是口播风格，教句内英文词怎么念，不该被当情感主力（控制前缀比例低）。"""
+    from voxft.data.pipeline import options_for
+    src = get_source("filswitch")
+    assert not src.expressive and src.pseudo_speaker
+    assert src.qc == "none"          # 开语种过滤会误杀 code-switch 样本
+    o = options_for("filswitch")
+    assert o.control_ratio == 0.25 and o.whisper_lang is None
+
+
+def test_preferred_source_per_lang_and_role():
+    """每个 (语种, 角色) 槽位有且只有一个首选，页面与混合建议都依赖它。"""
+    from voxft.data.registry import SOURCES, preferred_sources
+    pref = preferred_sources()
+    assert set(pref) == {("th", "expressive"), ("th", "anchor"),
+                         ("tl", "expressive"), ("tl", "anchor"),
+                         ("zh", "antiforget")}
+    slots = [(s.lang, s.role) for s in SOURCES if s.preferred]
+    assert len(slots) == len(set(slots)), "同一槽位出现多个首选"
+
+
+def test_yodas_th_session_from_utt_id():
+    """YODAS 的会话是 utt_id 里的 YouTube video id；拼接必须只在同一视频内做。"""
+    src = get_source("yodas_th")
+    assert src.session_of("LxhKGbH7YP0-00233-00065479-00065723") == "LxhKGbH7YP0"
+    assert src.concat_target == 8.0 and src.has_speaker
+    assert not row_passes(src, {"grade_avg": "A", "dnsmos_overall": 3.5}.get)
+    assert not row_passes(src, {"grade_avg": "S+", "dnsmos_overall": 3.0}.get)
+    assert row_passes(src, {"grade_avg": "S+", "dnsmos_overall": 3.4}.get)

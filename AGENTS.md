@@ -64,6 +64,9 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - **训练默认**：`batch_size=2 + 梯度累积=8`（等效 16，官方示例）防 OOM；启动带 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`；`save/valid_interval=250`；训练结束自动只保留最新 5 次 LoRA 运行
 - **`max_grad_norm=1.0`、`num_workers=8`**：官方 v2 配置就是这两个值（早先本文写的"官方默认 0 = 不裁剪"是错的，已改）。情感语料动态大，不裁剪更容易出梯度尖峰
 - **推理**：`load_denoiser=False`（去噪器依赖 modelscope，试听不需要）
+- **数据源首选**（`registry.preferred_sources()`，页面下拉带【首选】）：泰语表现力 `thai_ser` / 泰语口语锚点 `yodas_th`；Tagalog 表现力 `filipino_emotion` / Taglish 锚点 `filswitch`；中文防遗忘 `aishell3`。**锚点不要用朗读语料**（FLEURS/CV22/Porjai）当主力，朗读腔本身就在加重念稿感
+- **Tagalog 系不能只认 tl 语种**：短剧台词是 Taglish，句内英文多的样本 Whisper 会判成 en，只认 tl 会把最该保留的 code-switch 样本全部误杀。`Source.languages()` 对 tl 默认放行 `("tl","en")`
+- **`yodas_th` 的会话是 utt_id 里的 YouTube video id**（`session_prefix_sep="-"` 取前缀），拼接只在同一视频内按顺序做，等于还原原始连续语流；它中位 3.5s 偏短，靠 `concat_target=8.0` 补上
 - **数据**：跨说话人乱配 ref 会损害克隆。无说话人列的源（FLEURS 全系 / 情感语料 / thai20k）现在走 **MFCC 伪说话人聚类**（`pipeline.cluster_pseudo_speakers`，丢 c0 + 语料级均值归一）再配对；聚类日志里簇数接近样本数就说明阈值偏高，调低 `pseudo_speaker_threshold`。Porjai 仍为 0。场景化配比见 README「数据策略」
 - **`filipino_speech` 是坑**：22 万条里中位时长 0.63s、`num_words` 中位数 1，且 `speech_type=machine` 占 12.6 万。把孤立单词等间隔粘成长样本会直接训出"报菜名"式念稿声。registry 已自动过滤 `machine` 与 `num_words<4`，拼接改为**同一次录音内 + 句末补标点 + 停顿 0.15–0.5s 抖动**，目标长度 6s
 - **`thai_ser` 没有名为 `audio` 的列**（四路麦 `mic_clip/mic_con/mic_middle/mic_zoom`），必须靠 registry 的 `audio_cols` 映射，否则整个源在下载阶段被静默跳过；`mic_zoom` 是网络录音，不用

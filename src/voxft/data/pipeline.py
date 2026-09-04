@@ -29,6 +29,7 @@ class Options:
     val_max: int = 200               # val 上限，防说话人少的源切出巨大验证集
     utmos_min: float | None = None       # 如 3.5；None = 不做 UTMOS 过滤
     whisper_lang: str | None = None      # "th"/"tl"/"zh"；None = 不做转写校验
+    accept_langs: tuple[str, ...] = ()   # 允许的检测语种（留空=只认 whisper_lang）
     whisper_min_sim: float = 0.55
     concat_target: float | None = None   # 短句语料：同会话拼接到约该秒数
     sent_sep: str = ". "                 # 拼接时的句间分隔（泰语传 " "）
@@ -330,7 +331,7 @@ def _read_manifest(manifest: Path) -> list[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def _transcribe_manifest(rows: list[dict], lang: str,
+def _transcribe_manifest(rows: list[dict], lang: str, accept: tuple[str, ...] = (),
                          progress=None) -> tuple[list[dict], int]:
     """给无文本的条目批量 Whisper 转写；语种不符或空转写直接丢弃。
 
@@ -359,7 +360,8 @@ def _transcribe_manifest(rows: list[dict], lang: str,
             bad += 1
             continue
         det = getattr(info, "language", "")
-        if not text or (det and det.split("-")[0] != lang):
+        ok = accept or (lang,)
+        if not text or (det and det.split("-")[0] not in ok):
             bad += 1
             continue
         out.append({**row, "text": text})
@@ -458,6 +460,7 @@ def options_for(source_id: str, **overrides) -> Options:
         concat_target=src.concat_target or None,
         sent_sep=src.separator(),
         pseudo_speaker=src.pseudo_speaker,
+        accept_langs=src.languages(),
         control_ratio=0.5 if src.expressive else 0.25,
     )
     for k, v in overrides.items():
@@ -502,7 +505,7 @@ def process_dataset(source_id: str, out_name: str | None = None,
         n_missing = sum(1 for r in rows if not r.get("text"))
         if progress:
             progress(f"{source_id}: {n_missing} 条缺文本，自动 Whisper 转写 + 语种过滤（{lang}）")
-        rows, n_bad = _transcribe_manifest(rows, lang, progress)
+        rows, n_bad = _transcribe_manifest(rows, lang, opts.accept_langs, progress)
         if not truncated:
             _write_jsonl(rows, manifest)  # 写回，下次加工直接复用
         if progress:
@@ -553,7 +556,8 @@ def process_dataset(source_id: str, out_name: str | None = None,
                 sim, det = _whisper_similarity(whisper, clip.wav, TARGET_SR, clip.text)
             except Exception:
                 sim, det = 0.0, ""
-            if det and det.split("-")[0] != opts.whisper_lang:
+            ok = opts.accept_langs or (opts.whisper_lang,)
+            if det and det.split("-")[0] not in ok:
                 stats["drop_lang"] += 1
                 continue
             if sim < opts.whisper_min_sim:

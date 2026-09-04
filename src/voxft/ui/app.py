@@ -347,7 +347,10 @@ def _ckpt_choices() -> list[str]:
 
 
 def build_ui() -> gr.Blocks:
-    source_choices = [f"{s.id} — {s.label} [{s.license}]" for s in SOURCES]
+    _role_order = {"expressive": 0, "anchor": 1, "antiforget": 2}
+    _sorted_sources = sorted(
+        SOURCES, key=lambda s: (s.lang, _role_order.get(s.role, 9), not s.preferred))
+    source_choices = [s.display() for s in _sorted_sources]
 
     with gr.Blocks(title="VoxCPM 微调工作台") as demo:
         gr.Markdown("## VoxCPM 2 微调工作台（端口 6006）")
@@ -376,7 +379,7 @@ def build_ui() -> gr.Blocks:
                         "伪说话人聚类 → 按说话人响度对齐 → 控制前缀 → ref_audio 配对 → 切分；"
                         "各项按数据源自动配置，日志里可见）")
             with gr.Row():
-                p_src = gr.Dropdown([s.id for s in SOURCES], label="原始数据源")
+                p_src = gr.Dropdown([s.id for s in _sorted_sources], label="原始数据源")
                 p_min = gr.Number(3.0, label="最短时长(s)")
                 p_max = gr.Number(30.0, label="最长时长(s)")
                 p_val = gr.Slider(0, 0.2, 0.02, step=0.01, label="val 比例")
@@ -387,6 +390,10 @@ def build_ui() -> gr.Blocks:
                 p_btn = gr.Button("开始加工", variant="primary")
             p_out = gr.Textbox(label="加工日志（实时）", lines=10, interactive=False)
 
+            gr.Markdown(
+                "首选源：泰语表现力 `thai_ser` / 泰语口语锚点 `yodas_th`；"
+                "Tagalog 表现力 `filipino_emotion` / Taglish 锚点 `filswitch`；"
+                "中文防遗忘 `aishell3`。表现力语料占目标语言的 30-50%。")
             gr.Markdown("---\n**跨语言混合**（目标语言为主 + 中文 10-20% 防遗忘；"
                         "小语料重复上限 3×，超出会自动缩水并记在 mix.json）")
             with gr.Row():

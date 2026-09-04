@@ -269,7 +269,7 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                 _write_record(f, audio_dir, n, wav.mean(0).numpy(), sr, text,
                               str(row[s_col]) if s_col else None,
                               _emotion(source, row[e_col]) if e_col else "",
-                              _clean_text(row[g_col]) if g_col else "")
+                              source.session_of(row[g_col]) if g_col else "")
                 n += 1
                 if progress and n % 200 == 0:
                     progress(f"{source.id}: 已写入 {n} 条")
@@ -321,7 +321,7 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
                           str(row[s_col]) if s_col else None,
                           _emotion(source, row.get(source.emotion_col))
                           if source.emotion_col else "",
-                          _clean_text(row.get(source.session_col))
+                          source.session_of(row.get(source.session_col))
                           if source.session_col else "")
             n += 1
             if progress and n % 100 == 0:

@@ -54,14 +54,19 @@ echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
 - **朗读语料**（FLEURS / CV22 / Porjai）：教发音准、吐字清，是"锚点"。但它们本身是念稿风格，**占比过高会加重念稿感**。
 - **情感/口语语料**（`thai_ser` / `filipino_emotion`）：教语速起伏、停顿、情绪、语气——**这才是去念稿感的主力**，应占目标语言混合的 30–50%。
 
-**数据源优先级**
+**数据源优先级**（页面下拉里带【首选】标记）
 
-| 语种 | 表现力主力（去念稿） | 发音锚点 |
-|---|---|---|
-| 泰语 | **`thai_ser`**（airesearch/thai-ser，2.8 万条/41h，200 名演员，5 情绪，有 `actor_id`；`turn_type=impro` 是即兴对话，最值钱） | `cv22_th` + `fleurs_th`；Porjai（录音棚，先小样本） |
-| Tagalog | `filipino_emotion`（1.1 万条、6 情绪、中位 3.0s、无文本→自动转写） | `fleurs_tl`；`filipino_speech`（见下方警告，只当补充） |
+| 语种 | 表现力主力（去念稿） | 发音/口语锚点 | 其余可选 |
+|---|---|---|---|
+| 泰语 | **`thai_ser`** 首选 — airesearch/thai-ser，2.8 万条/41h，200 名演员、5 情绪、有 `actor_id`；`turn_type=impro` 是即兴对话，最值钱。CC-BY-SA-4.0 | **`yodas_th`** 首选 — Chalermdej/yodas2_sidon_th_tts，14 万条/156h **YouTube 真实口语**（不是朗读腔），4199 说话人，DNSMOS + 三路 ASR 交叉校验分级，**CC-BY-3.0 商用友好** | `cv22_th`、`fleurs_th`、`porjai_th`（都是朗读腔，配比别高） |
+| Tagalog | **`filipino_emotion`** 首选 — 1.1 万条、6 情绪、中位 3.0s，无文本→自动转写 | **`filswitch`** 首选 — 2.7K 条 Taglish，句内中英混杂，中位 8.5s（时长分布最贴 VoxCPM），教的是「RAW 该怎么念」 | `fleurs_tl`；`filipino_speech`（见下方警告） |
+| 中文 | — | — | **`aishell3`** 首选（防遗忘，有说话人可 ref 配对）、`fleurs_zh` |
 
-**⚠️ `filipino_speech` 不要当主力**：22 万条里中位时长 0.63s、`num_words` 中位数为 1（几乎全是**孤立单词**录音），`speech_type=machine` 占 12.6 万条。把孤立词等间隔粘成长样本，训出来就是"报菜名"式匀速无起伏的念稿声。registry 已自动过滤 `machine` 与 `num_words<4`，剩余部分按 `source_file` 同一次录音拼到 ~6s（句末补标点、停顿 0.15–0.5s 抖动）。
+> 泰语两个首选是互补的，不是二选一：`thai_ser` 是**演员表演的情绪**，唯一能喂控制前缀（有情绪标签）；`yodas_th` 是**真人日常语流**，替掉 FLEURS/CV22 那类朗读锚点。锚点用朗读语料本身就在加重念稿感。
+
+**扫过但没选的**（记录一下，别重复调研）
+- Tagalog：`SilencioNetwork/tagalog-filipino-speech` —— 100% 自由说话、人工校验转写、**带词级时间戳**（能在真实停顿处切分），质量是全场最好的，但只有 90 条/2 小时且 **CC-BY-NC-4.0 禁商用**，只能做实验对照；`RidheshBhati/filipino-tts-10k-final` 是圣经/文学朗读，对念稿感是负作用；`Nexdata` 1100h 全双工对话只在 HF 放了无转写的 sample，要付费；YODAS2 的 230 个语种目录里**没有 tl/fil**，这块公开数据是真空。
+- 泰语：`Saltywan/Thai-Duplex-Bench`（双工对话，但 viewer 关闭、是 bench 不是训练集）、`Nexdata` 211h 全双工（付费）、`thai_elderly_speech`（老年语音，属选角问题不是微调问题）、`dubbing-ai/vaja-thai`（需授权）。
 
 **去念稿感三杠杆**（微调只是其一，需并行）
 1. **情感语料 + 控制前缀微调**：把模型韵律先验往"有起伏"推，并让它在目标语言下听得懂中英文情绪指令。
@@ -95,6 +100,8 @@ uv run pytest
 | 数据源 | 许可 |
 |---|---|
 | THAI-SER（泰语情感 41h） | CC-BY-SA-4.0（SA 有传染性，商用前确认权重分发口径） |
+| YODAS2-Sidon 泰语 TTS 精选（156h） | CC-BY-3.0（署名即可，商用友好） |
+| qwerttyuiiop/FilSwitch（Taglish） | 未声明，商用前核实 |
 | CMKL Porjai（泰 700h） | CC-BY-SA-4.0 |
 | FLEURS | CC-BY-4.0 |
 | hotdogs/thai-speech-20k | CC-BY-4.0 |
