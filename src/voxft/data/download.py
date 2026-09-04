@@ -78,8 +78,13 @@ def _parquet_files(repo: str, config: str, split: str,
                 entries = _tree(endpoint, repo, sub, token)
             except Exception:
                 continue
-            files.extend((e["path"], "refs/convert/parquet")
-                         for e in entries if e["path"].endswith(".parquet"))
+            for e in entries:
+                if not e["path"].endswith(".parquet"):
+                    continue
+                # tree API 返回的 path 相对所查目录，需补全目录前缀
+                p = e["path"] if (not sub or e["path"].startswith(sub + "/")) \
+                    else f"{sub}/{e['path']}"
+                files.append((p, "refs/convert/parquet"))
         if files:
             return files
     except Exception as exc:
