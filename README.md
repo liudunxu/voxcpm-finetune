@@ -55,9 +55,10 @@ echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
 | 泰语 | `cv22_th`（量大、有 `client_id`）+ `fleurs_th`（干净锚点） | `thai20k`、Porjai 700h（录音棚级，体积大先小样本试） |
 | Tagalog | `filipino_speech`（27 万条、MIT、有 `speaker_id`）+ `fleurs_tl` | CV22 无 Tagalog；`RidheshBhati/filipino-tts-10k-final`（1 万条，无说话人） |
 
-**关键规则**
-- **无说话人列的数据源（FLEURS 全系/thai20k/Porjai）：加工时 `ref_audio 比例` 必须设 0**——跨说话人乱配会教模型忽略参考音色，直接损害克隆；有说话人列的（`filipino_speech`、CV22 泰语镜像）才用默认 0.4
-- CV22 泰语镜像噪音多：加工必开 **UTMOS（≥3.5）+ Whisper 转写校验**（语言选 th）
+**关键规则**（加工页已**自动配置**，无需手选）
+- 有说话人列的源（`filipino_speech`、CV22 泰语镜像）：自动 `ref_audio=0.4` 同说话人配对；无说话人列的源（FLEURS 全系/thai20k/Porjai）：自动 `ref_audio=0`——跨说话人乱配会教模型忽略参考音色，直接损害克隆
+- 质检按数据源干净程度自动分档：录音棚/干净朗读（FLEURS、Porjai、AISHELL-3）不质检；质量未知（thai20k）自动开 UTMOS≥3.5；众包（CV22 泰、filipino_speech）自动 UTMOS+Whisper 转写校验
+- 全量质检需要 `uv sync --group qc`（faster-whisper）
 - `tagalog_tts` / `filipino_emotion` 无文本列，暂不可直接用（需先 Whisper 转写）
 - 一个 LoRA 覆盖两语种：混合权重建议 **泰语 45% + Tagalog 45% + 中文 10%**（中文仅防灾难性遗忘，不需要中文输出可降到 5%）
 - **验收以克隆优先**：同一参考音频，基座 vs LoRA A/B 对比，音色还原度不降 + 目标语言发音更准才算通过；音色掉就减步数或降学习率

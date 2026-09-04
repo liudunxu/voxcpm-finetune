@@ -14,6 +14,8 @@ class Source:
     split: str = "train"
     license: str = ""
     note: str = ""
+    has_speaker: bool = False   # 有说话人列 → 加工自动按 0.4 配对，否则 0
+    qc: str = "none"            # none / utmos / full(UTMOS+Whisper)，按数据源干净程度预设
 
 
 SOURCES: list[Source] = [
@@ -21,54 +23,64 @@ SOURCES: list[Source] = [
     Source(
         "porjai_th", "th", "CMKL Porjai 标准泰语（700h，TTS 专用，主力语料）",
         "hf_dataset", "CMKL/Porjai-Thai-voice-dataset-central", "", "train",
-        "CC-BY-SA-4.0", "录音棚级干净语料；体积大，建议先小样本试跑；无说话人列，加工时 ref_audio 比例用 0",
+        "CC-BY-SA-4.0", "录音棚级干净语料；体积大，建议先小样本试跑",
+        has_speaker=False, qc="none",
     ),
     Source(
         "fleurs_th", "th", "FLEURS 泰语（~12h，干净朗读）",
         "hf_dataset", "google/fleurs", "th_th", "train",
-        "CC-BY-4.0", "高质锚点，也适合作验证集来源；无说话人列，加工时 ref_audio 比例用 0",
+        "CC-BY-4.0", "高质锚点，也适合作验证集来源",
+        has_speaker=False, qc="none",
     ),
     Source(
         "thai20k", "th", "hotdogs/thai-speech-20k（1-10 万条）",
         "hf_dataset", "hotdogs/thai-speech-20k", "", "train",
-        "CC-BY-4.0", "补充语料；仅 text/audio 列，无说话人，加工时 ref_audio 比例用 0",
+        "CC-BY-4.0", "补充语料；质量未知，自动开 UTMOS 质检",
+        has_speaker=False, qc="utmos",
     ),
     Source(
         "cv22_th", "th", "Common Voice 22 泰语（量大但噪）",
         "hf_dataset", "fsicoli/common_voice_22_0", "th", "train",
-        "CC0", "官方已撤架，此为社区镜像（无需同意条款）；有 client_id 可做同说话人配对；务必走质检",
+        "CC0", "官方已撤架，此为社区镜像（无需同意条款）；众包噪音大，自动全量质检",
+        has_speaker=True, qc="full",
     ),
     # ---- Tagalog ----
     Source(
         "fleurs_tl", "tl", "FLEURS Tagalog（~12h，干净朗读）",
         "hf_dataset", "google/fleurs", "fil_ph", "train",
-        "CC-BY-4.0", "高质锚点；无说话人列，加工时 ref_audio 比例用 0",
+        "CC-BY-4.0", "高质锚点",
+        has_speaker=False, qc="none",
     ),
     Source(
         "filipino_speech", "tl", "filipinospeechcorpus（~27 万条，Tagalog 主力）",
         "hf_dataset", "sapinsapin/filipinospeechcorpus", "", "train",
-        "MIT", "有 speaker_id 可正确配对（ref_audio 用默认 0.4）；体量大，建议限量下载",
+        "MIT", "有 speaker_id；众包质量参差，自动全量质检；体量大建议限量下载",
+        has_speaker=True, qc="full",
     ),
     Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",
         "hf_dataset", "welyjesch/tagalog_tts", "", "train",
         "未知", "仅 audio 列、无文本，暂不可直接用（需先 Whisper 转写）；商用前先核实许可",
+        has_speaker=False, qc="full",
     ),
     Source(
         "filipino_emotion", "tl", "filipino-emotion-tts（1-10 万条，情感语音）",
         "hf_dataset", "danielquillanroxas/filipino-emotion-tts", "", "train",
         "未知", "仅 audio+情绪标签、无文本，暂不可直接用（需先 Whisper 转写）；商用前先核实许可",
+        has_speaker=False, qc="full",
     ),
     # ---- 中文（混合防遗忘，建议占比 10-20%） ----
     Source(
         "aishell3", "zh", "AISHELL-3（~440h 多说话人朗读，录音棚级）",
         "openslr", "https://www.openslr.org/resources/93/data_aishell3.tgz", "", "",
         "Apache-2.0", "约 20GB，下载耗时；中文混合首选",
+        has_speaker=True, qc="none",
     ),
     Source(
         "fleurs_zh", "zh", "FLEURS 普通话（~10h，干净朗读）",
         "hf_dataset", "google/fleurs", "cmn_hans_cn", "train",
-        "CC-BY-4.0", "少量高质补充；无说话人列，加工时 ref_audio 比例用 0",
+        "CC-BY-4.0", "少量高质补充",
+        has_speaker=False, qc="none",
     ),
 ]
 

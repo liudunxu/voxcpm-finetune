@@ -107,21 +107,27 @@ def do_download(source_id, max_samples):
     yield from _stream("download", fn)
 
 
-def do_process(source_id, min_dur, max_dur, ref_ratio, val_ratio,
-               use_utmos, utmos_min, whisper_lang):
+def do_process(source_id, min_dur, max_dur, val_ratio):
     if not source_id:
-        yield "请先选择原始数据源", _dataset_table()
+        yield ("请先选择原始数据源", _dataset_table(), _ds_choices_update(),
+               _ds_choices_update(), _ds_choices_update())
         return
 
     def fn(log):
         import json
+        from ..data.registry import get_source
+        src = get_source(source_id)
+        ref = 0.4 if src.has_speaker else 0.0
+        utmos = 3.5 if src.qc in ("utmos", "full") else None
+        wlang = src.lang if src.qc == "full" else None
         opts = pipeline.Options(
             min_dur=float(min_dur), max_dur=float(max_dur),
-            ref_audio_ratio=float(ref_ratio), val_ratio=float(val_ratio),
-            utmos_min=float(utmos_min) if use_utmos else None,
-            whisper_lang=whisper_lang or None,
+            ref_audio_ratio=ref, val_ratio=float(val_ratio),
+            utmos_min=utmos, whisper_lang=wlang,
         )
-        log(f"开始加工 {source_id}，参数: {opts}")
+        log(f"开始加工 {source_id}，按数据源自动配置: "
+            f"ref_audio={ref}（{'有' if src.has_speaker else '无'}说话人列），"
+            f"UTMOS={utmos or '关'}，Whisper={wlang or '关'}")
         stats = pipeline.process_dataset(source_id, opts=opts, progress=log)
         log("加工完成，统计:\n" + json.dumps(stats, ensure_ascii=False, indent=2))
         return None
@@ -321,18 +327,12 @@ def build_ui() -> gr.Blocks:
             dl_out = gr.Textbox(label="下载日志（实时）", lines=10, interactive=False)
             dl_btn.click(do_download, [src, max_n], dl_out)
 
-            gr.Markdown("---\n**加工**（16k 重采样 → 裁尾静音 → 响度归一化 → 时长过滤 → 可选质检 → ref_audio 配对 → 切分）")
+            gr.Markdown("---\n**加工**（16k 重采样 → 裁尾静音 → 响度归一化 → 时长过滤 → 质检 → ref_audio 配对 → 切分；质检与配对比率按数据源自动配置，日志里可见）")
             with gr.Row():
                 p_src = gr.Dropdown([s.id for s in SOURCES], label="原始数据源")
                 p_min = gr.Number(3.0, label="最短时长(s)")
                 p_max = gr.Number(30.0, label="最长时长(s)")
-                p_ref = gr.Slider(0, 1, 0.4, step=0.05, label="ref_audio 比例")
                 p_val = gr.Slider(0, 0.2, 0.02, step=0.01, label="val 比例")
-            with gr.Row():
-                p_utmos_on = gr.Checkbox(False, label="UTMOS 质检")
-                p_utmos = gr.Slider(2.5, 4.5, 3.5, step=0.1, label="UTMOS 阈值")
-                p_wlang = gr.Dropdown(["", "th", "tl", "zh"], value="",
-                                      label="Whisper 转写校验语言（空=关闭，需 --group qc）")
                 p_btn = gr.Button("开始加工", variant="primary")
             p_out = gr.Textbox(label="加工日志（实时）", lines=10, interactive=False)
 
@@ -357,9 +357,7 @@ def build_ui() -> gr.Blocks:
                 ft_alpha = gr.Number(64, label="LoRA alpha（= r）")
                 ft_lr = gr.Number(1e-4, label="学习率（LoRA=1e-4 / 全量=1e-5）")
             ft_type.change(lambda t: 1e-4 if t == "lora" else 1e-5, ft_type, ft_lr)
-            p_btn.click(do_process,
-                        [p_src, p_min, p_max, p_ref, p_val,
-                         p_utmos_on, p_utmos, p_wlang],
+            p_btn.click(do_process, [p_src, p_min, p_max, p_val],
                         [p_out, ds_table, m_target, m_zh, ft_ds])
             m_btn.click(do_mix, [m_target, m_tw, m_zh, m_zw, m_name],
                         [m_out, ds_table, m_target, m_zh, ft_ds])
