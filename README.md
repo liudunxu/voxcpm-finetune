@@ -27,7 +27,19 @@ echo 'VOXFT_CKPT_ROOT=/root/autodl-tmp/voxft_ckpt' >> .env
 echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
 ```
 
-> 命令行手动下载时 `hf`/`huggingface-cli` 不读 `.env`，需先 `export HF_HOME=/root/autodl-tmp/hf_home`。
+> `hf`/`huggingface-cli` 不读项目 `.env`。**用项目自己的预取入口就不用手动 export**（它会自动套用镜像并关掉 xet）：
+>
+> ```bash
+> uv run python -m voxft.data.prefetch --whisper large-v3   # 转写用，约 3GB
+> uv run python -m voxft.data.prefetch --repo openbmb/VoxCPM2
+> ```
+>
+> 一定要用 `hf` 命令的话，三个变量都得带上（漏掉 `HF_HUB_DISABLE_XET` 会在 reconstruction 阶段报 401）：
+>
+> ```bash
+> HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 HF_HOME=/root/autodl-tmp/hf_home \
+>   uv run hf download Systran/faster-whisper-large-v3
+> ```
 
 ## 密钥
 
@@ -85,6 +97,7 @@ echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
 ## 命令速查
 
 ```bash
+uv run python -m voxft.data.prefetch --whisper large-v3     # 预取转写权重（走 .env 镜像设置）
 uv run python -m voxft.data.download --source fleurs_th --max-samples 100
 uv run python -m voxft.data.pipeline --source thai_ser --max-items 200 --control-ratio 0.5 --min-snr-db 12
 uv run python -m voxft.train.launcher configs/xxx.yaml 1   # 打印训练命令

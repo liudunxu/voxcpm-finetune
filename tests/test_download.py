@@ -36,3 +36,18 @@ def test_xet_disabled_only_on_mirror(monkeypatch):
     assert _run("https://hf-mirror.com") == "1"
     assert _run("https://huggingface.co") is None
     assert _run("https://hf-mirror.com", preset="0") == "0"   # 显式设置优先
+
+
+def test_prefetch_builds_whisper_repo_and_uses_env(monkeypatch):
+    """预取入口必须走 .env 的镜像设置，且能拼出 faster-whisper 仓库名。"""
+    from voxft.data import prefetch as pf
+
+    assert pf.WHISPER_REPO.format(size="large-v3") == "Systran/faster-whisper-large-v3"
+
+    seen = {}
+    monkeypatch.setattr(
+        "huggingface_hub.snapshot_download",
+        lambda **kw: seen.update(kw) or "/tmp/snap")
+    monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com")
+    assert pf.prefetch("Systran/faster-whisper-medium", progress=lambda m: None) == "/tmp/snap"
+    assert seen["repo_id"] == "Systran/faster-whisper-medium"
