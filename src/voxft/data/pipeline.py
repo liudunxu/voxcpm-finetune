@@ -62,12 +62,15 @@ def _whisper_model(lang: str):
     return WhisperModel("medium", device="auto", compute_type="auto")
 
 
-def _whisper_similarity(model, wav: np.ndarray, sr: int, lang: str,
-                        ref_text: str) -> float:
-    segs, _ = model.transcribe(wav, language=lang, vad_filter=True)
+def _whisper_similarity(model, wav: np.ndarray, sr: int,
+                        ref_text: str) -> tuple[float, str]:
+    """转写并与参考文本比相似度；返回 (相似度, 检测语种)。不指定语言以便检测混入语种。"""
+    import torch
+    batched = torch.cuda.is_available()  # GPU 批式转写约快 3-4 倍
+    segs, info = model.transcribe(wav, vad_filter=True, batched=batched)
     hyp = "".join(s.text for s in segs).lower().replace(" ", "")
     ref = ref_text.lower().replace(" ", "")
-    return SequenceMatcher(None, hyp, ref).ratio()
+    return SequenceMatcher(None, hyp, ref).ratio(), getattr(info, "language", "")
 
 
 def _read_manifest(manifest: Path) -> list[dict]:
@@ -170,7 +173,7 @@ def process_dataset(source_id: str, out_name: str | None = None,
         score_wav = None
 
     kept, stats = [], {"total": len(rows), "drop_decode": 0, "drop_duration": 0,
-                       "drop_whisper": 0, "drop_utmos": 0}
+                       "drop_lang": 0, "drop_whisper": 0, "drop_utmos": 0}
     samples = _decoded_clips(rows, stats)
     if opts.concat_target:
         if progress:
@@ -184,10 +187,12 @@ def process_dataset(source_id: str, out_name: str | None = None,
             continue
         if whisper is not None:
             try:
-                sim = _whisper_similarity(whisper, wav, TARGET_SR,
-                                          opts.whisper_lang, text)
+                sim, det = _whisper_similarity(whisper, wav, TARGET_SR, text)
             except Exception:
-                sim = 0.0
+                sim, det = 0.0, ""
+            if det and det.split("-")[0] != opts.whisper_lang:
+                stats["drop_lang"] += 1
+                continue
             if sim < opts.whisper_min_sim:
                 stats["drop_whisper"] += 1
                 continue

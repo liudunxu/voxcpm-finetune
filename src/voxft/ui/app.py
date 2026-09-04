@@ -286,6 +286,17 @@ def do_synthesize(text, base, lora_dir, ref_audio, ref_text, cfg, steps):
         return None, f"失败: {exc}"
 
 
+def do_ab(text, lora_dir, ref_audio, ref_text, cfg, steps):
+    if not lora_dir or lora_dir == "（无 LoRA）":
+        return None, None, "请先在上面选择要对比的 LoRA"
+    try:
+        (wb, sb), (wl, sl), status = infer.synthesize_ab(
+            text, None, lora_dir, ref_audio, ref_text, float(cfg), int(steps))
+        return wb, wl, f"基座 {sb}s ｜ LoRA {sl}s ｜ {status}（同一文本/参考音频/种子）"
+    except Exception as exc:
+        return None, None, f"失败: {exc}"
+
+
 # ---------------- Tab 4: 模型管理 ----------------
 
 def do_merge(base, lora_dir, out):
@@ -452,6 +463,16 @@ def build_ui() -> gr.Blocks:
                          a_cfg, a_steps], [a_out, a_info])
             tab_listen.select(lambda: gr.update(choices=_ckpt_choices()),
                               outputs=a_lora)
+
+            gr.Markdown("---\n**A/B 对比**（同一文本 + 同一参考音频，基座 vs 所选 LoRA，种子固定；验收克隆音色是否受损就用它）")
+            ab_btn = gr.Button("生成 A/B 对比", variant="primary")
+            with gr.Row():
+                ab_base_out = gr.Audio(label="基座")
+                ab_lora_out = gr.Audio(label="LoRA")
+            ab_info = gr.Markdown()
+            ab_btn.click(do_ab,
+                         [a_text, a_lora, a_ref, a_ref_text, a_cfg, a_steps],
+                         [ab_base_out, ab_lora_out, ab_info])
 
         with gr.Tab("模型管理") as tab_mgmt:
             gr.Markdown("**Merge LoRA** → 导出完整模型目录")

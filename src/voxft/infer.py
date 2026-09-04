@@ -51,6 +51,7 @@ def get_model(base_path: str | None = None, lora_dir: str | None = None):
 
 def switch_lora(lora_dir: str | None) -> str:
     """热切换当前模型的 LoRA；返回状态描述。"""
+    global _MODEL_KEY
     if _MODEL is None:
         return "模型尚未加载"
     try:
@@ -61,20 +62,19 @@ def switch_lora(lora_dir: str | None) -> str:
             skipped = getattr(ret, "skipped_keys", None) or (ret[0] if isinstance(ret, tuple) else None)
             if skipped:
                 return f"警告: skipped_keys 非空 {skipped}（推理侧配置需与训练一致）"
+            if _MODEL_KEY:
+                _MODEL_KEY = (_MODEL_KEY[0], lora_dir)
             return f"已加载 {lora_dir}"
+        if _MODEL_KEY:
+            _MODEL_KEY = (_MODEL_KEY[0], "")
         return "已卸载 LoRA（纯基座）"
     except Exception as exc:
         return f"切换失败: {exc}"
 
 
-def synthesize(text: str, base_path: str | None = None,
-               lora_dir: str | None = None,
-               ref_audio: str | None = None, ref_text: str | None = None,
-               cfg_value: float = 2.0, inference_timesteps: int = 20,
-               seed: int | None = None) -> tuple[str, float]:
-    """生成语音，返回 (wav 路径, 耗时秒)。"""
-    model = get_model(base_path, lora_dir)
-    t0 = time.time()
+def _gen_kwargs(text: str, ref_audio: str | None, ref_text: str | None,
+                cfg_value: float, inference_timesteps: int,
+                seed: int | None) -> dict:
     kwargs = {
         "text": text,
         "cfg_value": cfg_value,
@@ -90,13 +90,47 @@ def synthesize(text: str, base_path: str | None = None,
             kwargs["prompt_text"] = ref_text
     if seed is not None:
         kwargs["seed"] = seed
+    return kwargs
+
+
+def _run(model, kwargs: dict) -> tuple[str, float]:
+    t0 = time.time()
     wav = model.generate(**kwargs)
-    out = CHECKPOINT_DIR / "auditions" / f"audition_{int(time.time())}.wav"
+    out = CHECKPOINT_DIR / "auditions" / f"audition_{int(time.time() * 1000)}.wav"
     out.parent.mkdir(parents=True, exist_ok=True)
     import soundfile as sf
     sr = getattr(getattr(model, "tts_model", None), "sample_rate", None) or 48000
     sf.write(out, wav, sr)
     return str(out), round(time.time() - t0, 1)
+
+
+def synthesize(text: str, base_path: str | None = None,
+               lora_dir: str | None = None,
+               ref_audio: str | None = None, ref_text: str | None = None,
+               cfg_value: float = 2.0, inference_timesteps: int = 20,
+               seed: int | None = None) -> tuple[str, float]:
+    """生成语音，返回 (wav 路径, 耗时秒)。"""
+    model = get_model(base_path, lora_dir)
+    return _run(model, _gen_kwargs(text, ref_audio, ref_text,
+                                   cfg_value, inference_timesteps, seed))
+
+
+def synthesize_ab(text: str, base_path: str | None, lora_dir: str,
+                  ref_audio: str | None = None, ref_text: str | None = None,
+                  cfg_value: float = 2.0, inference_timesteps: int = 20,
+                  seed: int = 42):
+    """A/B 对比：同一模型热切换，分别用基座与 LoRA 合成同一文本。
+
+    返回 ((基座wav, 秒), (LoRA wav, 秒), 切换状态)。固定 seed 保证可比。
+    """
+    model = get_model(base_path, None)
+    kwargs = _gen_kwargs(text, ref_audio, ref_text,
+                         cfg_value, inference_timesteps, seed)
+    switch_lora(None)
+    r_base = _run(model, kwargs)
+    status = switch_lora(lora_dir)
+    r_lora = _run(model, kwargs)
+    return r_base, r_lora, status
 
 
 def list_lora_dirs() -> list[str]:
