@@ -25,6 +25,7 @@ class Options:
     utmos_min: float | None = None       # 如 3.5；None = 不做 UTMOS 过滤
     whisper_lang: str | None = None      # "th"/"tl"/"zh"；None = 不做转写校验
     whisper_min_sim: float = 0.55
+    concat_target: float | None = None   # 短句语料：同说话人拼接到约该秒数
     seed: int = 42
 
 
@@ -81,6 +82,47 @@ def _write_jsonl(records: list[dict], path: Path) -> None:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
+def _decoded_clips(rows: list[dict], stats: dict):
+    """逐条解码 → 16k → 裁静音 → 归一化，产出 (wav, text, speaker)。"""
+    for row in rows:
+        try:
+            wav, sr = load_wav_mono(row["audio"])
+        except Exception:
+            stats["drop_decode"] += 1
+            continue
+        if sr != TARGET_SR:
+            wav = librosa.resample(wav, orig_sr=sr, target_sr=TARGET_SR)
+        wav = peak_normalize(trim_silence(wav, TARGET_SR))
+        yield wav, str(row["text"]).strip(), row.get("speaker", "default")
+
+
+def _concatenated(clips, target: float, max_dur: float):
+    """同说话人短句拼接到约 target 秒（段间 0.3s 静音），单条音频内容不做任何修改。"""
+    gap = np.zeros(int(0.3 * TARGET_SR), dtype=np.float32)
+    acc: dict[str, list] = {}  # spk -> [wavs, texts, dur]
+    for wav, text, spk in clips:
+        dur = len(wav) / TARGET_SR
+        if dur >= target:  # 本身已够长，直接放行
+            yield wav, text, spk
+            continue
+        wavs, texts, total = acc.get(spk, ([], [], 0.0))
+        if wavs and total + dur > max_dur:  # 放不下了，先产出已积累的
+            yield np.concatenate(wavs), " ".join(texts), spk
+            wavs, texts, total = [], [], 0.0
+        if wavs:
+            wavs.append(gap)
+        wavs.append(wav)
+        texts.append(text)
+        total += dur
+        acc[spk] = [wavs, texts, total]
+        if total >= target:
+            yield np.concatenate(wavs), " ".join(texts), spk
+            acc.pop(spk)
+    for spk, (wavs, texts, total) in acc.items():  # 尾部：够最短时长才保留
+        if total >= 3.0:
+            yield np.concatenate(wavs), " ".join(texts), spk
+
+
 def process_dataset(source_id: str, out_name: str | None = None,
                     opts: Options | None = None, max_items: int | None = None,
                     progress=None) -> dict:
@@ -129,24 +171,21 @@ def process_dataset(source_id: str, out_name: str | None = None,
 
     kept, stats = [], {"total": len(rows), "drop_decode": 0, "drop_duration": 0,
                        "drop_whisper": 0, "drop_utmos": 0}
-    for i, row in enumerate(rows):
+    samples = _decoded_clips(rows, stats)
+    if opts.concat_target:
+        if progress:
+            progress(f"短句语料：同说话人拼接到约 {opts.concat_target}s（段间 0.3s 静音）")
+        samples = _concatenated(samples, opts.concat_target, opts.max_dur)
+    for i, (wav, text, spk) in enumerate(samples):
         if progress and i % 50 == 0:
-            progress(f"加工 {source_id}: {i}/{len(rows)}")
-        try:
-            wav, sr = load_wav_mono(row["audio"])
-        except Exception:
-            stats["drop_decode"] += 1
-            continue
-        if sr != TARGET_SR:
-            wav = librosa.resample(wav, orig_sr=sr, target_sr=TARGET_SR)
-        wav = trim_silence(wav, TARGET_SR)
+            progress(f"加工 {source_id}: 已产出 {i} 条样本")
         if not (opts.min_dur <= len(wav) / TARGET_SR <= opts.max_dur):
             stats["drop_duration"] += 1
             continue
         if whisper is not None:
             try:
                 sim = _whisper_similarity(whisper, wav, TARGET_SR,
-                                          opts.whisper_lang, row["text"])
+                                          opts.whisper_lang, text)
             except Exception:
                 sim = 0.0
             if sim < opts.whisper_min_sim:
@@ -157,12 +196,11 @@ def process_dataset(source_id: str, out_name: str | None = None,
             if mos is None or mos < opts.utmos_min:
                 stats["drop_utmos"] += 1
                 continue
-        wav = peak_normalize(wav)
         dst = audio_dir / f"{i:07d}.wav"
         sf.write(dst, wav, TARGET_SR)
         kept.append({
-            "audio": str(dst), "text": row["text"],
-            "speaker": row.get("speaker", "default"),
+            "audio": str(dst), "text": text,
+            "speaker": spk,
             "duration": round(len(wav) / TARGET_SR, 2),
         })
 

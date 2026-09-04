@@ -120,14 +120,16 @@ def do_process(source_id, min_dur, max_dur, val_ratio):
         ref = 0.4 if src.has_speaker else 0.0
         utmos = 3.5 if src.qc in ("utmos", "full") else None
         wlang = src.lang if src.qc == "full" else None
+        concat = 10.0 if src.short_clips else None
         opts = pipeline.Options(
             min_dur=float(min_dur), max_dur=float(max_dur),
             ref_audio_ratio=ref, val_ratio=float(val_ratio),
-            utmos_min=utmos, whisper_lang=wlang,
+            utmos_min=utmos, whisper_lang=wlang, concat_target=concat,
         )
         log(f"开始加工 {source_id}，按数据源自动配置: "
             f"ref_audio={ref}（{'有' if src.has_speaker else '无'}说话人列），"
-            f"UTMOS={utmos or '关'}，Whisper={wlang or '关'}")
+            f"UTMOS={utmos or '关'}，Whisper={wlang or '关'}，"
+            f"短句拼接={'~' + str(concat) + 's' if concat else '关'}")
         stats = pipeline.process_dataset(source_id, opts=opts, progress=log)
         log("加工完成，统计:\n" + json.dumps(stats, ensure_ascii=False, indent=2))
         return None

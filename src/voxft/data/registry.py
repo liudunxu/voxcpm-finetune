@@ -16,6 +16,7 @@ class Source:
     note: str = ""
     has_speaker: bool = False   # 有说话人列 → 加工自动按 0.4 配对，否则 0
     qc: str = "none"            # none / utmos / full(UTMOS+Whisper)，按数据源干净程度预设
+    short_clips: bool = False   # 单条普遍 <3s → 加工时自动同说话人拼接到 ~10s
 
 
 SOURCES: list[Source] = [
@@ -54,8 +55,8 @@ SOURCES: list[Source] = [
     Source(
         "filipino_speech", "tl", "filipinospeechcorpus（~27 万条，Tagalog 主力）",
         "hf_dataset", "sapinsapin/filipinospeechcorpus", "", "train",
-        "MIT", "有 speaker_id；众包质量参差，自动全量质检；体量大建议限量下载",
-        has_speaker=True, qc="full",
+        "MIT", "有 speaker_id；众包质量参差，自动全量质检；单条极短（中位 0.6s），自动拼接",
+        has_speaker=True, qc="full", short_clips=True,
     ),
     Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",
