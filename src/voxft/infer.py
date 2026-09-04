@@ -37,7 +37,7 @@ def get_model(base_path: str | None = None, lora_dir: str | None = None):
     if _MODEL is not None and _MODEL_KEY == key:
         return _MODEL
     VoxCPM = _import_voxcpm()
-    kwargs = {}
+    kwargs = {"load_denoiser": False}  # 去噪器依赖 modelscope，试听场景不需要
     if lora_dir:
         kwargs["lora_weights_path"] = lora_dir
     _MODEL = VoxCPM.from_pretrained(base, **kwargs)

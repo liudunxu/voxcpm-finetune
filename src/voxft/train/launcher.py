@@ -209,6 +209,24 @@ def list_runs() -> list[str]:
     return sorted(d.name for d in CHECKPOINT_DIR.iterdir() if d.is_dir())
 
 
+def cleanup_lora_runs(keep: int = 5) -> list[str]:
+    """只保留最近 keep 次 LoRA 运行，删除更早的；返回被删目录。
+
+    按 latest/ 的修改时间排序；全量微调目录（无 lora 配置）不受影响。
+    """
+    import shutil
+
+    from ..lora.merge import is_lora_dir
+    runs = [d for d in (CHECKPOINT_DIR.iterdir() if CHECKPOINT_DIR.exists() else [])
+            if d.is_dir() and is_lora_dir(d / "latest")]
+    runs.sort(key=lambda d: (d / "latest").stat().st_mtime, reverse=True)
+    removed = []
+    for d in runs[keep:]:
+        shutil.rmtree(d, ignore_errors=True)
+        removed.append(str(d))
+    return removed
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         print(gpu_command(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 1))

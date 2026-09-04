@@ -204,6 +204,10 @@ def do_start(config_path, gpus):
         while launcher.status()["running"]:
             yield msg, launcher.tail_log(log, 20)
             time.sleep(2)
+        removed = launcher.cleanup_lora_runs(keep=5)
+        if removed:
+            tlog(f"只保留最新 5 次 LoRA 运行，已清理: {', '.join(removed)}")
+            msg += f"\n\n已清理旧 LoRA 运行: {', '.join(removed)}"
         yield msg, launcher.tail_log(log, 20)
     except Exception as exc:
         tlog(f"启动失败: {exc}")
