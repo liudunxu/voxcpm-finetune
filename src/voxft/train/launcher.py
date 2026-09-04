@@ -43,14 +43,6 @@ def resolve_base_path(path: str, progress=None) -> str:
         import os
         progress(f"基座模型本地不存在，开始下载 {path}（模型较大，请耐心等待；"
                  f"endpoint={os.environ.get('HF_ENDPOINT') or 'https://huggingface.co'}）")
-    total = 0
-    if progress:
-        try:
-            info = HfApi(token=token).repo_info(path, files_metadata=True)
-            total = sum(s.size or 0 for s in info.siblings)
-        except Exception:
-            pass
-
     cache_dir = Path(HF_HUB_CACHE) / f"models--{path.replace('/', '--')}"
 
     def _dir_size(d: Path) -> int:
@@ -58,21 +50,33 @@ def resolve_base_path(path: str, progress=None) -> str:
             if d.exists() else 0
 
     stop = threading.Event()
+    total = 0
 
     def watcher():
         # tqdm_class 不会传给单文件下载，聚合条对超大文件无输出，直接轮询目录大小
         while not stop.wait(5):
-            done = _dir_size(cache_dir)
-            if total:
-                progress(f"基座下载中: {_fmt_size(done)}/{_fmt_size(total)}"
-                         f" ({min(100, 100 * done / total):.0f}%)")
-            else:
-                progress(f"基座下载中: {_fmt_size(done)}")
+            try:
+                done = _dir_size(cache_dir)
+                if total:
+                    progress(f"基座下载中: {_fmt_size(done)}/{_fmt_size(total)}"
+                             f" ({min(100, 100 * done / total):.0f}%)")
+                else:
+                    progress(f"基座下载中: {_fmt_size(done)}")
+            except Exception as exc:
+                progress(f"进度监控异常（不影响下载）: {exc}")
 
     t = threading.Thread(target=watcher, daemon=True) if progress else None
     if t:
+        progress(f"下载进度监控已启动（每 5 秒更新）")
         t.start()
     try:
+        if progress:
+            try:
+                info = HfApi(token=token).repo_info(path, files_metadata=True)
+                total = sum(s.size or 0 for s in info.siblings)
+                progress(f"基座总大小: {_fmt_size(total)}")
+            except Exception:
+                pass
         local = snapshot_download(path, token=token)
     finally:
         stop.set()
