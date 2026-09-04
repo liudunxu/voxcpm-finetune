@@ -262,8 +262,30 @@ _SCORER_TRIED = False
 _SCORER_ERR = ""
 
 
-def _download_weights(local) -> None:
-    """HF 仓库 → GitHub → 镜像依次尝试；校验文件大小防半截/错误页。"""
+def _pick_fastest(urls: list[str]) -> list[str]:
+    """小段试下载测速，按速度排序（失败的最后）。"""
+    import requests
+    scored = []
+    for url in urls:
+        try:
+            import time
+            t0 = time.monotonic()
+            r = requests.get(url, headers={"Range": "bytes=0-524287"},
+                             timeout=6, stream=True)
+            n = sum(len(c) for c in r.iter_content(65536))
+            dt = time.monotonic() - t0
+            r.close()
+            if n > 0 and r.status_code in (200, 206):
+                scored.append((n / dt if dt > 0 else 0, url))
+        except Exception:
+            pass
+    scored.sort(reverse=True)
+    fast = [u for _, u in scored]
+    return fast + [u for u in urls if u not in fast]
+
+
+def _download_weights(local, progress=None) -> None:
+    """HF 仓库 → 镜像测速择优 → 流式下载（带进度）；校验大小防半截文件。"""
     try:
         from huggingface_hub import hf_hub_download
         p = hf_hub_download("tarepan/SpeechMOS", _WEIGHTS_NAME)
@@ -271,12 +293,28 @@ def _download_weights(local) -> None:
         return
     except Exception:
         pass
-    import urllib.request
+    import requests
+    if progress:
+        progress("UTMOS 权重: 镜像测速中...")
+    urls = _pick_fastest(_MIRROR_URLS)
     errs = []
-    for url in _MIRROR_URLS:
+    for url in urls:
         try:
             tmp = local.with_suffix(".part")
-            urllib.request.urlretrieve(url, tmp)
+            with requests.get(url, stream=True, timeout=(10, 60)) as r:
+                r.raise_for_status()
+                done, last = 0, 0.0
+                import time
+                with tmp.open("wb") as f:
+                    for chunk in r.iter_content(1 << 20):
+                        f.write(chunk)
+                        done += len(chunk)
+                        now = time.monotonic()
+                        if progress and now - last >= 5:
+                            last = now
+                            progress(f"UTMOS 权重下载中: {done / 1048576:.0f}/"
+                                     f"{_WEIGHTS_SIZE / 1048576:.0f}MB "
+                                     f"({100 * done / _WEIGHTS_SIZE:.0f}%)")
             if tmp.stat().st_size != _WEIGHTS_SIZE:
                 raise IOError(f"大小不符: {tmp.stat().st_size} != {_WEIGHTS_SIZE}")
             tmp.rename(local)

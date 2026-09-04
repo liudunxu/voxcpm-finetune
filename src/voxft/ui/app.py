@@ -63,6 +63,24 @@ def _ds_choices_update():
     return gr.update(choices=_processed_datasets())
 
 
+def do_preview(name, idx):
+    try:
+        import json
+        p = DATA_PROCESSED / name / "train.jsonl"
+        if not p.exists():
+            return "（该数据集不存在）", None
+        rows = [json.loads(l) for l in p.open(encoding="utf-8") if l.strip()]
+        if not rows:
+            return "（空数据集）", None
+        i = int(idx or 0) % len(rows)
+        rec = rows[i]
+        info = (json.dumps(rec, ensure_ascii=False, indent=2)
+                + f"\n（train 共 {len(rows)} 条，当前第 {i} 条）")
+        return info, rec.get("audio")
+    except Exception as exc:
+        return f"预览失败: {exc}", None
+
+
 def _config_files() -> list[str]:
     """configs/ 下已生成的训练配置（按时间从新到旧）。"""
     from ..paths import CONFIG_DIR
@@ -118,8 +136,8 @@ def do_process(source_id, min_dur, max_dur, val_ratio):
         from ..data.registry import get_source
         src = get_source(source_id)
         ref = 0.4 if src.has_speaker else 0.0
-        utmos = 3.5 if src.qc in ("utmos", "full") else None
-        wlang = src.lang if src.qc == "full" else None
+        utmos = 3.5 if src.qc == "full" else None
+        wlang = src.lang if src.qc in ("whisper", "full") else None
         concat = 10.0 if src.short_clips else None
         opts = pipeline.Options(
             min_dur=float(min_dur), max_dur=float(max_dur),
@@ -318,10 +336,19 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="VoxCPM 微调工作台") as demo:
         gr.Markdown("## VoxCPM 2 微调工作台（端口 6006）")
 
-        with gr.Tab("数据集"):
+        with gr.Tab("数据集") as tab_data:
             gr.Markdown("**已加工数据集**")
             ds_table = gr.Textbox(_dataset_table(), label="data/processed",
                                   lines=6, interactive=False)
+            with gr.Row():
+                ds_pick = gr.Dropdown(_processed_datasets(), label="预览数据集")
+                ds_idx = gr.Number(0, label="样本序号", precision=0)
+                ds_prev_btn = gr.Button("预览该样本（含音频播放）")
+            ds_info = gr.Textbox(label="样本内容", lines=5, interactive=False)
+            ds_audio = gr.Audio(label="样本音频", type="filepath")
+            ds_prev_btn.click(do_preview, [ds_pick, ds_idx], [ds_info, ds_audio])
+            tab_data.select(lambda: gr.update(choices=_processed_datasets()),
+                            outputs=ds_pick)
             with gr.Row():
                 src = gr.Dropdown(source_choices, label="数据源（含许可）")
                 max_n = gr.Number(label="最大样本数（空=全量）", precision=0)

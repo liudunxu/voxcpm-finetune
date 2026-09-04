@@ -15,7 +15,7 @@ class Source:
     license: str = ""
     note: str = ""
     has_speaker: bool = False   # 有说话人列 → 加工自动按 0.4 配对，否则 0
-    qc: str = "none"            # none / utmos / full(UTMOS+Whisper)，按数据源干净程度预设
+    qc: str = "none"            # none / whisper / full(+UTMOS)；UTMOS 权重源已失效，默认仅 whisper
     short_clips: bool = False   # 单条普遍 <3s → 加工时自动同说话人拼接到 ~10s
 
 
@@ -36,14 +36,14 @@ SOURCES: list[Source] = [
     Source(
         "thai20k", "th", "hotdogs/thai-speech-20k（1-10 万条）",
         "hf_dataset", "hotdogs/thai-speech-20k", "", "train",
-        "CC-BY-4.0", "补充语料；质量未知，自动开 UTMOS 质检",
-        has_speaker=False, qc="utmos",
+        "CC-BY-4.0", "补充语料；质量未知，自动 Whisper 校验",
+        has_speaker=False, qc="whisper",
     ),
     Source(
         "cv22_th", "th", "Common Voice 22 泰语（量大但噪）",
         "hf_dataset", "fsicoli/common_voice_22_0", "th", "train",
-        "CC0", "官方已撤架，此为社区镜像（无需同意条款）；众包噪音大，自动全量质检",
-        has_speaker=True, qc="full",
+        "CC0", "官方已撤架，此为社区镜像（无需同意条款）；众包噪音大，自动 Whisper 校验",
+        has_speaker=True, qc="whisper",
     ),
     # ---- Tagalog ----
     Source(
@@ -55,8 +55,8 @@ SOURCES: list[Source] = [
     Source(
         "filipino_speech", "tl", "filipinospeechcorpus（~27 万条，Tagalog 主力）",
         "hf_dataset", "sapinsapin/filipinospeechcorpus", "", "train",
-        "MIT", "有 speaker_id；众包质量参差，自动全量质检；单条极短（中位 0.6s），自动拼接",
-        has_speaker=True, qc="full", short_clips=True,
+        "MIT", "有 speaker_id；众包质量参差，自动 Whisper 校验；单条极短（中位 0.6s），自动拼接",
+        has_speaker=True, qc="whisper", short_clips=True,
     ),
     Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",

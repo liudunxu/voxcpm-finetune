@@ -57,8 +57,8 @@ echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
 
 **关键规则**（加工页已**自动配置**，无需手选）
 - 有说话人列的源（`filipino_speech`、CV22 泰语镜像）：自动 `ref_audio=0.4` 同说话人配对；无说话人列的源（FLEURS 全系/thai20k/Porjai）：自动 `ref_audio=0`——跨说话人乱配会教模型忽略参考音色，直接损害克隆
-- 质检按数据源干净程度自动分档：录音棚/干净朗读（FLEURS、Porjai、AISHELL-3）不质检；质量未知（thai20k）自动开 UTMOS≥3.5；众包（CV22 泰、filipino_speech）自动 UTMOS+Whisper 转写校验
-- 全量质检需要 `uv sync --group qc`（faster-whisper）
+- 质检自动分档：干净源（FLEURS、Porjai、AISHELL-3）不质检；众包/未知源自动 **Whisper 转写校验**（防音文不符）；UTMOS 因权重源失效默认关闭，手动放权重到 `models/utmos/` 可恢复
+- 短句语料（`filipino_speech`，中位 0.6s）：自动**同说话人拼接**成 ~10s 样本（段间 0.3s 静音，不改单句音频）
 - `tagalog_tts` / `filipino_emotion` 无文本列，暂不可直接用（需先 Whisper 转写）
 - 一个 LoRA 覆盖两语种：混合权重建议 **泰语 45% + Tagalog 45% + 中文 10%**（中文仅防灾难性遗忘，不需要中文输出可降到 5%）
 - **验收以克隆优先**：同一参考音频，基座 vs LoRA A/B 对比，音色还原度不降 + 目标语言发音更准才算通过；音色掉就减步数或降学习率
