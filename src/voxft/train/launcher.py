@@ -51,7 +51,7 @@ def resolve_base_path(path: str, progress=None) -> str:
         except Exception:
             pass
 
-    cache_dir = HF_HUB_CACHE / f"models--{path.replace('/', '--')}"
+    cache_dir = Path(HF_HUB_CACHE) / f"models--{path.replace('/', '--')}"
 
     def _dir_size(d: Path) -> int:
         return sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) \
