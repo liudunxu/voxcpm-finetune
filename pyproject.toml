@@ -5,7 +5,7 @@ description = "VoxCPM 2 微调工作台：Tagalog/泰语高质量语料加工、
 requires-python = "==3.11.*"
 dependencies = [
     "gradio>=4.44",
-    "datasets>=3.0",
+    "datasets>=3.0,<4",
     "huggingface_hub>=0.25",
     "soundfile>=0.12",
     "librosa>=0.10",
@@ -22,7 +22,6 @@ dependencies = [
     "einops>=0.7",
     "pydantic>=2.0",
     "tensorboardX>=2.6.5",
-    "torchcodec>=0.1",
 ]
 
 [dependency-groups]
