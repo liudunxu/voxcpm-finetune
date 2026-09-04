@@ -45,9 +45,9 @@ SOURCES: list[Source] = [
         "CC-BY-4.0", "高质锚点；无说话人列，加工时 ref_audio 比例用 0",
     ),
     Source(
-        "cv22_tl", "tl", "Common Voice 22 Tagalog（量大）",
-        "hf_dataset", "fsicoli/common_voice_22_0", "tl", "train",
-        "CC0", "官方已撤架，此为社区镜像（无需同意条款）；主力体量来源；有 client_id；务必走质检",
+        "filipino_speech", "tl", "filipinospeechcorpus（~27 万条，Tagalog 主力）",
+        "hf_dataset", "sapinsapin/filipinospeechcorpus", "", "train",
+        "MIT", "有 speaker_id 可正确配对（ref_audio 用默认 0.4）；体量大，建议限量下载",
     ),
     Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",
