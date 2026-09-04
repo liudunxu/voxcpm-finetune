@@ -11,8 +11,8 @@ from ..paths import CHECKPOINT_DIR, CONFIG_DIR, env
 DEFAULTS = {
     "sample_rate": 16000,        # AudioVAE 编码器输入，勿改成输出采样率
     "out_sample_rate": 48000,    # 仅推理用
-    "batch_size": 16,
-    "grad_accum_steps": 1,
+    "batch_size": 2,             # 官方示例值；音频序列长，激活显存大，勿调大
+    "grad_accum_steps": 8,       # 等效 batch = 2 × 8 = 16
     "num_workers": 2,
     "num_iters": 1000,
     "log_interval": 10,

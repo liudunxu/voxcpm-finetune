@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -19,6 +20,7 @@ def gpu_command(config_path: str | Path, gpus: int = 1,
         cmd = f"torchrun --nproc_per_node={gpus} {TRAIN_SCRIPT} --config_path {config_path}"
     else:
         cmd = f"python {TRAIN_SCRIPT} --config_path {config_path}"
+    cmd = f"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {cmd}"
     if cuda_devices:
         cmd = f"CUDA_VISIBLE_DEVICES={cuda_devices} {cmd}"
     return cmd
@@ -167,6 +169,7 @@ def start_local(config_path: str | Path, gpus: int = 1) -> Path:
         cmd, shell=True, cwd=VOXCPM_REPO,
         stdout=log_path.open("a"), stderr=subprocess.STDOUT,
         start_new_session=True,
+        env={**os.environ, "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},
     )
     from .tb_wandb_bridge import start_bridge
     start_bridge(cfg.get("tensorboard", ""), Path(config_path).stem)
