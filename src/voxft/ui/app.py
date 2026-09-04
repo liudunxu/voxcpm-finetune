@@ -327,7 +327,7 @@ def build_ui() -> gr.Blocks:
                 ft_iters = gr.Number(1000, label="训练步数")
                 ft_bs = gr.Number(2, label="batch_size（音频序列长，勿调大）")
                 ft_ga = gr.Number(8, label="梯度累积（等效batch=bs×累积）")
-                ft_save = gr.Number(500, label="保存间隔")
+                ft_save = gr.Number(250, label="保存间隔（LoRA 存档小，留多点做 A/B）")
             build_btn = gr.Button("生成训练配置", variant="primary")
             ft_out = gr.Markdown()
             run_state = gr.Textbox(visible=False)
