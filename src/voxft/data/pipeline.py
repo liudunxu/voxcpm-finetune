@@ -57,9 +57,9 @@ def peak_normalize(wav: np.ndarray, peak: float = 0.95) -> np.ndarray:
     return wav * (peak / m) if m > 1e-8 else wav
 
 
-def _whisper_model(lang: str):
+def _whisper_model(lang: str, size: str = "medium"):
     from faster_whisper import WhisperModel  # 可选依赖：uv sync --group qc
-    return WhisperModel("medium", device="auto", compute_type="auto")
+    return WhisperModel(size, device="auto", compute_type="auto")
 
 
 def _whisper_similarity(model, wav: np.ndarray, sr: int,
@@ -76,6 +76,41 @@ def _whisper_similarity(model, wav: np.ndarray, sr: int,
 def _read_manifest(manifest: Path) -> list[dict]:
     with manifest.open(encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+def _transcribe_manifest(rows: list[dict], lang: str,
+                         progress=None) -> tuple[list[dict], int]:
+    """给无文本的条目批量 Whisper 转写；语种不符或空转写直接丢弃。
+
+    用 large-v3：转写结果直接成为训练标签，准确率优先（质检用 medium 即可）。
+    """
+    import torch
+    model = _whisper_model(lang, "large-v3")
+    batched = torch.cuda.is_available()
+    out, bad = [], 0
+    for i, row in enumerate(rows):
+        if progress and i % 200 == 0:
+            progress(f"转写 {i}/{len(rows)}")
+        if row.get("text"):
+            out.append(row)
+            continue
+        try:
+            wav, sr = load_wav_mono(row["audio"])
+        except Exception:
+            bad += 1
+            continue
+        try:
+            segs, info = model.transcribe(wav, vad_filter=True, batched=batched)
+            text = " ".join(s.text.strip() for s in segs).strip()
+        except Exception:
+            bad += 1
+            continue
+        det = getattr(info, "language", "")
+        if not text or (det and det.split("-")[0] != lang):
+            bad += 1
+            continue
+        out.append({**row, "text": text})
+    return out, bad
 
 
 def _write_jsonl(records: list[dict], path: Path) -> None:
@@ -146,8 +181,22 @@ def process_dataset(source_id: str, out_name: str | None = None,
     audio_dir.mkdir(parents=True, exist_ok=True)
 
     rows = _read_manifest(manifest)
+    truncated = bool(max_items)
     if max_items:
         rows = rows[:max_items]
+
+    if rows and not rows[0].get("text"):  # 无文本列的源：自动转写 + 语种过滤
+        from .registry import get_source
+        lang = get_source(source_id).lang
+        if progress:
+            progress(f"{source_id} 无文本列：自动 Whisper 转写 + 语种过滤（{lang}）")
+        rows, n_bad = _transcribe_manifest(rows, lang, progress)
+        if not truncated:
+            _write_jsonl(rows, manifest)  # 写回，下次加工直接复用
+        if progress:
+            progress(f"转写完成：保留 {len(rows)} 条，丢弃 {n_bad} 条（语种不符/空）")
+        if not rows:
+            raise RuntimeError(f"{source_id}: 转写后无可用样本")
 
     whisper = None
     if opts.whisper_lang:

@@ -510,8 +510,11 @@ def build_ui() -> gr.Blocks:
 
 def main() -> None:
     load_dotenv()
+    from ..paths import DATA_RAW
     demo = build_ui()
-    demo.launch(server_port=PORT, server_name="0.0.0.0")
+    demo.launch(server_port=PORT, server_name="0.0.0.0",
+                allowed_paths=[str(DATA_PROCESSED), str(DATA_RAW),
+                               str(CHECKPOINT_DIR)])
 
 
 if __name__ == "__main__":

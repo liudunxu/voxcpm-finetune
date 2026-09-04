@@ -199,7 +199,7 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                           if c in df.columns), None)
             s_col = next((c for c in ("client_id", "speaker_id", "speaker", "speaker_name")
                           if c in df.columns), None)
-            if t_col is None or "audio" not in df.columns:
+            if "audio" not in df.columns or (t_col is None and not source.needs_transcribe):
                 if progress:
                     progress(f"{source.id}: 分片 {name} 缺少 audio/text 列"
                              f"（实际列: {list(df.columns)}），跳过")
@@ -210,8 +210,8 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
             for _, row in df.iterrows():
                 if max_samples is not None and n >= max_samples:
                     break
-                text = str(row[t_col] or "").strip()
-                if not text:
+                text = str(row[t_col] or "").strip() if t_col else ""
+                if t_col and not text:
                     continue
                 a = row["audio"]
                 raw = a["bytes"] if isinstance(a, dict) else a
@@ -261,11 +261,12 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
             if max_samples is not None and n >= max_samples:
                 break
             a_col, t_col, s_col = _detect_cols(row)
-            if a_col is None or t_col is None or not str(row[t_col]).strip():
+            if a_col is None or (t_col is None and not source.needs_transcribe):
                 continue
             a = row[a_col]
             array, sr = a.get("array"), a.get("sampling_rate") or 16000
-            _write_record(f, audio_dir, n, array, sr, str(row[t_col]).strip(),
+            text = str(row[t_col]).strip() if t_col else ""
+            _write_record(f, audio_dir, n, array, sr, text,
                           str(row[s_col]) if s_col else None)
             n += 1
             if progress and n % 100 == 0:

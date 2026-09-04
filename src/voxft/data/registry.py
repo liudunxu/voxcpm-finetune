@@ -17,6 +17,7 @@ class Source:
     has_speaker: bool = False   # 有说话人列 → 加工自动按 0.4 配对，否则 0
     qc: str = "none"            # none / whisper / full(+UTMOS)；UTMOS 权重源已失效，默认仅 whisper
     short_clips: bool = False   # 单条普遍 <3s → 加工时自动同说话人拼接到 ~10s
+    needs_transcribe: bool = False  # 无文本列 → 加工时先自动 Whisper 转写 + 语种过滤
 
 
 SOURCES: list[Source] = [
@@ -61,14 +62,14 @@ SOURCES: list[Source] = [
     Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",
         "hf_dataset", "welyjesch/tagalog_tts", "", "train",
-        "未知", "仅 audio 列、无文本，暂不可直接用（需先 Whisper 转写）；商用前先核实许可",
-        has_speaker=False, qc="full",
+        "未知", "仅 audio 列，加工自动转写；商用前先核实许可",
+        has_speaker=False, qc="none", needs_transcribe=True,
     ),
     Source(
-        "filipino_emotion", "tl", "filipino-emotion-tts（1-10 万条，情感语音）",
+        "filipino_emotion", "tl", "filipino-emotion-tts（1-10 万条，情感语音，短剧风格补充）",
         "hf_dataset", "danielquillanroxas/filipino-emotion-tts", "", "train",
-        "未知", "仅 audio+情绪标签、无文本，暂不可直接用（需先 Whisper 转写）；商用前先核实许可",
-        has_speaker=False, qc="full",
+        "未知", "情感语料（口语/情绪表达）；无文本列，加工自动转写；商用前先核实许可",
+        has_speaker=False, qc="none", needs_transcribe=True,
     ),
     # ---- 中文（混合防遗忘，建议占比 10-20%） ----
     Source(
