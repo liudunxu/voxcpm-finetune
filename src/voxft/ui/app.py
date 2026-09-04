@@ -63,6 +63,14 @@ def _ds_choices_update():
     return gr.update(choices=_processed_datasets())
 
 
+def _config_files() -> list[str]:
+    """configs/ 下已生成的训练配置（新的在前）。"""
+    from ..paths import CONFIG_DIR
+    if not CONFIG_DIR.exists():
+        return []
+    return sorted((str(p) for p in CONFIG_DIR.glob("*.yaml")), reverse=True)
+
+
 # ---------------- Tab 1: 数据集 ----------------
 
 def do_download(source_id, max_samples):
@@ -130,7 +138,7 @@ def do_mix(target_ds, target_w, zh_ds, zh_w, out_name):
 def do_build_yaml(ftype, ds_name, r, alpha, lr, num_iters, batch_size,
                   grad_accum, save_interval, run_name):
     if not ds_name:
-        yield "请先选择训练数据集", ""
+        yield "请先选择训练数据集", "", gr.update()
         return
 
     log = get_log("train")
@@ -169,9 +177,10 @@ def do_build_yaml(ftype, ds_name, r, alpha, lr, num_iters, batch_size,
     t = threading.Thread(target=worker, daemon=True)
     t.start()
     while t.is_alive():
-        yield log.text(), ""
+        yield log.text(), "", gr.update()
         time.sleep(0.8)
-    yield res.get("msg", ("失败: 未知错误", ""))
+    msg, rn = res.get("msg", ("失败: 未知错误", ""))
+    yield msg, rn, gr.update(choices=_config_files())
 
 
 def do_start(config_path, gpus):
@@ -308,7 +317,7 @@ def build_ui() -> gr.Blocks:
             m_btn.click(do_mix, [m_target, m_tw, m_zh, m_zw, m_name],
                         [m_out, ds_table])
 
-        with gr.Tab("训练"):
+        with gr.Tab("训练") as tab_train:
             with gr.Row():
                 ft_type = gr.Radio(["lora", "full"], value="lora", label="微调方式（推荐 LoRA）")
                 ft_ds = gr.Dropdown(_processed_datasets(), label="训练数据集")
@@ -331,13 +340,10 @@ def build_ui() -> gr.Blocks:
             build_btn = gr.Button("生成训练配置", variant="primary")
             ft_out = gr.Markdown()
             run_state = gr.Textbox(visible=False)
-            build_btn.click(do_build_yaml,
-                            [ft_type, ft_ds, ft_r, ft_alpha, ft_lr, ft_iters,
-                             ft_bs, ft_ga, ft_save, ft_name],
-                            [ft_out, run_state])
             gr.Markdown("---\n**本机启动（需 GPU；Mac 上请复制命令到远程执行）**")
             with gr.Row():
-                cfg_path = gr.Textbox(label="配置路径（粘贴上面生成的）")
+                cfg_path = gr.Dropdown(_config_files(), label="训练配置（生成后自动出现，也可粘贴路径）",
+                                       allow_custom_value=True)
                 gpus = gr.Number(1, label="GPU 数")
                 start_btn = gr.Button("启动训练")
                 stop_btn = gr.Button("停止", variant="stop")
@@ -347,6 +353,12 @@ def build_ui() -> gr.Blocks:
             start_btn.click(do_start, [cfg_path, gpus], [st_out, log_out])
             stop_btn.click(do_stop, outputs=st_out)
             refresh_btn.click(do_refresh_log, cfg_path, [log_out, st_out])
+            build_btn.click(do_build_yaml,
+                            [ft_type, ft_ds, ft_r, ft_alpha, ft_lr, ft_iters,
+                             ft_bs, ft_ga, ft_save, ft_name],
+                            [ft_out, run_state, cfg_path])
+            tab_train.select(lambda: gr.update(choices=_config_files()),
+                             outputs=cfg_path)
             gr.Markdown("""---
 **续训**：官方脚本自动从 `save_path` 的 `latest/` 断点恢复（权重+优化器+调度器）；
 重启后用同一配置重新启动即可，无需任何额外参数。SIGTERM/SIGINT 会自动保存。
@@ -361,7 +373,7 @@ def build_ui() -> gr.Blocks:
 4. 客观对比：`uv run python -m voxft.eval base <lora_dir> --lang th`（需 qc 组）——
    批量合成→Whisper 转写→输出各 checkpoint 的平均文本贴合度排名""")
 
-        with gr.Tab("试听"):
+        with gr.Tab("试听") as tab_listen:
             with gr.Row():
                 a_base = gr.Textbox(env("VOXCPM_BASE_PATH"),
                                     label="基座（空=默认 openbmb/VoxCPM2）")
@@ -380,8 +392,10 @@ def build_ui() -> gr.Blocks:
             a_btn.click(do_synthesize,
                         [a_text, a_base, a_lora, a_ref, a_ref_text,
                          a_cfg, a_steps], [a_out, a_info])
+            tab_listen.select(lambda: gr.update(choices=_ckpt_choices()),
+                              outputs=a_lora)
 
-        with gr.Tab("模型管理"):
+        with gr.Tab("模型管理") as tab_mgmt:
             gr.Markdown("**Merge LoRA** → 导出完整模型目录")
             with gr.Row():
                 mg_base = gr.Textbox(env("VOXCPM_BASE_PATH"), label="基座目录")
@@ -400,6 +414,8 @@ def build_ui() -> gr.Blocks:
             up_btn = gr.Button("上传", variant="primary")
             up_res = gr.Textbox(label="上传日志", lines=6, interactive=False)
             up_btn.click(do_upload, [up_dir, up_repo, up_kind], up_res)
+            tab_mgmt.select(lambda: gr.update(choices=_ckpt_choices()[1:]),
+                            outputs=mg_lora)
 
         with gr.Tab("日志"):
             gr.Markdown("统一运行日志 `logs/voxft.log`（下载 / 加工 / 混合 / 训练 / 合并 / 上传）")
