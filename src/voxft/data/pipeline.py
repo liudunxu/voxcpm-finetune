@@ -113,6 +113,8 @@ def process_dataset(source_id: str, out_name: str | None = None,
             progress("Whisper 质检模型就绪")
     if opts.utmos_min is not None:
         from ..qc.utmos import get_scorer, last_error
+        if progress:
+            progress("加载 UTMOS 评分器（首次需下载权重 ~1.2GB，可能需几分钟）...")
         if get_scorer() is None:
             raise RuntimeError(f"UTMOS 评分器不可用，无法质检: {last_error()}")
         from ..qc.utmos import score_wav
