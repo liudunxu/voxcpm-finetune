@@ -132,6 +132,7 @@ def do_build_yaml(ftype, ds_name, r, alpha, lr, num_iters, batch_size,
     try:
         ds = DATA_PROCESSED / ds_name
         rn = run_name or yaml_builder.default_run_name(ftype)
+        base = launcher.resolve_base_path(env("VOXCPM_BASE_PATH") or "openbmb/VoxCPM2")
         overrides = {
             "num_iters": int(num_iters), "batch_size": int(batch_size),
             "grad_accum_steps": int(grad_accum), "save_interval": int(save_interval),
@@ -144,10 +145,10 @@ def do_build_yaml(ftype, ds_name, r, alpha, lr, num_iters, batch_size,
         else:
             overrides["learning_rate"] = float(lr)
         path = yaml_builder.build_yaml(
-            rn, env("VOXCPM_BASE_PATH"), str(ds / "train.jsonl"),
+            rn, base, str(ds / "train.jsonl"),
             str(ds / "val.jsonl"), ftype, overrides)
         cmd = launcher.gpu_command(path, gpus=1)
-        return (f"run: {rn}\n配置: {path}\n\nGPU 机器上执行（可复制到远程）:\n"
+        return (f"run: {rn}\n基座: {base}\n配置: {path}\n\nGPU 机器上执行（可复制到远程）:\n"
                 f"cd <项目路径> && {cmd}\n\n"
                 f"多卡: 把 python 换成 torchrun --nproc_per_node=N"), rn
     except Exception as exc:

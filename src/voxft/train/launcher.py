@@ -24,6 +24,19 @@ def gpu_command(config_path: str | Path, gpus: int = 1,
     return cmd
 
 
+def resolve_base_path(path: str) -> str:
+    """基座路径归一化：本地目录直接用；HF 仓库 ID 则下载快照后返回本地目录。
+
+    官方训练脚本要求 pretrained_path 是含 config.json 的本地目录。
+    """
+    if not path or Path(path).is_dir():
+        return path
+    from huggingface_hub import snapshot_download
+
+    from ..paths import env
+    return snapshot_download(path, token=env("HF_TOKEN") or None)
+
+
 def preflight(config_path: str | Path) -> list[str]:
     """训练前预检；返回问题列表（空 = 通过）。把报错提前到启动前。"""
     import json
@@ -61,8 +74,13 @@ def preflight(config_path: str | Path) -> list[str]:
                     issues.append(f"{key} 第 {i + 1} 行音频不存在: {rec.get('audio')}")
 
     pre = str(cfg.get("pretrained_path", "") or "")
-    if pre and not Path(pre).is_dir() and pre.count("/") != 1:
-        issues.append(f"pretrained_path 既非本地目录也非 HF 仓库 ID（owner/name）: {pre}")
+    if pre and not Path(pre).is_dir():
+        if pre.count("/") == 1:
+            issues.append(f"pretrained_path 是 HF 仓库 ID（{pre}），训练脚本要求本地目录："
+                          "请在页面重新「生成训练配置」（会自动下载基座），"
+                          "或在 .env 设置 VOXCPM_BASE_PATH 指向本地基座目录")
+        else:
+            issues.append(f"pretrained_path 既非本地目录也非 HF 仓库 ID（owner/name）: {pre}")
 
     save = Path(cfg.get("save_path", ""))
     try:
