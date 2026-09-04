@@ -39,28 +39,72 @@ def _check_gated(exc: Exception, repo: str) -> None:
                            f"(https://huggingface.co/datasets/{repo})") from exc
 
 
-def _parquet_files(repo: str, config: str, split: str, token: str) -> list[str]:
-    """查询 HF parquet 导出分片（相对仓库根的文件名列表）。"""
+def _tree(endpoint: str, repo: str, path: str, token: str) -> list[dict]:
+    import requests
+    r = requests.get(
+        f"{endpoint}/api/datasets/{repo}/tree/refs%2Fconvert%2Fparquet/{path}",
+        headers={"Authorization": f"Bearer {token}"} if token else {},
+        timeout=30)
+    if r.status_code in (401, 403):
+        _check_gated(RuntimeError(str(r.status_code)), repo)
+    r.raise_for_status()
+    return r.json()
+
+
+def _parquet_files(repo: str, config: str, split: str,
+                   token: str) -> list[tuple[str, str]]:
+    """返回 (仓库内相对路径, revision) 列表。
+
+    首选遍历 refs/convert/parquet 分支树（可精确过滤 config/split）；
+    失败时回退到 /parquet 索引 API（无法过滤，返回全部条目）。
+    """
     import os
     import requests
 
     endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
-    params = {}
+    try:
+        root = config if config else ""
+        files: list[tuple[str, str]] = []
+        subdirs = [root, f"{root}/{split}"] if root else []
+        # 无 config 的数据集：先列出顶层目录作为候选
+        if not root:
+            top = _tree(endpoint, repo, "", token)
+            dirs = [e["path"] for e in top if e["type"] == "directory"]
+            subdirs = [f"{d}/{split}" for d in dirs] if split else dirs
+        for sub in subdirs:
+            try:
+                entries = _tree(endpoint, repo, sub, token)
+            except Exception:
+                continue
+            files.extend((e["path"], "refs/convert/parquet")
+                         for e in entries if e["path"].endswith(".parquet"))
+        if files:
+            return files
+    except Exception as exc:
+        _check_gated(exc, repo)
+        print(f"[{repo}] parquet 分支遍历失败（{exc}），回退索引 API")
+
+    params, headers = {}, {}
     if config:
         params["config"] = config
     if split:
         params["split"] = split
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     r = requests.get(f"{endpoint}/api/datasets/{repo}/parquet",
                      params=params, headers=headers, timeout=30)
     if r.status_code in (401, 403):
         _check_gated(RuntimeError(str(r.status_code)), repo)
     r.raise_for_status()
-    files: list[str] = []
-    for splits in r.json().values():
-        for fl in splits.values():
-            files.extend(fl)
-    return files
+    out: list[tuple[str, str]] = []
+    for cfg, splits in r.json().items():
+        for sp, fl in splits.items():
+            if config and cfg != config:
+                continue
+            if split and sp != split:
+                continue
+            out.extend((u, "") for u in fl)
+    return out
 
 
 def _write_record(f, audio_dir: Path, n: int, wav, sr: int, text: str,
@@ -71,6 +115,28 @@ def _write_record(f, audio_dir: Path, n: int, wav, sr: int, text: str,
     if speaker:
         rec["speaker"] = speaker
     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def _resolve_parquet_ref(entry: str) -> tuple[str, str]:
+    """把 parquet 索引条目解析为 (仓库内相对路径, git revision)。
+
+    索引可能返回三种形式：
+    - API URL: .../api/datasets/<repo>/parquet/<cfg>/<split>/0.parquet
+      → parquet 导出实际位于分支 refs/convert/parquet
+    - resolve URL: .../resolve/<rev>/<path>
+    - 纯相对路径
+    """
+    if not entry.startswith("http"):
+        return entry.lstrip("/"), "main"
+    from urllib.parse import unquote, urlparse
+    path = urlparse(entry).path
+    if "/parquet/" in path:
+        return path.split("/parquet/", 1)[1], "refs/convert/parquet"
+    if "/resolve/" in path:
+        rest = path.split("/resolve/", 1)[1]
+        rev, _, fp = rest.partition("/")
+        return unquote(fp), unquote(rev)
+    return path.lstrip("/"), "main"
 
 
 def _download_parquet(source: Source, files: list[str], dest: Path,
@@ -87,13 +153,15 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
     manifest = dest / "manifest.jsonl"
     n = 0
     with manifest.open("w", encoding="utf-8") as f:
-        for fi, fname in enumerate(files):
+        for fi, (repo_file, revision) in enumerate(files):
             if max_samples is not None and n >= max_samples:
                 break
-            repo_file = fname.split("/resolve/")[-1]
+            if not revision:  # 索引 API 回退路径：条目是 URL
+                repo_file, revision = _resolve_parquet_ref(repo_file)
             if progress:
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)}")
             local = hf_hub_download(repo_id=source.repo, filename=repo_file,
+                                    revision=revision,
                                     repo_type="dataset", token=token or None)
             df = pd.read_parquet(local)
             t_col = next((c for c in ("sentence", "text", "transcript") if c in df.columns), None)
