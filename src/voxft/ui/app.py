@@ -58,6 +58,11 @@ def _stream(log_name: str, fn):
     yield log.text()
 
 
+def _ds_choices_update():
+    """加工后刷新各处数据集下拉框（混合页 + 训练页）。"""
+    return gr.update(choices=_processed_datasets())
+
+
 # ---------------- Tab 1: 数据集 ----------------
 
 def do_download(source_id, max_samples):
@@ -97,7 +102,8 @@ def do_process(source_id, min_dur, max_dur, ref_ratio, val_ratio,
         return None
 
     for text in _stream("process", fn):
-        yield text, _dataset_table()
+        yield text, _dataset_table(), _ds_choices_update(), _ds_choices_update(), \
+            _ds_choices_update()
 
 
 def do_mix(target_ds, target_w, zh_ds, zh_w, out_name):
@@ -262,10 +268,6 @@ def build_ui() -> gr.Blocks:
                                       label="Whisper 转写校验语言（空=关闭，需 --group qc）")
                 p_btn = gr.Button("开始加工", variant="primary")
             p_out = gr.Textbox(label="加工日志（实时）", lines=10, interactive=False)
-            p_btn.click(do_process,
-                        [p_src, p_min, p_max, p_ref, p_val,
-                         p_utmos_on, p_utmos, p_wlang],
-                        [p_out, ds_table])
 
             gr.Markdown("---\n**跨语言混合**（目标语言为主 + 中文 10-20% 防遗忘）")
             with gr.Row():
@@ -285,9 +287,15 @@ def build_ui() -> gr.Blocks:
                 ft_ds = gr.Dropdown(_processed_datasets(), label="训练数据集")
                 ft_name = gr.Textbox("", label="run 名称（空=自动）")
             with gr.Row():
-                ft_r = gr.Slider(8, 128, 32, step=8, label="LoRA r（语言适配建议 64）")
-                ft_alpha = gr.Number(32, label="LoRA alpha（一般 = r）")
-                ft_lr = gr.Number(1e-4, label="学习率（全量建议 1e-5）")
+                ft_r = gr.Slider(8, 128, 64, step=8,
+                                 label="LoRA r（64=语言风格适配，32=纯说话人适配）")
+                ft_alpha = gr.Number(64, label="LoRA alpha（= r）")
+                ft_lr = gr.Number(1e-4, label="学习率（LoRA=1e-4 / 全量=1e-5）")
+            ft_type.change(lambda t: 1e-4 if t == "lora" else 1e-5, ft_type, ft_lr)
+            p_btn.click(do_process,
+                        [p_src, p_min, p_max, p_ref, p_val,
+                         p_utmos_on, p_utmos, p_wlang],
+                        [p_out, ds_table, m_target, m_zh, ft_ds])
             with gr.Row():
                 ft_iters = gr.Number(1000, label="训练步数")
                 ft_bs = gr.Number(16, label="batch_size")
