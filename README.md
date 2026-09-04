@@ -23,7 +23,11 @@ GPU 服务器（Linux）上同样 `uv sync`（自动解析 cu124 轮子）；大
 ```bash
 echo 'VOXFT_DATA_ROOT=/root/autodl-tmp/voxft_data' >> .env
 echo 'VOXFT_CKPT_ROOT=/root/autodl-tmp/voxft_ckpt' >> .env
+# HF 缓存（基座模型 + 数据集分片）默认在 ~/.cache，系统盘容易满，也指到大盘：
+echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
 ```
+
+> 命令行手动下载时 `hf`/`huggingface-cli` 不读 `.env`，需先 `export HF_HOME=/root/autodl-tmp/hf_home`。
 
 ## 密钥
 
