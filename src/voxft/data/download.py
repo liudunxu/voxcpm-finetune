@@ -181,12 +181,15 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 下载完成"
                          f"（{size_mb:.1f}MB），解析中...")
             df = pd.read_parquet(local)
-            t_col = next((c for c in ("sentence", "text", "transcript") if c in df.columns), None)
+            t_col = next((c for c in ("sentence", "text", "transcript",
+                                      "transcription", "raw_transcription")
+                          if c in df.columns), None)
             s_col = next((c for c in ("client_id", "speaker_id", "speaker", "speaker_name")
                           if c in df.columns), None)
             if t_col is None or "audio" not in df.columns:
                 if progress:
-                    progress(f"{source.id}: 分片 {name} 缺少 audio/text 列，跳过")
+                    progress(f"{source.id}: 分片 {name} 缺少 audio/text 列"
+                             f"（实际列: {list(df.columns)}），跳过")
                 continue
             if progress:
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 含 {len(df)} 条，写入音频...")
