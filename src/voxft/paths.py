@@ -5,15 +5,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# 数据根目录可用 VOXFT_DATA_ROOT 覆盖（GPU 服务器上建议指向 /root/autodl-tmp）
-_DATA_ROOT = Path(os.environ.get("VOXFT_DATA_ROOT") or (ROOT / "data"))
-DATA_RAW = _DATA_ROOT / "raw"
-DATA_PROCESSED = _DATA_ROOT / "processed"
-CONFIG_DIR = ROOT / "configs"
-CHECKPOINT_DIR = Path(os.environ.get("VOXFT_CKPT_ROOT") or (ROOT / "checkpoints"))
-VOXCPM_REPO = ROOT / "third_party" / "VoxCPM"
-MODEL_DIR = ROOT / "models"
-
 
 def env(key: str, default: str = "") -> str:
     return os.environ.get(key, default).strip() or default
@@ -32,5 +23,14 @@ def load_dotenv() -> None:
         os.environ.setdefault(k.strip(), v.strip())
 
 
-# 导入即加载 .env（HF_ENDPOINT/HF_TOKEN 等需对 datasets、huggingface_hub 生效）
+# 必须在下方路径常量读取环境变量之前加载 .env
 load_dotenv()
+
+# 数据根目录可用 VOXFT_DATA_ROOT 覆盖（GPU 服务器上建议指向 /root/autodl-tmp）
+_DATA_ROOT = Path(os.environ.get("VOXFT_DATA_ROOT") or (ROOT / "data"))
+DATA_RAW = _DATA_ROOT / "raw"
+DATA_PROCESSED = _DATA_ROOT / "processed"
+CONFIG_DIR = ROOT / "configs"
+CHECKPOINT_DIR = Path(os.environ.get("VOXFT_CKPT_ROOT") or (ROOT / "checkpoints"))
+VOXCPM_REPO = ROOT / "third_party" / "VoxCPM"
+MODEL_DIR = ROOT / "models"
