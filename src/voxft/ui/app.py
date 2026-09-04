@@ -71,6 +71,20 @@ def _config_files() -> list[str]:
     return sorted((str(p) for p in CONFIG_DIR.glob("*.yaml")), reverse=True)
 
 
+def _upload_choices() -> list[str]:
+    """可上传的本地目录：合并输出目录 + 各 LoRA run 的 latest。"""
+    from ..lora.merge import is_lora_dir
+    out = []
+    merged = CHECKPOINT_DIR / "merged"
+    if merged.exists():
+        out.append(str(merged))
+    if CHECKPOINT_DIR.exists():
+        for d in sorted(CHECKPOINT_DIR.iterdir(), reverse=True):
+            if d.is_dir() and is_lora_dir(d / "latest"):
+                out.append(str(d / "latest"))
+    return out
+
+
 # ---------------- Tab 1: 数据集 ----------------
 
 def do_download(source_id, max_samples):
@@ -249,8 +263,10 @@ def do_merge(base, lora_dir, out):
         return
 
     def fn(log):
-        log(f"开始合并: 基座={base or env('VOXCPM_BASE_PATH')} lora={lora_dir} → {out}")
-        p = merge_lora(base or env("VOXCPM_BASE_PATH"), lora_dir, out)
+        base = launcher.resolve_base_path(base or env("VOXCPM_BASE_PATH")
+                                          or "openbmb/VoxCPM2", progress=log)
+        log(f"开始合并: 基座={base} lora={lora_dir} → {out}")
+        p = merge_lora(base, lora_dir, out)
         log(f"合并完成 → {p}")
         return None
 
@@ -263,7 +279,13 @@ def do_upload(local_dir, repo_id, kind):
         return
 
     def fn(log):
-        log(f"上传 {local_dir} → {repo_id}（{kind}）...")
+        from pathlib import Path
+        files = [f for f in Path(local_dir).rglob("*") if f.is_file()] \
+            if Path(local_dir).is_dir() else []
+        size_gb = sum(f.stat().st_size for f in files) / 1024**3
+        log(f"上传 {local_dir} → {repo_id}（{kind}）：{len(files)} 个文件，共 {size_gb:.2f}GB")
+        if not files:
+            log("警告: 目录为空，请先确认路径（合并产物在「合并」的输出目录）")
         url = upload_folder(local_dir, repo_id, kind)
         log(f"上传完成: {url}")
         return None
@@ -404,22 +426,24 @@ def build_ui() -> gr.Blocks:
             with gr.Row():
                 mg_base = gr.Textbox(env("VOXCPM_BASE_PATH"), label="基座目录")
                 mg_lora = gr.Dropdown(choices=_ckpt_choices()[1:], label="LoRA checkpoint")
-                mg_out = gr.Textbox("checkpoints/merged", label="输出目录")
+                mg_out = gr.Textbox(str(CHECKPOINT_DIR / "merged"), label="输出目录")
             mg_btn = gr.Button("合并", variant="primary")
             mg_res = gr.Textbox(label="合并日志", lines=8, interactive=False)
             mg_btn.click(do_merge, [mg_base, mg_lora, mg_out], mg_res)
 
-            gr.Markdown("---\n**同步到 HuggingFace**")
+            gr.Markdown("---\n**同步到 HuggingFace**（merged 完整模型先点上面「合并」；LoRA 目录可直接上传）")
             with gr.Row():
-                up_dir = gr.Textbox(label="本地目录")
+                up_dir = gr.Dropdown(_upload_choices(), label="本地目录（选合并产物或 LoRA latest）",
+                                     allow_custom_value=True)
                 up_repo = gr.Textbox("FrankLiuDundun/voxcpm-finetune-lora",
                                      label="仓库 ID")
                 up_kind = gr.Radio(["model", "dataset"], value="model", label="类型")
             up_btn = gr.Button("上传", variant="primary")
             up_res = gr.Textbox(label="上传日志", lines=6, interactive=False)
             up_btn.click(do_upload, [up_dir, up_repo, up_kind], up_res)
-            tab_mgmt.select(lambda: gr.update(choices=_ckpt_choices()[1:]),
-                            outputs=mg_lora)
+            tab_mgmt.select(lambda: (gr.update(choices=_ckpt_choices()[1:]),
+                                     gr.update(choices=_upload_choices())),
+                            outputs=[mg_lora, up_dir])
 
         with gr.Tab("日志"):
             gr.Markdown("统一运行日志 `logs/voxft.log`（下载 / 加工 / 混合 / 训练 / 合并 / 上传）")
