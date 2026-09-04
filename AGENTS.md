@@ -64,6 +64,8 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - **训练默认**：`batch_size=2 + 梯度累积=8`（等效 16，官方示例）防 OOM；启动带 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`；`save/valid_interval=250`；训练结束自动只保留最新 5 次 LoRA 运行
 - **`max_grad_norm=1.0`、`num_workers=8`**：官方 v2 配置就是这两个值（早先本文写的"官方默认 0 = 不裁剪"是错的，已改）。情感语料动态大，不裁剪更容易出梯度尖峰
 - **推理**：`load_denoiser=False`（去噪器依赖 modelscope，试听不需要）
+- **Whisper 权重**：large-v3 约 3GB，国内直连 huggingface.co 常在 SSL 握手就超时。加载带 3 次重试并打印 endpoint；失败时报错里给了预下载命令。可用 `VOXFT_WHISPER_MODEL` / `VOXFT_WHISPER_MODEL_LARGE` 指向本地目录
+- **万级转写必须能断点续跑**：`_transcribe_manifest` 每 300 条把已转好的文本写回原始 `manifest.jsonl`，重跑自动跳过已有文本的行。改这段时别退回"跑完才写一次"
 - **数据源首选**（`registry.preferred_sources()`，页面下拉带【首选】）：泰语表现力 `thai_ser` / 泰语口语锚点 `yodas_th`；Tagalog 表现力 `filipino_emotion` / Taglish 锚点 `filswitch`；中文防遗忘 `aishell3`。**锚点不要用朗读语料**（FLEURS/CV22/Porjai）当主力，朗读腔本身就在加重念稿感
 - **Tagalog 系不能只认 tl 语种**：短剧台词是 Taglish，句内英文多的样本 Whisper 会判成 en，只认 tl 会把最该保留的 code-switch 样本全部误杀。`Source.languages()` 对 tl 默认放行 `("tl","en")`
 - **`yodas_th` 的会话是 utt_id 里的 YouTube video id**（`session_prefix_sep="-"` 取前缀），拼接只在同一视频内按顺序做，等于还原原始连续语流；它中位 3.5s 偏短，靠 `concat_target=8.0` 补上

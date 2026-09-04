@@ -310,9 +310,47 @@ def apply_control_prefixes(records: list[dict], opts: Options,
 
 # ---------------------------------------------------------------- 转写 / 质检
 
-def _whisper_model(lang: str, size: str = "medium"):
+# 转写标签会直接变成训练文本，所以用 large-v3；质检只是打分，medium 足够。
+# 权重可用 VOXFT_WHISPER_MODEL / VOXFT_WHISPER_MODEL_LARGE 覆盖成本地目录或镜像仓库。
+_WHISPER_ENV = {"medium": "VOXFT_WHISPER_MODEL",
+                "large-v3": "VOXFT_WHISPER_MODEL_LARGE"}
+
+
+def _whisper_model(lang: str, size: str = "medium", progress=None):
+    """加载 faster-whisper 权重，带重试。
+
+    large-v3 约 3GB，国内直连 huggingface.co 经常在 SSL 握手就超时；
+    voxft 默认把 HF_ENDPOINT 指到 hf-mirror.com（`paths.load_dotenv`），
+    这里再补上重试与一条能照着做的报错，别让 27 秒的握手超时把整批转写打回去。
+    """
+    import os
+    import time as _time
     from faster_whisper import WhisperModel  # 可选依赖：uv sync --group qc
-    return WhisperModel(size, device="auto", compute_type="auto")
+
+    name = os.environ.get(_WHISPER_ENV.get(size, ""), "") or size
+    endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            if progress:
+                progress(f"加载 Whisper {name}（endpoint={endpoint}，"
+                         f"第 {attempt + 1}/3 次）...")
+            return WhisperModel(name, device="auto", compute_type="auto")
+        except Exception as exc:
+            last = exc
+            if progress:
+                progress(f"加载失败（{exc}），20 秒后重试")
+            _time.sleep(20)
+    raise RuntimeError(
+        f"Whisper 权重加载失败（{name}，endpoint={endpoint}）：{last}\n"
+        f"排查顺序：\n"
+        f"1) 确认 .env 里 HF_ENDPOINT=https://hf-mirror.com，且 HF_HOME 指向大盘\n"
+        f"2) 命令行预下载（hf 不读项目 .env，要手动 export）：\n"
+        f"   export HF_ENDPOINT=https://hf-mirror.com HF_HOME=$HF_HOME\n"
+        f"   hf download Systran/faster-whisper-{name}\n"
+        f"3) 已有本地权重目录时：在 .env 设 "
+        f"{_WHISPER_ENV.get(size, 'VOXFT_WHISPER_MODEL')}=/path/to/model"
+    ) from last
 
 
 def _whisper_similarity(model, wav: np.ndarray, sr: int,
@@ -332,19 +370,30 @@ def _read_manifest(manifest: Path) -> list[dict]:
 
 
 def _transcribe_manifest(rows: list[dict], lang: str, accept: tuple[str, ...] = (),
-                         progress=None) -> tuple[list[dict], int]:
+                         progress=None, checkpoint=None,
+                         checkpoint_every: int = 300) -> tuple[list[dict], int]:
     """给无文本的条目批量 Whisper 转写；语种不符或空转写直接丢弃。
 
     用 large-v3：转写结果直接成为训练标签，准确率优先（质检用 medium 即可）。
     保留标点——标点是文本 TTS 里唯一的韵律控制信号，去掉就等于教模型念平。
+
+    万级语料转写要跑很久，中途任何一次异常都不该让前面白跑：每 checkpoint_every 条
+    调一次 checkpoint(rows)，把已转好的文本落回原始清单，重跑时自动跳过。
     """
     import torch
-    model = _whisper_model(lang, "large-v3")
+    todo = sum(1 for r in rows if not r.get("text"))
+    model = _whisper_model(lang, "large-v3", progress)
     batched = torch.cuda.is_available()
-    out, bad = [], 0
+    if progress:
+        progress(f"Whisper large-v3 就绪（batched={batched}），待转写 {todo} 条")
+    out, bad, done = [], 0, 0
+
+    def _flush():
+        if checkpoint:
+            # 已转写的写回原文本，未处理到的保持原样，重跑即断点续转
+            checkpoint(out + [r for r in rows[len(out) + bad:]])
+
     for i, row in enumerate(rows):
-        if progress and i % 200 == 0:
-            progress(f"转写 {i}/{len(rows)}")
         if row.get("text"):
             out.append(row)
             continue
@@ -365,6 +414,12 @@ def _transcribe_manifest(rows: list[dict], lang: str, accept: tuple[str, ...] = 
             bad += 1
             continue
         out.append({**row, "text": text})
+        done += 1
+        if progress and done % 100 == 0:
+            progress(f"转写 {done}/{todo}（丢弃 {bad}，已处理 {i + 1}/{len(rows)}）")
+        if done % checkpoint_every == 0:
+            _flush()
+    _flush()
     return out, bad
 
 
@@ -505,9 +560,11 @@ def process_dataset(source_id: str, out_name: str | None = None,
         n_missing = sum(1 for r in rows if not r.get("text"))
         if progress:
             progress(f"{source_id}: {n_missing} 条缺文本，自动 Whisper 转写 + 语种过滤（{lang}）")
-        rows, n_bad = _transcribe_manifest(rows, lang, opts.accept_langs, progress)
-        if not truncated:
-            _write_jsonl(rows, manifest)  # 写回，下次加工直接复用
+        ckpt = None if truncated else (lambda rs: _write_jsonl(rs, manifest))
+        rows, n_bad = _transcribe_manifest(rows, lang, opts.accept_langs,
+                                           progress, ckpt)
+        if ckpt:
+            ckpt(rows)  # 写回，下次加工直接复用（中途已按 300 条落过盘）
         if progress:
             progress(f"转写完成：保留 {len(rows)} 条，丢弃 {n_bad} 条（语种不符/空）")
         if not rows:
@@ -517,7 +574,7 @@ def process_dataset(source_id: str, out_name: str | None = None,
     if opts.whisper_lang:
         if progress:
             progress(f"加载 Whisper 质检模型（{opts.whisper_lang}，首次需下载）...")
-        whisper = _whisper_model(opts.whisper_lang)
+        whisper = _whisper_model(opts.whisper_lang, "medium", progress)
         if progress:
             progress("Whisper 质检模型就绪")
     score_wav = None

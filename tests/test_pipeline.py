@@ -243,3 +243,39 @@ def test_display_label_round_trips_to_source_id():
     import pytest
     with pytest.raises(KeyError):
         source_id_from_display("不存在的源 — 说明 [x]")
+
+
+def test_transcribe_checkpoints_so_a_crash_does_not_lose_work(monkeypatch, tmp_path):
+    """万级转写中途挂掉不能白跑：已转好的必须已经落回清单，重跑跳过。"""
+    from voxft.data import pipeline as pl
+
+    class _Seg:
+        text = "kumusta"
+
+    class _Info:
+        language = "tl"
+
+    class _FakeModel:
+        def __init__(self):
+            self.n = 0
+
+        def transcribe(self, wav, **kw):
+            self.n += 1
+            if self.n == 5:
+                raise RuntimeError("boom")   # 模拟中途崩
+            return [_Seg()], _Info()
+
+    monkeypatch.setattr(pl, "_whisper_model", lambda *a, **k: _FakeModel())
+    monkeypatch.setattr(pl, "load_wav_mono", lambda p: (np.zeros(1600, np.float32), 16000))
+    rows = [{"audio": f"{i}.wav", "text": ""} for i in range(8)]
+    saved: list[list[dict]] = []
+    out, bad = pl._transcribe_manifest(rows, "tl", ("tl", "en"),
+                                       checkpoint=saved.append, checkpoint_every=2)
+    assert len(out) == 7 and bad == 1
+    assert saved, "从未落盘"
+    mid = saved[0]
+    assert len(mid) == len(rows), "落盘丢了未处理的行，重跑会漏数据"
+    assert sum(1 for r in mid if r["text"]) == 2   # 前两条已转好
+    # 用落盘结果重跑：已有文本的直接放行，不会重复转写
+    again, _ = pl._transcribe_manifest(mid, "tl", ("tl", "en"))
+    assert sum(1 for r in again if r["text"] == "kumusta") >= 2
