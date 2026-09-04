@@ -16,12 +16,17 @@ dependencies = [
     "safetensors>=0.4",
     "torch>=2.5",
     "torchaudio>=2.5",
+    # 官方训练脚本（third_party/VoxCPM）运行所需
+    "argbind>=0.3",
+    "transformers>=4.36.2",
+    "einops>=0.7",
+    "pydantic>=2.0",
+    "tensorboardX>=2.6.5",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
-    "tensorboardx>=2.6.5",
 ]
 qc = ["faster-whisper>=1.0"]
 
