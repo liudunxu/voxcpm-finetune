@@ -24,17 +24,28 @@ def gpu_command(config_path: str | Path, gpus: int = 1,
     return cmd
 
 
-def resolve_base_path(path: str) -> str:
+def resolve_base_path(path: str, progress=None) -> str:
     """基座路径归一化：本地目录直接用；HF 仓库 ID 则下载快照后返回本地目录。
 
     官方训练脚本要求 pretrained_path 是含 config.json 的本地目录。
     """
     if not path or Path(path).is_dir():
         return path
+    from functools import partial
+
     from huggingface_hub import snapshot_download
 
+    from ..log import LogBar
     from ..paths import env
-    return snapshot_download(path, token=env("HF_TOKEN") or None)
+    if progress:
+        progress(f"基座模型本地不存在，开始下载 {path}（模型较大，请耐心等待）")
+    kwargs = {"token": env("HF_TOKEN") or None}
+    if progress:
+        kwargs["tqdm_class"] = partial(LogBar, log=progress)
+    local = snapshot_download(path, **kwargs)
+    if progress:
+        progress(f"基座模型就绪 → {local}")
+    return local
 
 
 def preflight(config_path: str | Path) -> list[str]:

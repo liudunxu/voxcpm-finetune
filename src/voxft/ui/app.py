@@ -129,30 +129,49 @@ def do_mix(target_ds, target_w, zh_ds, zh_w, out_name):
 
 def do_build_yaml(ftype, ds_name, r, alpha, lr, num_iters, batch_size,
                   grad_accum, save_interval, run_name):
-    try:
-        ds = DATA_PROCESSED / ds_name
-        rn = run_name or yaml_builder.default_run_name(ftype)
-        base = launcher.resolve_base_path(env("VOXCPM_BASE_PATH") or "openbmb/VoxCPM2")
-        overrides = {
-            "num_iters": int(num_iters), "batch_size": int(batch_size),
-            "grad_accum_steps": int(grad_accum), "save_interval": int(save_interval),
-            "valid_interval": int(save_interval),
-            "warmup_steps": max(10, int(num_iters) // 10),
-        }
-        if ftype == "lora":
-            overrides["learning_rate"] = float(lr)
-            overrides["lora"] = {"r": int(r), "alpha": int(alpha)}
-        else:
-            overrides["learning_rate"] = float(lr)
-        path = yaml_builder.build_yaml(
-            rn, base, str(ds / "train.jsonl"),
-            str(ds / "val.jsonl"), ftype, overrides)
-        cmd = launcher.gpu_command(path, gpus=1)
-        return (f"run: {rn}\n基座: {base}\n配置: {path}\n\nGPU 机器上执行（可复制到远程）:\n"
+    if not ds_name:
+        yield "请先选择训练数据集", ""
+        return
+
+    log = get_log("train")
+    res: dict = {}
+
+    def worker():
+        try:
+            ds = DATA_PROCESSED / ds_name
+            rn = run_name or yaml_builder.default_run_name(ftype)
+            base = launcher.resolve_base_path(
+                env("VOXCPM_BASE_PATH") or "openbmb/VoxCPM2", progress=log)
+            overrides = {
+                "num_iters": int(num_iters), "batch_size": int(batch_size),
+                "grad_accum_steps": int(grad_accum), "save_interval": int(save_interval),
+                "valid_interval": int(save_interval),
+                "warmup_steps": max(10, int(num_iters) // 10),
+            }
+            if ftype == "lora":
+                overrides["learning_rate"] = float(lr)
+                overrides["lora"] = {"r": int(r), "alpha": int(alpha)}
+            else:
+                overrides["learning_rate"] = float(lr)
+            path = yaml_builder.build_yaml(
+                rn, base, str(ds / "train.jsonl"),
+                str(ds / "val.jsonl"), ftype, overrides)
+            cmd = launcher.gpu_command(path, gpus=1)
+            log(f"训练配置已生成: {path}")
+            res["msg"] = (
+                f"run: {rn}\n基座: {base}\n配置: {path}\n\nGPU 机器上执行（可复制到远程）:\n"
                 f"cd <项目路径> && {cmd}\n\n"
-                f"多卡: 把 python 换成 torchrun --nproc_per_node=N"), rn
-    except Exception as exc:
-        return f"失败: {exc}", ""
+                f"多卡: 把 python 换成 torchrun --nproc_per_node=N", rn)
+        except Exception as exc:
+            log(f"生成配置失败: {exc}")
+            res["msg"] = (f"失败: {exc}", "")
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    while t.is_alive():
+        yield log.text(), ""
+        time.sleep(0.8)
+    yield res.get("msg", ("失败: 未知错误", ""))
 
 
 def do_start(config_path, gpus):
