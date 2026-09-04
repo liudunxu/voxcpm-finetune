@@ -4,11 +4,13 @@ import argparse
 import json
 import re
 import tarfile
+import time
 import urllib.request
 from pathlib import Path
 
 import soundfile as sf
 
+from ..log import _fmt_size
 from ..paths import DATA_RAW, env, load_dotenv
 from .registry import SOURCES, Source, get_source
 
@@ -143,14 +145,18 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                       max_samples: int | None, token: str, progress=None) -> int:
     """逐分片下载（hf_hub_download 自带断点续传与缓存）并解析。"""
     import io
+    from functools import partial
 
     import pandas as pd
     import torchaudio
     from huggingface_hub import hf_hub_download
 
+    from ..log import LogBar
+
     audio_dir = dest / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
     manifest = dest / "manifest.jsonl"
+    bar = partial(LogBar, log=progress) if progress else None
     n = 0
     with manifest.open("w", encoding="utf-8") as f:
         for fi, (repo_file, revision) in enumerate(files):
@@ -158,17 +164,28 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                 break
             if not revision:  # 索引 API 回退路径：条目是 URL
                 repo_file, revision = _resolve_parquet_ref(repo_file)
+            name = Path(repo_file).name
             if progress:
-                progress(f"{source.id}: 分片 {fi + 1}/{len(files)}")
+                progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 下载 {name}")
             local = hf_hub_download(repo_id=source.repo, filename=repo_file,
                                     revision=revision,
-                                    repo_type="dataset", token=token or None)
+                                    repo_type="dataset", token=token or None,
+                                    **({"tqdm_class": bar} if bar else {}))
+            if progress:
+                size_mb = Path(local).stat().st_size / 1024 / 1024
+                progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 下载完成"
+                         f"（{size_mb:.1f}MB），解析中...")
             df = pd.read_parquet(local)
             t_col = next((c for c in ("sentence", "text", "transcript") if c in df.columns), None)
             s_col = next((c for c in ("client_id", "speaker_id", "speaker", "speaker_name")
                           if c in df.columns), None)
             if t_col is None or "audio" not in df.columns:
+                if progress:
+                    progress(f"{source.id}: 分片 {name} 缺少 audio/text 列，跳过")
                 continue
+            if progress:
+                progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 含 {len(df)} 条，写入音频...")
+            before = n
             for _, row in df.iterrows():
                 if max_samples is not None and n >= max_samples:
                     break
@@ -188,6 +205,9 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                 n += 1
                 if progress and n % 200 == 0:
                     progress(f"{source.id}: 已写入 {n} 条")
+            if progress:
+                progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 完成"
+                         f"（本分片写入 {n - before} 条，累计 {n} 条）")
     return n
 
 
@@ -201,11 +221,15 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
     token = env("HF_TOKEN")
     if token:
         kwargs["token"] = token
+    if progress:
+        progress(f"{source.id}: 建立流式连接...")
     try:
         ds = load_dataset(source.repo, **kwargs)
     except Exception as exc:
         _check_gated(exc, source.repo)
         raise
+    if progress:
+        progress(f"{source.id}: 流式下载中（逐条写入）")
 
     audio_dir = dest / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -231,13 +255,19 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
 def _download_hf(source: Source, dest: Path, max_samples: int | None,
                  progress=None) -> int:
     token = env("HF_TOKEN")
+    if progress:
+        progress(f"{source.id}: 解析分片列表（repo={source.repo} "
+                 f"config={source.config or '-'} split={source.split}）...")
     try:
         files = _parquet_files(source.repo, source.config, source.split, token)
     except Exception as exc:
         _check_gated(exc, source.repo)
-        print(f"[{source.id}] parquet 索引不可用（{exc}），回退流式下载")
+        if progress:
+            progress(f"{source.id}: parquet 索引不可用（{exc}），回退流式下载")
         files = []
     if files:
+        if progress:
+            progress(f"{source.id}: 共 {len(files)} 个分片待下载")
         return _download_parquet(source, files, dest, max_samples, token, progress)
     return _download_stream(source, dest, max_samples, progress)
 
@@ -247,12 +277,35 @@ def _download_aishell3(source: Source, dest: Path, max_samples: int | None,
     tgz = dest / "data_aishell3.tgz"
     if not tgz.exists():
         tgz.parent.mkdir(parents=True, exist_ok=True)
-        print(f"下载 {source.repo} （约 20GB，请耐心等待）...")
-        urllib.request.urlretrieve(source.repo, tgz)
+        if progress:
+            progress(f"{source.id}: 开始下载 {source.repo}（约 20GB，请耐心等待）")
+        with urllib.request.urlopen(source.repo) as resp, tgz.open("wb") as f:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done, last = 0, 0.0
+            while True:
+                chunk = resp.read(1 << 20)  # 1MB
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                now = time.monotonic()
+                if progress and now - last >= 5:  # 每 5 秒报一次进度
+                    last = now
+                    if total:
+                        progress(f"{source.id}: 已下载 {_fmt_size(done)}"
+                                 f"/{_fmt_size(total)} ({100 * done / total:.1f}%)")
+                    else:
+                        progress(f"{source.id}: 已下载 {_fmt_size(done)}")
+        if progress:
+            progress(f"{source.id}: 下载完成（{_fmt_size(done)}）")
     wav_root = dest / "data_aishell3"
     if not wav_root.exists():
+        if progress:
+            progress(f"{source.id}: 解压 data_aishell3.tgz（约 20GB，耗时较长）...")
         with tarfile.open(tgz) as tf:
             tf.extractall(dest)
+        if progress:
+            progress(f"{source.id}: 解压完成")
     content = wav_root / "train" / "content.txt"
     if not content.exists():
         candidates = list(dest.rglob("content.txt"))
@@ -296,6 +349,8 @@ def download_source(source_id: str, max_samples: int | None = None,
         n = _download_hf(source, dest, max_samples, progress)
     if n == 0:
         raise RuntimeError(f"{source_id}: 未下载到任何样本，请检查数据源/权限")
+    if progress:
+        progress(f"{source_id}: 完成，共 {n} 条 → {dest}/manifest.jsonl")
     print(f"[{source_id}] 完成，共 {n} 条 → {dest}/manifest.jsonl")
     return dest
 

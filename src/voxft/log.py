@@ -50,3 +50,57 @@ def file_tail(lines: int = 200) -> str:
         return "（暂无日志）"
     return "".join(p.read_text(encoding="utf-8", errors="replace")
                    .splitlines(keepends=True)[-lines:])
+
+
+def _fmt_size(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(n) < 1024 or unit == "GB":
+            return f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}GB"
+
+
+class LogBar:
+    """tqdm 替身：把进度条转成日志行（供 hf_hub_download 的 tqdm_class 等）。"""
+
+    def __init__(self, *args, **kwargs):
+        self._total = kwargs.get("total") or 0
+        self._desc = (kwargs.get("desc") or "").strip(" :")
+        self._callback = kwargs.pop("log", None)
+        self.n = kwargs.get("initial") or 0
+        self._last_msg = ""
+        self._last_emit = 0.0
+
+    def update(self, n: int = 1) -> None:
+        self.n += n
+        now = time.monotonic()
+        if self._total and now - self._last_emit < 3 and self.n < self._total:
+            return  # 限速：每 3 秒一行，避免刷屏
+        self._last_emit = now
+        pct = 100 * self.n / self._total if self._total else 0
+        msg = (f"{self._desc} " if self._desc else "") + (
+            f"{_fmt_size(self.n)}/{_fmt_size(self._total)} ({pct:.0f}%)"
+            if self._total else f"{self.n} 条")
+        if msg != self._last_msg and self._callback:
+            self._last_msg = msg
+            self._callback(msg)
+
+    def close(self) -> None:
+        if self._total and self.n >= self._total:
+            self._last_msg = ""
+        self.update(0)
+
+    def set_description(self, desc=None, refresh=True) -> None:
+        self._desc = (desc or "").strip(" :")
+
+    def set_postfix(self, ordered_dict=None, refresh=True, **kwargs) -> None:
+        pass
+
+    def refresh(self) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()
