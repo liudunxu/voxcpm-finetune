@@ -9,6 +9,7 @@ data/raw/
 data/processed/
 checkpoints/
 wandb/
+logs/
 *.wav
 *.flac
 

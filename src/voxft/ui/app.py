@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 import gradio as gr
 
 from ..paths import DATA_PROCESSED, CHECKPOINT_DIR, env, load_dotenv
@@ -8,6 +11,7 @@ from ..data import download, pipeline
 from ..train import launcher, yaml_builder
 from ..lora.merge import merge_lora, find_checkpoints, is_lora_dir
 from ..hub.sync import upload_folder
+from ..log import file_tail, get_log
 from .. import infer
 
 PORT = int(env("VOXFT_UI_PORT", "6006"))
@@ -34,43 +38,85 @@ def _dataset_table() -> str:
     return "\n".join(rows) or "（暂无，先下载并加工）"
 
 
+def _stream(log_name: str, fn):
+    """后台线程执行 fn(log)，流式把日志文本刷到页面。"""
+    log = get_log(log_name)
+    result: dict = {}
+
+    def worker():
+        try:
+            result["msg"] = fn(log)
+        except Exception as exc:
+            log(f"失败: {exc}")
+            result["msg"] = None
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    while t.is_alive():
+        yield log.text()
+        time.sleep(0.8)
+    yield log.text()
+
+
 # ---------------- Tab 1: 数据集 ----------------
 
 def do_download(source_id, max_samples):
-    try:
-        dest = download.download_source(source_id,
-                                        int(max_samples) if max_samples else None)
-        return f"完成 → {dest}/manifest.jsonl"
-    except Exception as exc:
-        return f"失败: {exc}"
+    if not source_id:
+        yield "请先选择数据源"
+        return
+
+    def fn(log):
+        sid = source_id.split(" — ")[0]
+        log(f"开始下载 {sid}（max_samples={max_samples or '全量'}）")
+        dest = download.download_source(sid,
+                                        int(max_samples) if max_samples else None,
+                                        progress=log)
+        log(f"完成 → {dest}/manifest.jsonl")
+        return None
+
+    yield from _stream("download", fn)
 
 
 def do_process(source_id, min_dur, max_dur, ref_ratio, val_ratio,
                use_utmos, utmos_min, whisper_lang):
-    try:
+    if not source_id:
+        yield "请先选择原始数据源", _dataset_table()
+        return
+
+    def fn(log):
+        import json
         opts = pipeline.Options(
             min_dur=float(min_dur), max_dur=float(max_dur),
             ref_audio_ratio=float(ref_ratio), val_ratio=float(val_ratio),
             utmos_min=float(utmos_min) if use_utmos else None,
             whisper_lang=whisper_lang or None,
         )
-        import json
-        return json.dumps(pipeline.process_dataset(source_id, opts=opts),
-                          ensure_ascii=False, indent=2), _dataset_table()
-    except Exception as exc:
-        return f"失败: {exc}", _dataset_table()
+        log(f"开始加工 {source_id}，参数: {opts}")
+        stats = pipeline.process_dataset(source_id, opts=opts, progress=log)
+        log("加工完成，统计:\n" + json.dumps(stats, ensure_ascii=False, indent=2))
+        return None
+
+    for text in _stream("process", fn):
+        yield text, _dataset_table()
 
 
 def do_mix(target_ds, target_w, zh_ds, zh_w, out_name):
-    try:
+    if not target_ds:
+        yield "请选择目标语言数据集", _dataset_table()
+        return
+
+    def fn(log):
+        import json
         parts = [(target_ds, float(target_w))]
         if zh_ds:
             parts.append((zh_ds, float(zh_w)))
-        import json
-        return json.dumps(pipeline.mix_manifests(parts, out_name),
-                          ensure_ascii=False, indent=2), _dataset_table()
-    except Exception as exc:
-        return f"失败: {exc}", _dataset_table()
+        log(f"混合 {parts} → {out_name}")
+        res = pipeline.mix_manifests(parts, out_name)
+        log("混合完成:\n" + json.dumps(res, ensure_ascii=False, indent=2))
+        return None
+
+    for text in _stream("mix", fn):
+        yield text, _dataset_table()
 
 
 # ---------------- Tab 2: 训练 ----------------
@@ -103,17 +149,22 @@ def do_build_yaml(ftype, ds_name, r, alpha, lr, num_iters, batch_size,
 
 
 def do_start(config_path, gpus):
+    tlog = get_log("train")
     try:
         if not config_path:
             return "请先填写配置路径", ""
         issues = launcher.preflight(config_path)
         if issues:
+            for i in issues:
+                tlog(f"预检: {i}")
             note = "\n".join(f"- {i}" for i in issues)
             if any(not i.startswith("警告") for i in issues):
                 return f"**预检未通过，未启动：**\n{note}", ""
         log = launcher.start_local(config_path, int(gpus))
+        tlog(f"训练已启动: {config_path}（gpus={gpus}），日志 {log}")
         return f"已启动，日志: {log}", launcher.tail_log(log, 20)
     except Exception as exc:
+        tlog(f"启动失败: {exc}")
         return f"失败: {exc}", ""
 
 
@@ -128,6 +179,7 @@ def do_refresh_log(config_path):
 
 
 def do_stop():
+    get_log("train")("收到停止信号")
     return "已发送停止信号" if launcher.stop_local() else "无运行中任务"
 
 
@@ -146,18 +198,31 @@ def do_synthesize(text, base, lora_dir, ref_audio, ref_text, cfg, steps):
 # ---------------- Tab 4: 模型管理 ----------------
 
 def do_merge(base, lora_dir, out):
-    try:
+    if not lora_dir:
+        yield "请选择 LoRA checkpoint"
+        return
+
+    def fn(log):
+        log(f"开始合并: 基座={base or env('VOXCPM_BASE_PATH')} lora={lora_dir} → {out}")
         p = merge_lora(base or env("VOXCPM_BASE_PATH"), lora_dir, out)
-        return f"完成 → {p}"
-    except Exception as exc:
-        return f"失败: {exc}"
+        log(f"合并完成 → {p}")
+        return None
+
+    yield from _stream("merge", fn)
 
 
 def do_upload(local_dir, repo_id, kind):
-    try:
-        return upload_folder(local_dir, repo_id, kind)
-    except Exception as exc:
-        return f"失败: {exc}"
+    if not local_dir or not repo_id:
+        yield "请填写本地目录与仓库 ID"
+        return
+
+    def fn(log):
+        log(f"上传 {local_dir} → {repo_id}（{kind}）...")
+        url = upload_folder(local_dir, repo_id, kind)
+        log(f"上传完成: {url}")
+        return None
+
+    yield from _stream("upload", fn)
 
 
 def _ckpt_choices() -> list[str]:
@@ -180,7 +245,7 @@ def build_ui() -> gr.Blocks:
                 src = gr.Dropdown(source_choices, label="数据源（含许可）")
                 max_n = gr.Number(label="最大样本数（空=全量）", precision=0)
                 dl_btn = gr.Button("下载", variant="primary")
-            dl_out = gr.Textbox(label="下载结果")
+            dl_out = gr.Textbox(label="下载日志（实时）", lines=10, interactive=False)
             dl_btn.click(lambda s, n: do_download(s.split(" — ")[0], n),
                          [src, max_n], dl_out)
 
@@ -197,7 +262,7 @@ def build_ui() -> gr.Blocks:
                 p_wlang = gr.Dropdown(["", "th", "tl", "zh"], value="",
                                       label="Whisper 转写校验语言（空=关闭，需 --group qc）")
                 p_btn = gr.Button("开始加工", variant="primary")
-            p_out = gr.Textbox(label="加工统计", lines=8)
+            p_out = gr.Textbox(label="加工日志（实时）", lines=10, interactive=False)
             p_btn.click(do_process,
                         [p_src, p_min, p_max, p_ref, p_val,
                          p_utmos_on, p_utmos, p_wlang],
@@ -211,7 +276,7 @@ def build_ui() -> gr.Blocks:
                 m_zw = gr.Number(0.15, label="权重")
                 m_name = gr.Textbox("mixed_th_zh", label="输出名称")
                 m_btn = gr.Button("混合", variant="primary")
-            m_out = gr.Textbox(label="混合结果", lines=5)
+            m_out = gr.Textbox(label="混合日志", lines=6, interactive=False)
             m_btn.click(do_mix, [m_target, m_tw, m_zh, m_zw, m_name],
                         [m_out, ds_table])
 
@@ -289,7 +354,7 @@ def build_ui() -> gr.Blocks:
                 mg_lora = gr.Dropdown(choices=_ckpt_choices()[1:], label="LoRA checkpoint")
                 mg_out = gr.Textbox("checkpoints/merged", label="输出目录")
             mg_btn = gr.Button("合并", variant="primary")
-            mg_res = gr.Markdown()
+            mg_res = gr.Textbox(label="合并日志", lines=8, interactive=False)
             mg_btn.click(do_merge, [mg_base, mg_lora, mg_out], mg_res)
 
             gr.Markdown("---\n**同步到 HuggingFace**")
@@ -299,8 +364,15 @@ def build_ui() -> gr.Blocks:
                                      label="仓库 ID")
                 up_kind = gr.Radio(["model", "dataset"], value="model", label="类型")
             up_btn = gr.Button("上传", variant="primary")
-            up_res = gr.Markdown()
+            up_res = gr.Textbox(label="上传日志", lines=6, interactive=False)
             up_btn.click(do_upload, [up_dir, up_repo, up_kind], up_res)
+
+        with gr.Tab("日志"):
+            gr.Markdown("统一运行日志 `logs/voxft.log`（下载 / 加工 / 混合 / 训练 / 合并 / 上传）")
+            g_log = gr.Textbox(file_tail(), label="voxft.log 尾部 200 行",
+                               lines=24, interactive=False)
+            g_btn = gr.Button("刷新")
+            g_btn.click(lambda: file_tail(), outputs=g_log)
 
     return demo
 

@@ -104,9 +104,17 @@ def process_dataset(source_id: str, out_name: str | None = None,
     if max_items:
         rows = rows[:max_items]
 
-    whisper = _whisper_model(opts.whisper_lang) if opts.whisper_lang else None
+    whisper = None
+    if opts.whisper_lang:
+        if progress:
+            progress(f"加载 Whisper 质检模型（{opts.whisper_lang}，首次需下载）...")
+        whisper = _whisper_model(opts.whisper_lang)
+        if progress:
+            progress("Whisper 质检模型就绪")
     if opts.utmos_min is not None:
         from ..qc.utmos import score_wav
+        if progress:
+            progress(f"UTMOS 质检已启用（阈值 {opts.utmos_min}，首次调用加载权重）")
     else:
         score_wav = None
 

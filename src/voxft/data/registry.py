@@ -41,7 +41,7 @@ SOURCES: list[Source] = [
     # ---- Tagalog ----
     Source(
         "fleurs_tl", "tl", "FLEURS Tagalog（~12h，干净朗读）",
-        "hf_dataset", "google/fleurs", "tl_ph", "train",
+        "hf_dataset", "google/fleurs", "fil_ph", "train",
         "CC-BY-4.0", "高质锚点",
     ),
     Source(
@@ -67,7 +67,7 @@ SOURCES: list[Source] = [
     ),
     Source(
         "fleurs_zh", "zh", "FLEURS 普通话（~10h，干净朗读）",
-        "hf_dataset", "google/fleurs", "cmn_hans", "train",
+        "hf_dataset", "google/fleurs", "cmn_hans_cn", "train",
         "CC-BY-4.0", "少量高质补充",
     ),
 ]
