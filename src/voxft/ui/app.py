@@ -246,8 +246,7 @@ def build_ui() -> gr.Blocks:
                 max_n = gr.Number(label="最大样本数（空=全量）", precision=0)
                 dl_btn = gr.Button("下载", variant="primary")
             dl_out = gr.Textbox(label="下载日志（实时）", lines=10, interactive=False)
-            dl_btn.click(lambda s, n: do_download(s.split(" — ")[0], n),
-                         [src, max_n], dl_out)
+            dl_btn.click(do_download, [src, max_n], dl_out)
 
             gr.Markdown("---\n**加工**（16k 重采样 → 裁尾静音 → 响度归一化 → 时长过滤 → 可选质检 → ref_audio 配对 → 切分）")
             with gr.Row():
