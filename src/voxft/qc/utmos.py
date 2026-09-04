@@ -247,13 +247,16 @@ class MultiheadAttention(nn.Module):
 # ---------------- 评分器封装 ----------------
 
 _WEIGHTS_NAME = "utmos22_strong_step7459_v1.pt"
+_GITHUB_URL = ("https://github.com/tarepan/SpeechMOS/releases/download/"
+               f"v1.0.0/{_WEIGHTS_NAME}")
 _SCORER: "tuple[UTMOS22Strong, str] | None" = None
 _SCORER_TRIED = False
+_SCORER_ERR = ""
 
 
 def get_scorer():
-    """返回 (model, device)；权重不可用时返回 None（质检自动跳过该项）。"""
-    global _SCORER, _SCORER_TRIED
+    """返回 (model, device)；权重不可用时返回 None（错误见 last_error()）。"""
+    global _SCORER, _SCORER_TRIED, _SCORER_ERR
     if _SCORER_TRIED:
         return _SCORER
     _SCORER_TRIED = True
@@ -262,18 +265,28 @@ def get_scorer():
     try:
         local = MODEL_DIR / "utmos" / _WEIGHTS_NAME
         if not local.exists():
-            from huggingface_hub import hf_hub_download
             local.parent.mkdir(parents=True, exist_ok=True)
-            p = hf_hub_download("tarepan/SpeechMOS", _WEIGHTS_NAME)
-            local.write_bytes(open(p, "rb").read())
+            try:
+                from huggingface_hub import hf_hub_download
+                p = hf_hub_download("tarepan/SpeechMOS", _WEIGHTS_NAME)
+                local.write_bytes(open(p, "rb").read())
+            except Exception:
+                # HF 仓库不可达时回退 GitHub release
+                import urllib.request
+                urllib.request.urlretrieve(_GITHUB_URL, local)
         model = UTMOS22Strong()
         model.load_state_dict(torch.load(local, map_location="cpu", weights_only=True))
         device = env("VOXFT_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
         model.to(device).eval()
         _SCORER = (model, device)
     except Exception as exc:
-        print(f"[utmos] 评分器不可用，跳过 UTMOS 质检: {exc}")
+        _SCORER_ERR = str(exc)
+        print(f"[utmos] 评分器不可用: {exc}")
     return _SCORER
+
+
+def last_error() -> str:
+    return _SCORER_ERR
 
 
 def score_wav(wav: np.ndarray, sr: int) -> float | None:
