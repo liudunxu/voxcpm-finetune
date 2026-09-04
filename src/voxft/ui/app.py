@@ -130,7 +130,8 @@ def do_process(source_id, min_dur, max_dur, ref_ratio, val_ratio,
 
 def do_mix(target_ds, target_w, zh_ds, zh_w, out_name):
     if not target_ds:
-        yield "请选择目标语言数据集", _dataset_table()
+        yield ("请选择目标语言数据集", _dataset_table(), _ds_choices_update(),
+               _ds_choices_update(), _ds_choices_update())
         return
 
     def fn(log):
@@ -144,7 +145,8 @@ def do_mix(target_ds, target_w, zh_ds, zh_w, out_name):
         return None
 
     for text in _stream("mix", fn):
-        yield text, _dataset_table()
+        yield text, _dataset_table(), _ds_choices_update(), _ds_choices_update(), \
+            _ds_choices_update()
 
 
 # ---------------- Tab 2: 训练 ----------------
@@ -340,8 +342,6 @@ def build_ui() -> gr.Blocks:
                 m_name = gr.Textbox("mixed_th_zh", label="输出名称")
                 m_btn = gr.Button("混合", variant="primary")
             m_out = gr.Textbox(label="混合日志", lines=6, interactive=False)
-            m_btn.click(do_mix, [m_target, m_tw, m_zh, m_zw, m_name],
-                        [m_out, ds_table])
 
         with gr.Tab("训练") as tab_train:
             with gr.Row():
@@ -358,6 +358,8 @@ def build_ui() -> gr.Blocks:
                         [p_src, p_min, p_max, p_ref, p_val,
                          p_utmos_on, p_utmos, p_wlang],
                         [p_out, ds_table, m_target, m_zh, ft_ds])
+            m_btn.click(do_mix, [m_target, m_tw, m_zh, m_zw, m_name],
+                        [m_out, ds_table, m_target, m_zh, ft_ds])
             with gr.Row():
                 ft_iters = gr.Number(1000, label="训练步数")
                 ft_bs = gr.Number(2, label="batch_size（音频序列长，勿调大）")
