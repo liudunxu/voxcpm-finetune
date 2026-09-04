@@ -4,7 +4,11 @@ import sys
 import time
 from pathlib import Path
 
+import torch
+
 from .paths import CHECKPOINT_DIR, VOXCPM_REPO, env
+
+torch.set_float32_matmul_precision("high")  # 启用 TF32，消警告并提速
 
 _MODEL = None
 _MODEL_KEY = None
