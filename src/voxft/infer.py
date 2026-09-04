@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import time
 from pathlib import Path
@@ -72,9 +73,18 @@ def switch_lora(lora_dir: str | None) -> str:
         return f"切换失败: {exc}"
 
 
+def clean_control(control: str | None) -> str:
+    """清掉控制指令里的括号，否则会破坏 "(控制指令)正文" 这个前缀格式。"""
+    return re.sub(r"[()（）]", "", (control or "")).strip()
+
+
 def _gen_kwargs(text: str, ref_audio: str | None, ref_text: str | None,
                 cfg_value: float, inference_timesteps: int,
-                seed: int | None) -> dict:
+                seed: int | None, control: str | None = None) -> dict:
+    control = clean_control(control)
+    if control:
+        # VoxCPM2 的情绪/语气控制没有独立条件通道，就是文本前缀（官方 cli.build_final_text）。
+        text = f"({control}){text}"
     kwargs = {
         "text": text,
         "cfg_value": cfg_value,
@@ -85,7 +95,9 @@ def _gen_kwargs(text: str, ref_audio: str | None, ref_text: str | None,
     }
     if ref_audio:
         kwargs["reference_wav_path"] = ref_audio
-        if ref_text:
+        # 带控制前缀时只能走 reference-only：combined 模式会拼成
+        # prompt_text + "(控制)正文"，前缀跑到句中就失效了（官方 app 同样规避）
+        if ref_text and not control:
             kwargs["prompt_wav_path"] = ref_audio
             kwargs["prompt_text"] = ref_text
     if seed is not None:
@@ -108,24 +120,26 @@ def synthesize(text: str, base_path: str | None = None,
                lora_dir: str | None = None,
                ref_audio: str | None = None, ref_text: str | None = None,
                cfg_value: float = 2.0, inference_timesteps: int = 20,
-               seed: int | None = None) -> tuple[str, float]:
-    """生成语音，返回 (wav 路径, 耗时秒)。"""
+               seed: int | None = None, control: str | None = None
+               ) -> tuple[str, float]:
+    """生成语音，返回 (wav 路径, 耗时秒)。control 为情绪/语气 prompt（中英文）。"""
     model = get_model(base_path, lora_dir)
     return _run(model, _gen_kwargs(text, ref_audio, ref_text,
-                                   cfg_value, inference_timesteps, seed))
+                                   cfg_value, inference_timesteps, seed, control))
 
 
 def synthesize_ab(text: str, base_path: str | None, lora_dir: str,
                   ref_audio: str | None = None, ref_text: str | None = None,
                   cfg_value: float = 2.0, inference_timesteps: int = 20,
-                  seed: int = 42):
+                  seed: int = 42, control: str | None = None):
     """A/B 对比：同一模型热切换，分别用基座与 LoRA 合成同一文本。
 
     返回 ((基座wav, 秒), (LoRA wav, 秒), 切换状态)。固定 seed 保证可比。
+    验收微调是否"更听指令"就看这里：同一 control 前缀，基座 vs LoRA。
     """
     model = get_model(base_path, None)
     kwargs = _gen_kwargs(text, ref_audio, ref_text,
-                         cfg_value, inference_timesteps, seed)
+                         cfg_value, inference_timesteps, seed, control)
     switch_lora(None)
     r_base = _run(model, kwargs)
     status = switch_lora(lora_dir)

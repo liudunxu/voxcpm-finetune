@@ -38,46 +38,55 @@ echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
 
 ## 典型流程（中文 → 泰语/Tagalog）
 
-1. **数据集页**：选数据源（泰语首选 CMKL Porjai 700h；Tagalog 首选 FLEURS+CV22）→ 下载 → 加工（16k/裁尾静音/响度归一化/3-30s/可选 UTMOS·Whisper 质检）
+1. **数据集页**：选数据源（表现力主力：泰语 `thai_ser`、Tagalog `filipino_emotion`；锚点：FLEURS/CV22）→ 下载 → 加工（16k/裁静音/3-30s/质检/表现力指标/伪说话人聚类/按说话人响度对齐/控制前缀/ref 配对）
 2. **混合**：目标语言为主 + 中文防遗忘（短剧泰语+Tagalog 场景见下方「数据策略」）
-3. **训练页**：生成配置（默认 LoRA，r=32/64）→ 本机启动或复制命令到 GPU 机；中断后用同一配置重启即自动从 `latest/` 断点续训
-4. **验证效果**：看 `loss/diff`、`val/loss` 曲线（wandb/TensorBoard）→ 听验证音频 → 试听页 A/B 对比各 checkpoint → 必要时 Whisper 回写核对文本贴合度；出现"忽略文本/停不下来"即回退更早 checkpoint
+3. **训练页**：生成配置（默认 LoRA r=64/alpha=64/dropout=0.05，`max_grad_norm=1.0`）→ 本机启动或复制命令到 GPU 机；中断后用同一配置重启即自动从 `latest/` 断点续训
+4. **验证效果**：看 `loss/diff`、`val/loss` 曲线（wandb/TensorBoard）→ 听验证音频 → 试听页 A/B 对比（可填情绪 prompt，种子固定）→ `voxft.eval` 看贴合度/截断率/语调起伏；出现"忽略文本/停不下来"即回退更早 checkpoint
 5. **模型管理页**：merge LoRA 导出完整模型 → 上传 HuggingFace
 
-## 数据策略（短剧配音：泰语 + Tagalog，目标：自然、去"念稿感"）
+## 数据策略（短剧配音：泰语 + Tagalog，目标：自然、有情绪、不像念稿）
 
 场景：短剧翻译配音，音色靠**参考音频零样本克隆**（对齐 OmniVoice 生产）。**首要目标是自然、有情绪、不像念稿**，其次才是发音准。
 
+> 先分清责任层：**同角色跨句跨集变声、角色选角不贴、翻译用词、非语言发声（笑/痛呼）、整体音量**都不是微调能解的，属于配音链路（固定 voice bank + 固定 seed + ref 去噪 + MT 层）。微调能解的是：**念稿感 / 目标语言发音与重音 / Taglish 句内英文词 / 词被吃掉 / 语速失控 / 响应情绪 prompt**。
+
 **两类语料，作用不同（别混为一谈）**
-- **朗读语料**（FLEURS / CV22 / filipino_speech）：教发音准、吐字清，是"锚点"。但它们本身是念稿风格，**占比过高会加重念稿感**。
-- **情感/口语语料**（`filipino_emotion` 等）：教语速起伏、停顿、情绪、语气——**这才是去念稿感的主力**，应占目标语言混合的 30–50%。
+- **朗读语料**（FLEURS / CV22 / Porjai）：教发音准、吐字清，是"锚点"。但它们本身是念稿风格，**占比过高会加重念稿感**。
+- **情感/口语语料**（`thai_ser` / `filipino_emotion`）：教语速起伏、停顿、情绪、语气——**这才是去念稿感的主力**，应占目标语言混合的 30–50%。
 
 **数据源优先级**
 
 | 语种 | 表现力主力（去念稿） | 发音锚点 |
 |---|---|---|
-| 泰语 | **缺口**：仅学术小语料（EMOLA/THAI-SER，不在 HF，待找渠道） | `cv22_th` + `fleurs_th`；Porjai（录音棚，先小样本） |
-| Tagalog | `filipino_emotion`（1.1 万、6 情绪、无文本→自动转写） | `filipino_speech` + `fleurs_tl` |
+| 泰语 | **`thai_ser`**（airesearch/thai-ser，2.8 万条/41h，200 名演员，5 情绪，有 `actor_id`；`turn_type=impro` 是即兴对话，最值钱） | `cv22_th` + `fleurs_th`；Porjai（录音棚，先小样本） |
+| Tagalog | `filipino_emotion`（1.1 万条、6 情绪、中位 3.0s、无文本→自动转写） | `fleurs_tl`；`filipino_speech`（见下方警告，只当补充） |
+
+**⚠️ `filipino_speech` 不要当主力**：22 万条里中位时长 0.63s、`num_words` 中位数为 1（几乎全是**孤立单词**录音），`speech_type=machine` 占 12.6 万条。把孤立词等间隔粘成长样本，训出来就是"报菜名"式匀速无起伏的念稿声。registry 已自动过滤 `machine` 与 `num_words<4`，剩余部分按 `source_file` 同一次录音拼到 ~6s（句末补标点、停顿 0.15–0.5s 抖动）。
 
 **去念稿感三杠杆**（微调只是其一，需并行）
-1. **情感语料微调**：把模型韵律先验往"有起伏"推；但 LoRA 是微调非重塑，别指望单独根治。
-2. **参考音频必须有情绪**：克隆输出韵律主要由参考音频决定，务必用**带情绪的台词**做参考，别用平淡朗读。
-3. **推理参数放松**：`cfg_value` 偏高会更贴文本但更僵，试 1.2–1.6（生产 2.0）。
+1. **情感语料 + 控制前缀微调**：把模型韵律先验往"有起伏"推，并让它在目标语言下听得懂中英文情绪指令。
+2. **参考音频必须有情绪**：克隆输出韵律主要由参考音频决定，务必用**带情绪的台词**做参考，别用平淡朗读；每个角色一条固定 5–10s 干净 ref，全剧全集复用（这条同时解决"变声"）。
+3. **推理参数放松**：`cfg_value` 偏高会更贴文本但更僵，试 1.2–1.6（生产 2.0）；seed 固定。
 
 **关键规则**（加工页已**自动配置**，无需手选）
-- 有说话人列的源（`filipino_speech`、CV22 泰语镜像）：自动 `ref_audio=0.4` 同说话人配对；无说话人列的源（FLEURS 全系/`filipino_emotion`/thai20k/Porjai）：自动 `ref_audio=0`——跨说话人乱配会损害克隆
-- 质检自动分档：干净源不质检；众包/未知源自动 **Whisper 转写校验**；无文本列的源（`filipino_emotion` 等）自动 **large-v3 转写 + 语种过滤**（转写结果写回原始清单复用）
-- 短句语料（`filipino_speech`，中位 0.6s）：自动**同说话人拼接**成 ~10s 样本
-- 一个 LoRA 覆盖两语种：建议 **泰语 45% + Tagalog 45% + 中文 10%**；每个目标语言内部，情感语料占 30–50%
-- **验收以"更像人说话"为准**：同一有情绪的参考音频，基座 vs LoRA A/B 对比——念稿感下降 + 音色还原不降才算通过
+- **控制前缀**：VoxCPM2 的情绪控制就是文本前缀 `(控制指令)正文`，没有独立条件通道。加工会按情绪标签 + 实测语速/音量，给 25–50% 样本自动生成中英文前缀（如 `(愤怒地，语速快)`），其余保持裸文本。**训练文本全裸会把基座的情绪 prompt 能力冲掉**——这是"微调后情绪反而更不灵"的主因
+- **ref 配对**：有说话人列的源自动 0.4 同说话人配对；无说话人列的源（FLEURS 全系 / `filipino_emotion`）走 MFCC **伪说话人聚类**后再配对；ref 候选限定 3–10s 且优先高信噪比，对齐线上参考音频分布
+- **响度**：按说话人整体增益对齐到 −24 dBFS，不做逐条峰值归一（逐条归一会抹掉"音量=情绪强度"）
+- **表现力指标**：每条样本落 `f0_std_st`（语调起伏，半音）/ `energy_std_db` / `rate` / `snr_db`，可用 SNR 与 f0 起伏门限筛掉噪声样本和平读样本
+- 质检自动分档：干净源不质检；众包/未知源自动 Whisper 转写校验；无文本列的源自动 large-v3 转写 + 语种过滤（转写结果写回原始清单复用）
+- 一个 LoRA 覆盖两语种：建议 **泰语 45% + Tagalog 45% + 中文 10%**；每个目标语言内部，情感语料占 30–50%；混合时小语料重复上限 3×
+- **验收看三个数**（`voxft.eval`）：文本贴合度↑、**截断率↓**（"词被吃掉"）、**语调起伏↑**（"robotic"）；再用同一有情绪的参考音频做基座 vs LoRA A/B
 
 ## 命令速查
 
 ```bash
 uv run python -m voxft.data.download --source fleurs_th --max-samples 100
-uv run python -m voxft.data.pipeline --source fleurs_th --max-items 50 --utmos-min 3.5
+uv run python -m voxft.data.pipeline --source thai_ser --max-items 200 --control-ratio 0.5 --min-snr-db 12
 uv run python -m voxft.train.launcher configs/xxx.yaml 1   # 打印训练命令
 uv run python -m voxft.lora.merge --lora-dir checkpoints/run/latest --out checkpoints/merged
+# 客观评测：贴合度↑ / 截断率↓ / 语调起伏↑（需 --group qc）
+uv run python -m voxft.eval base checkpoints/run/latest --lang tl \
+    --ref-audio ref.wav --control "愤怒地，语速快"
 uv run pytest
 ```
 
@@ -85,10 +94,12 @@ uv run pytest
 
 | 数据源 | 许可 |
 |---|---|
+| THAI-SER（泰语情感 41h） | CC-BY-SA-4.0（SA 有传染性，商用前确认权重分发口径） |
 | CMKL Porjai（泰 700h） | CC-BY-SA-4.0 |
 | FLEURS | CC-BY-4.0 |
 | hotdogs/thai-speech-20k | CC-BY-4.0 |
 | Common Voice 22（社区镜像 fsicoli） | CC0（官方已撤架，镜像无需条款） |
 | AISHELL-3 | Apache-2.0 |
 | welyjesch/tagalog_tts、filipino-emotion-tts | 未知，商用前核实 |
+| sapinsapin/filipinospeechcorpus | MIT（但绝大部分是孤立单词，见「数据策略」警告） |
 | Speech-data/Filipino-Tagalog | CC-BY-NC-ND（非商用） |

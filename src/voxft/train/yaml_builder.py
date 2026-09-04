@@ -13,7 +13,7 @@ DEFAULTS = {
     "out_sample_rate": 48000,    # 仅推理用
     "batch_size": 2,             # 官方示例值；音频序列长，激活显存大，勿调大
     "grad_accum_steps": 8,       # 等效 batch = 2 × 8 = 16
-    "num_workers": 2,
+    "num_workers": 8,           # 官方 v2 配置值；音频解码是瓶颈，别调小
     "num_iters": 1000,
     "log_interval": 10,
     "valid_interval": 250,
@@ -21,12 +21,14 @@ DEFAULTS = {
     "weight_decay": 0.01,
     "warmup_steps": 100,
     "max_batch_tokens": 8192,
-    "max_grad_norm": 0.0,        # 0 = 不裁剪（官方默认）；训练不稳时可试 1.0
+    "max_grad_norm": 1.0,        # 官方 v2 配置值；情感语料动态大，更容易出梯度尖峰
     "diff_loss_weight": 1.0,
     "stop_loss_weight": 1.0,
 }
 
-LORA_PRESET = {"learning_rate": 1e-4, "r": 32, "alpha": 32, "dropout": 0.0}
+# r=64/alpha=64：语言 + 风格双适配（纯说话人适配用 32 就够）；
+# dropout 0.05：情感语料体量小（万级），0 容易几百步就过拟合到固定腔调
+LORA_PRESET = {"learning_rate": 1e-4, "r": 64, "alpha": 64, "dropout": 0.05}
 FULL_PRESET = {"learning_rate": 1e-5}  # 约为 LoRA 的 1/10，防灾难性遗忘
 
 

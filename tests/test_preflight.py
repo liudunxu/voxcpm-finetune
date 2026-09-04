@@ -6,7 +6,11 @@ import yaml
 from voxft.train.launcher import preflight
 
 
-def _cfg(tmp_path, train=None, pre="openbmb/VoxCPM2"):
+def _cfg(tmp_path, train=None, pre=None):
+    if pre is None:  # 训练脚本要求本地基座目录，裸 HF 仓库 ID 本身就是致命问题
+        base = tmp_path / "base"
+        base.mkdir(exist_ok=True)
+        pre = str(base)
     c = {
         "pretrained_path": pre,
         "train_manifest": train or "",
