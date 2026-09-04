@@ -12,22 +12,58 @@ import soundfile as sf
 
 from ..log import _fmt_size
 from ..paths import DATA_RAW, env, load_dotenv
-from .registry import SOURCES, Source, get_source
+from .registry import SOURCES, Source, get_source, row_passes
 
 _CJK = re.compile(r"[\u4e00-\u9fff]")
 
+_TEXT_COLS = ("sentence", "text", "transcript", "transcription", "raw_transcription")
+_SPK_COLS = ("client_id", "speaker_id", "speaker", "speaker_name")
+_MISSING = {"", "none", "nan", "null"}
 
-def _detect_cols(row: dict) -> tuple[str | None, str | None, str | None]:
-    """探测音频/文本/说话人列名，兼容不同数据集的命名习惯。"""
-    audio = next(
+
+def _pick(candidates, columns) -> str | None:
+    return next((c for c in candidates if c in columns), None)
+
+
+def _detect_cols(row: dict, source: Source | None = None
+                 ) -> tuple[str | None, str | None, str | None]:
+    """探测音频/文本/说话人列名；数据源在 registry 里指定了列则优先用它的。"""
+    cols = list(row)
+    audio = (source.audio_column(cols) if source else None) or next(
         (k for k, v in row.items() if isinstance(v, dict) and "array" in v), None
     ) or ("audio" if "audio" in row else None)
-    text = next((k for k in ("sentence", "text", "transcript") if k in row), None)
-    speaker = next(
-        (k for k in ("client_id", "speaker_id", "speaker", "speaker_name") if k in row),
-        None,
-    )
+    text = _pick((source.text_cols if source else ()) or _TEXT_COLS, cols)
+    speaker = _pick((source.speaker_cols if source else ()) or _SPK_COLS, cols)
     return audio, text, speaker
+
+
+def _clean_text(value) -> str:
+    """把 'None'/'nan'/空 统一成空串（THAI-SER 的 impro 轮次 script_sent 就是字符串 'None'）。"""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in _MISSING else text
+
+
+def _emotion(source: Source, value) -> str:
+    """把情绪列的取值规范成小写名字；ClassLabel 整数按 label_names 解码。"""
+    if value is None:
+        return ""
+    if source.label_names is not None and source.label_names:
+        try:
+            return source.label_names[int(value)]
+        except (TypeError, ValueError, IndexError):
+            pass
+    return _clean_text(value).lower()
+
+
+def _audio_bytes(value):
+    """音频单元格 → 原始字节；兼容 {bytes,path} 结构体与被包成单元素列表的情况。"""
+    if isinstance(value, (list, tuple)):
+        value = value[0] if len(value) else None
+    if isinstance(value, dict):
+        return value.get("bytes")
+    return value
 
 
 _GATED_HINT = ("为受限（gated）数据集：请先在 "
@@ -115,12 +151,17 @@ def _parquet_files(repo: str, config: str, split: str,
 
 
 def _write_record(f, audio_dir: Path, n: int, wav, sr: int, text: str,
-                  speaker: str | None) -> None:
+                  speaker: str | None, emotion: str = "",
+                  session: str = "") -> None:
     path = audio_dir / f"{n:07d}.wav"
     sf.write(path, wav, sr)
     rec = {"audio": str(path), "text": text}
     if speaker:
         rec["speaker"] = speaker
+    if emotion:
+        rec["emotion"] = emotion     # → 加工时转成 (情绪) 控制前缀
+    if session:
+        rec["session"] = session     # → 拼接只在同一次录音内进行
     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
@@ -194,27 +235,31 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 下载完成"
                          f"（{size_mb:.1f}MB），解析中...")
             df = pd.read_parquet(local)
-            t_col = next((c for c in ("sentence", "text", "transcript",
-                                      "transcription", "raw_transcription")
-                          if c in df.columns), None)
-            s_col = next((c for c in ("client_id", "speaker_id", "speaker", "speaker_name")
-                          if c in df.columns), None)
-            if "audio" not in df.columns or (t_col is None and not source.needs_transcribe):
+            cols = list(df.columns)
+            a_col = source.audio_column(cols)
+            t_col = _pick(source.text_cols or _TEXT_COLS, cols)
+            s_col = _pick(source.speaker_cols or _SPK_COLS, cols)
+            e_col = source.emotion_col if source.emotion_col in cols else None
+            g_col = source.session_col if source.session_col in cols else None
+            if a_col is None or (t_col is None and not source.needs_transcribe):
                 if progress:
                     progress(f"{source.id}: 分片 {name} 缺少 audio/text 列"
-                             f"（实际列: {list(df.columns)}），跳过")
+                             f"（实际列: {cols}），跳过")
                 continue
             if progress:
-                progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 含 {len(df)} 条，写入音频...")
-            before = n
+                progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 含 {len(df)} 条"
+                         f"（音频列 {a_col}，文本列 {t_col or '无→待转写'}），写入音频...")
+            before, dropped = n, 0
             for _, row in df.iterrows():
                 if max_samples is not None and n >= max_samples:
                     break
-                text = str(row[t_col] or "").strip() if t_col else ""
-                if t_col and not text:
+                if not row_passes(source, lambda c: row[c] if c in row else None):
+                    dropped += 1
                     continue
-                a = row["audio"]
-                raw = a["bytes"] if isinstance(a, dict) else a
+                text = _clean_text(row[t_col]) if t_col else ""
+                if t_col and not text and not source.needs_transcribe:
+                    continue
+                raw = _audio_bytes(row[a_col])
                 if raw is None:
                     continue
                 try:
@@ -222,13 +267,15 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                 except Exception:
                     continue
                 _write_record(f, audio_dir, n, wav.mean(0).numpy(), sr, text,
-                              str(row[s_col]) if s_col else None)
+                              str(row[s_col]) if s_col else None,
+                              _emotion(source, row[e_col]) if e_col else "",
+                              _clean_text(row[g_col]) if g_col else "")
                 n += 1
                 if progress and n % 200 == 0:
                     progress(f"{source.id}: 已写入 {n} 条")
             if progress:
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 完成"
-                         f"（本分片写入 {n - before} 条，累计 {n} 条）")
+                         f"（写入 {n - before} 条，行过滤丢弃 {dropped} 条，累计 {n} 条）")
     return n
 
 
@@ -260,14 +307,22 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
         for row in ds:
             if max_samples is not None and n >= max_samples:
                 break
-            a_col, t_col, s_col = _detect_cols(row)
+            a_col, t_col, s_col = _detect_cols(row, source)
             if a_col is None or (t_col is None and not source.needs_transcribe):
+                continue
+            if not row_passes(source, row.get):
                 continue
             a = row[a_col]
             array, sr = a.get("array"), a.get("sampling_rate") or 16000
-            text = str(row[t_col]).strip() if t_col else ""
+            text = _clean_text(row[t_col]) if t_col else ""
+            if t_col and not text and not source.needs_transcribe:
+                continue
             _write_record(f, audio_dir, n, array, sr, text,
-                          str(row[s_col]) if s_col else None)
+                          str(row[s_col]) if s_col else None,
+                          _emotion(source, row.get(source.emotion_col))
+                          if source.emotion_col else "",
+                          _clean_text(row.get(source.session_col))
+                          if source.session_col else "")
             n += 1
             if progress and n % 100 == 0:
                 progress(f"{source.id}: 已下载 {n} 条")

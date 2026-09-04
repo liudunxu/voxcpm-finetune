@@ -4,8 +4,11 @@ import numpy as np
 import soundfile as sf
 
 from voxft.data.pipeline import (
-    Options, mix_manifests, peak_normalize, process_dataset, trim_silence,
+    Clip, Options, _concatenated, apply_control_prefixes, apply_speaker_gain,
+    audio_metrics, cluster_pseudo_speakers, mix_manifests, peak_normalize,
+    process_dataset, rms_dbfs, trim_silence,
 )
+from voxft.data.registry import get_source, row_passes
 from voxft.paths import DATA_PROCESSED, DATA_RAW
 
 
@@ -60,3 +63,133 @@ def test_process_and_mix():
     mixed = (DATA_PROCESSED / "t_mixed" / "train.jsonl").read_text().splitlines()
     assert len(mixed) > 0
     assert (DATA_PROCESSED / "t_mixed" / "mix.json").exists()
+
+
+# ---------------------------------------------------------------- 去念稿感相关
+
+def _tone(freq, dur, sr=16000, amp=0.3):
+    return (amp * np.sin(2 * np.pi * freq
+                         * np.arange(int(dur * sr)) / sr)).astype(np.float32)
+
+
+def test_concat_stays_in_session_and_adds_punctuation():
+    """拼接必须限定在同一次录音内，且句间补标点——否则训出报菜名式念稿声。"""
+    import random
+    clips = [Clip(_tone(300, 1.0), "alpha", "spk0", session="s1"),
+             Clip(_tone(310, 1.0), "beta", "spk0", session="s1"),
+             Clip(_tone(320, 1.0), "gamma", "spk0", session="s2")]
+    out = list(_concatenated(iter(clips), target=1.8, max_dur=30.0,
+                             sep=". ", rng=random.Random(0)))
+    texts = [c.text for c in out]
+    assert any("alpha. beta" in t for t in texts), texts
+    assert all("gamma" not in t or t.startswith("gamma") for t in texts), texts
+    # 段间停顿必须抖动，不能是固定 0.3s
+    joined = next(c for c in out if "alpha" in c.text)
+    assert len(joined.wav) / 16000 > 2.0
+
+
+def test_thai_concat_keeps_space_not_period():
+    """泰语不用句点，句间是空格；给泰语补 '.' 会让训练文本偏离真实分布。"""
+    import random
+    clips = [Clip(_tone(300, 1.0), "ก", "s", session="x"),
+             Clip(_tone(300, 1.0), "ข", "s", session="x")]
+    out = list(_concatenated(iter(clips), 1.8, 30.0, " ", random.Random(0)))
+    assert "." not in out[0].text and "ก ข" in out[0].text
+
+
+def test_speaker_gain_preserves_relative_dynamics():
+    """按说话人整体增益：喊叫与耳语的相对强弱必须保留（逐条归一会抹平它）。"""
+    import soundfile as sf
+    d = DATA_PROCESSED / "t_gain"
+    d.mkdir(parents=True, exist_ok=True)
+    recs = []
+    for name, amp in (("loud", 0.6), ("quiet", 0.06)):
+        w = _tone(220, 1.0, amp=amp)
+        p = d / f"{name}.wav"
+        sf.write(p, w, 16000)
+        recs.append({"audio": str(p), "speaker": "spk", "_rms_dbfs": rms_dbfs(w)})
+    before = recs[0]["_rms_dbfs"] - recs[1]["_rms_dbfs"]
+    apply_speaker_gain(recs, target_dbfs=-24.0)
+    after = recs[0]["_rms_dbfs"] - recs[1]["_rms_dbfs"]
+    assert abs(before - after) < 0.5, f"动态被压掉了: {before} -> {after}"
+    assert abs(np.mean([r["_rms_dbfs"] for r in recs]) + 24.0) < 6.0
+
+
+def test_control_prefix_from_emotion():
+    """情绪标签必须变成 (控制指令) 前缀，否则 LoRA 会冲掉基座的情绪 prompt 能力。"""
+    import random
+    recs = [{"text": "ako ay masaya", "emotion": "angry", "rate": 3.0,
+             "_rms_dbfs": -20.0} for _ in range(20)]
+    n = apply_control_prefixes(recs, Options(control_ratio=1.0), random.Random(1))
+    assert n == 20
+    assert all(r["text"].startswith("(") and ")" in r["text"] for r in recs)
+    assert all(r["control"] for r in recs)
+    # 中英文前缀都要出现（线上 prompt 就是中英文写的）
+    langs = {any("\u4e00" <= ch <= "\u9fff" for ch in r["control"]) for r in recs}
+    assert langs == {True, False}
+
+
+def test_control_prefix_left_off_for_some_samples():
+    """一半样本保持裸文本，保住无前缀推理路径。"""
+    import random
+    recs = [{"text": f"t{i}", "emotion": "sad", "rate": 3.0, "_rms_dbfs": -20.0}
+            for i in range(200)]
+    n = apply_control_prefixes(recs, Options(control_ratio=0.5), random.Random(7))
+    assert 60 < n < 140, n
+
+
+def test_pseudo_speaker_clustering_separates_timbres():
+    embs = []
+    from voxft.data.pipeline import _embed
+    for f in (150, 150, 150, 900, 900, 900):
+        embs.append(_embed(_tone(f, 1.0), 16000))
+    labels = cluster_pseudo_speakers(embs, threshold=0.86)
+    assert len(set(labels)) >= 2
+    assert labels[0] == labels[1] and labels[3] == labels[4]
+
+
+def test_metrics_flag_flat_vs_varied():
+    """f0 起伏指标要能区分平读与有起伏——它是"robotic"的量化抓手。"""
+    sr = 16000
+    flat = _tone(200, 2.0)
+    t = np.arange(int(2.0 * sr)) / sr
+    varied = (0.3 * np.sin(2 * np.pi * (200 + 60 * np.sin(2 * np.pi * 1.5 * t))
+                           * t)).astype(np.float32)
+    assert audio_metrics(varied, sr, "abc")["f0_std_st"] > \
+        audio_metrics(flat, sr, "abc")["f0_std_st"]
+
+
+def test_mix_caps_repetition():
+    """小语料被 tile 十几倍会直接训过拟合，重复必须封顶。"""
+    _make_source(None, "t_big", n_spk=2, per_spk=20)
+    _make_source(None, "t_small", n_spk=1, per_spk=4)
+    process_dataset("t_big", opts=Options(min_dur=1.0, val_ratio=0.1))
+    process_dataset("t_small", opts=Options(min_dur=1.0, val_ratio=0.1))
+    res = mix_manifests([("t_big", 0.2), ("t_small", 0.8)], "t_capped",
+                        max_repeat=2.0)
+    small_rows = len((DATA_PROCESSED / "t_small" / "train.jsonl")
+                     .read_text().splitlines())
+    assert res["t_small/train"] <= small_rows * 2
+    assert "t_small/train_capped_from" in res
+
+
+def test_row_filters_drop_word_lists():
+    """filipinospeechcorpus 的 machine / 单词条目必须在下载阶段就被挡掉。"""
+    src = get_source("filipino_speech")
+    assert not row_passes(src, {"speech_type": "machine", "num_words": 9}.get)
+    assert not row_passes(src, {"speech_type": "read", "num_words": 1}.get)
+    assert row_passes(src, {"speech_type": "spontaneous", "num_words": 7}.get)
+    assert row_passes(src, {}.get)  # 缺列时不拦
+
+
+def test_thai_ser_column_mapping():
+    """THAI-SER 没有名为 audio 的列，必须走 registry 的列映射，否则整个源被跳过。"""
+    src = get_source("thai_ser")
+    cols = ["audio_id", "mic_clip", "mic_con", "mic_zoom", "script_sent",
+            "actor_id", "majority_emo", "agreement"]
+    assert src.audio_column(cols) == "mic_con"     # 不能选 mic_zoom
+    assert src.audio_column(["mic_clip", "mic_zoom"]) == "mic_clip"
+    assert src.audio_column(["mic_zoom"]) is None
+    assert src.separator() == " "                  # 泰语不加句点
+    assert not row_passes(src, {"agreement": 0.4}.get)
+    assert row_passes(src, {"agreement": 0.9}.get)
