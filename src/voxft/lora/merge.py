@@ -4,7 +4,6 @@ import json
 import shutil
 from pathlib import Path
 
-import torch
 from safetensors.torch import load_file, save_file
 
 from ..paths import CHECKPOINT_DIR, env
@@ -29,6 +28,11 @@ def is_lora_dir(path: Path) -> bool:
     return (path / "lora_weights.safetensors").exists() and (path / "lora_config.json").exists()
 
 
+def read_lora_config(path: str | Path) -> dict:
+    cfg = json.loads((Path(path) / "lora_config.json").read_text(encoding="utf-8"))
+    return cfg.get("lora_config", cfg.get("lora", cfg))
+
+
 def merge_lora(base_path: str, lora_dir: str | Path, out_dir: str | Path) -> Path:
     """把 LoRA 增量合并进基座，导出完整模型目录（与全量 checkpoint 同构）。
 
@@ -37,8 +41,7 @@ def merge_lora(base_path: str, lora_dir: str | Path, out_dir: str | Path) -> Pat
     base, lora_dir, out = Path(base_path), Path(lora_dir), Path(out_dir)
     if not is_lora_dir(lora_dir):
         raise ValueError(f"{lora_dir} 缺少 lora_weights.safetensors / lora_config.json")
-    lora_cfg = json.loads((lora_dir / "lora_config.json").read_text())
-    lora_params = lora_cfg.get("lora", lora_cfg)  # 兼容嵌套/平铺两种结构
+    lora_params = read_lora_config(lora_dir)
     r = float(lora_params.get("r", 32))
     scale = float(lora_params.get("alpha", r)) / r
     lora_weights = load_file(str(lora_dir / "lora_weights.safetensors"))

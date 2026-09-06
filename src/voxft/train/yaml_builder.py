@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 import time
 from pathlib import Path
 
@@ -32,12 +34,33 @@ LORA_PRESET = {"learning_rate": 1e-4, "r": 64, "alpha": 64, "dropout": 0.05}
 FULL_PRESET = {"learning_rate": 1e-5}  # 约为 LoRA 的 1/10，防灾难性遗忘
 
 
+def steps_for_epochs(train_manifest: str, epochs: float, batch_size: int = 2,
+                     grad_accum_steps: int = 8, gpus: int = 1) -> int:
+    if not (0 < epochs <= 3) or any(not isinstance(n, int) or n < 1
+                                   for n in (batch_size, grad_accum_steps, gpus)):
+        raise ValueError("epochs 必须在 (0, 3]，batch/累积/GPU 数必须为正整数")
+    with Path(train_manifest).open(encoding="utf-8") as f:
+        n = sum(bool(line.strip()) for line in f)
+    if not n:
+        raise ValueError("训练清单为空")
+    return max(1, math.ceil(n * epochs / (batch_size * grad_accum_steps * gpus)))
+
+
 def build_yaml(run_name: str, pretrained_path: str, train_manifest: str,
                val_manifest: str = "", finetune_type: str = "lora",
-               overrides: dict | None = None) -> Path:
+               overrides: dict | None = None, *, epochs: float | None = None,
+               gpus: int = 1) -> Path:
     """生成官方训练脚本可用的 YAML，写入 configs/<run_name>.yaml。"""
     if finetune_type not in ("lora", "full"):
         raise ValueError("finetune_type 必须是 lora 或 full")
+    if Path(run_name).name != run_name or run_name in ("", ".", ".."):
+        raise ValueError("run_name 必须为单个目录名")
+    if overrides and "training_cfg_rate" in overrides:
+        raise ValueError("training_cfg_rate 属于基座 dit_config.cfm_config，不是训练 YAML 顶层参数")
+    train_manifest = str(Path(train_manifest).resolve())
+    val_manifest = str(Path(val_manifest).resolve()) if val_manifest else ""
+    if pretrained_path and Path(pretrained_path).is_dir():
+        pretrained_path = str(Path(pretrained_path).resolve())
     base = env("VOXCPM_BASE_PATH") or "openbmb/VoxCPM2"
     cfg = {
         "pretrained_path": pretrained_path or base,
@@ -74,12 +97,48 @@ def build_yaml(run_name: str, pretrained_path: str, train_manifest: str,
         if "num_iters" in overrides and "max_steps" not in overrides:
             cfg["max_steps"] = cfg["num_iters"]
 
+    if epochs is not None:
+        if overrides and ("num_iters" in overrides or "max_steps" in overrides):
+            raise ValueError("epochs 与显式训练步数只能选择一种")
+        cfg["num_iters"] = cfg["max_steps"] = steps_for_epochs(
+            train_manifest, epochs, cfg["batch_size"], cfg["grad_accum_steps"], gpus)
+        cfg["warmup_steps"] = max(1, int(cfg["num_iters"] * 0.1))
+    if val_manifest and Path(val_manifest).exists() and not Path(val_manifest).read_text().strip():
+        cfg["val_manifest"] = ""
+    for key in ("batch_size", "grad_accum_steps", "num_iters", "save_interval", "valid_interval"):
+        if not isinstance(cfg[key], int) or cfg[key] < 1:
+            raise ValueError(f"{key} 必须为正整数")
+    if not isinstance(gpus, int) or gpus < 1 or not math.isfinite(cfg["learning_rate"]) or cfg["learning_rate"] <= 0:
+        raise ValueError("GPU 数必须为正整数，学习率必须为有限正数")
+    train_samples = sum(bool(line.strip()) for line in Path(train_manifest).read_text(encoding="utf-8").splitlines())
+    if not train_samples:
+        raise ValueError("训练清单为空")
+
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     path = CONFIG_DIR / f"{run_name}.yaml"
     path.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False),
                     encoding="utf-8")
+    path.with_suffix(".plan.json").write_text(json.dumps(
+        {"gpus": gpus, "epochs": epochs, "num_iters": cfg["num_iters"],
+         "effective_batch": cfg["batch_size"] * cfg["grad_accum_steps"] * gpus,
+         "train_manifest": train_manifest, "train_samples": train_samples},
+        ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
 def default_run_name(finetune_type: str) -> str:
     return f"{finetune_type}_{time.strftime('%m%d_%H%M%S')}"
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="按 1–3 epoch 生成 LoRA 配置；在 GPU 机器执行训练")
+    ap.add_argument("--train", required=True)
+    ap.add_argument("--val", default="")
+    ap.add_argument("--base", default=None)
+    ap.add_argument("--run", default=None)
+    ap.add_argument("--epochs", type=float, default=1.0)
+    ap.add_argument("--gpus", type=int, default=1)
+    args = ap.parse_args()
+    print(build_yaml(args.run or default_run_name("lora"), args.base, args.train,
+                     args.val, epochs=args.epochs, gpus=args.gpus))

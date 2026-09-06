@@ -51,3 +51,18 @@ def test_prefetch_builds_whisper_repo_and_uses_env(monkeypatch):
     monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com")
     assert pf.prefetch("Systran/faster-whisper-medium", progress=lambda m: None) == "/tmp/snap"
     assert seen["repo_id"] == "Systran/faster-whisper-medium"
+
+
+def test_aishell_mixed_pinyin_and_source_metadata():
+    from voxft.data.download import _aishell_text, _metadata, _detect_cols
+    from voxft.data.registry import get_source, row_passes
+    assert _aishell_text("广 guang3 州 zhou1，欢迎 huan1 ying2") == "广州欢迎"
+    src = get_source("thai_ser")
+    row = {"turn_type": "impro", "script_intensity": "high", "actor_gender": "female",
+           "agreement": 0.9, "mic_zoom": {"array": [0]}}
+    assert _metadata(src, row.get)["script_intensity"] == "high"
+    assert _metadata(src, row.get)["emotion_verified"] is True
+    assert _detect_cols(row, src)[0] is None
+    assert row_passes(src, row.get)
+    assert not row_passes(src, {**row, "agreement": float("nan")}.get)
+    assert _metadata(get_source("yodas_th"), {}.get)["speaker_verified"] is False

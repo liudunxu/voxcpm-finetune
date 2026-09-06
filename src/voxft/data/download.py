@@ -32,6 +32,8 @@ def _detect_cols(row: dict, source: Source | None = None
     audio = (source.audio_column(cols) if source else None) or next(
         (k for k, v in row.items() if isinstance(v, dict) and "array" in v), None
     ) or ("audio" if "audio" in row else None)
+    if source and source.audio_cols:
+        audio = source.audio_column(cols)  # 显式麦克风白名单不能回退到 mic_zoom
     text = _pick((source.text_cols if source else ()) or _TEXT_COLS, cols)
     speaker = _pick((source.speaker_cols if source else ()) or _SPK_COLS, cols)
     return audio, text, speaker
@@ -43,6 +45,24 @@ def _clean_text(value) -> str:
         return ""
     text = str(value).strip()
     return "" if text.lower() in _MISSING else text
+
+
+def _aishell_text(value: str) -> str:
+    """AISHELL-3 的正文是汉字与拼音交错排列，不把拼音当 TTS 正文。"""
+    return "".join(_CJK.findall(value))
+
+
+def _metadata(source: Source, get) -> dict:
+    rec = {"source_id": source.id, "lang": source.lang,
+           "speaker_verified": source.has_speaker,
+           "emotion_verified": source.id == "thai_ser"}
+    for col in ("audio_id", "utt_id", "uuid", "turn_type", "script_intensity",
+                "situation_desc", "situation_turn", "actor_gender", "actor_age",
+                "agreement", "grade_avg", "dnsmos_overall"):
+        value = get(col)
+        if _clean_text(value):
+            rec[col] = value.item() if hasattr(value, "item") else value
+    return rec
 
 
 def _emotion(source: Source, value) -> str:
@@ -152,12 +172,15 @@ def _parquet_files(repo: str, config: str, split: str,
 
 def _write_record(f, audio_dir: Path, n: int, wav, sr: int, text: str,
                   speaker: str | None, emotion: str = "",
-                  session: str = "") -> None:
+                  session: str = "", metadata: dict | None = None) -> None:
     path = audio_dir / f"{n:07d}.wav"
     sf.write(path, wav, sr)
-    rec = {"audio": str(path), "text": text}
+    rec = {**(metadata or {}), "audio": str(path), "text": text}
+    speaker = _clean_text(speaker)
     if speaker:
         rec["speaker"] = speaker
+    else:
+        rec["speaker_verified"] = False
     if emotion:
         rec["emotion"] = emotion     # → 加工时转成 (情绪) 控制前缀
     if session:
@@ -269,7 +292,8 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                 _write_record(f, audio_dir, n, wav.mean(0).numpy(), sr, text,
                               str(row[s_col]) if s_col else None,
                               _emotion(source, row[e_col]) if e_col else "",
-                              source.session_of(row[g_col]) if g_col else "")
+                              source.session_of(row[g_col]) if g_col else "",
+                              _metadata(source, row.get))
                 n += 1
                 if progress and n % 200 == 0:
                     progress(f"{source.id}: 已写入 {n} 条")
@@ -322,7 +346,7 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
                           _emotion(source, row.get(source.emotion_col))
                           if source.emotion_col else "",
                           source.session_of(row.get(source.session_col))
-                          if source.session_col else "")
+                          if source.session_col else "", _metadata(source, row.get))
             n += 1
             if progress and n % 100 == 0:
                 progress(f"{source.id}: 已下载 {n} 条")
@@ -399,17 +423,18 @@ def _download_aishell3(source: Source, dest: Path, max_samples: int | None,
             if len(parts) < 2:
                 continue
             name = parts[0]
-            text = next((p for p in reversed(parts) if _CJK.search(p)), "")
+            text = _aishell_text(next((p for p in reversed(parts) if _CJK.search(p)), ""))
             if not text:
                 continue
-            audio = wav_root / "train" / "wav" / name
+            audio = content.parent / "wav" / name[:7] / name
             if not audio.exists():
                 audio = next(iter(dest.rglob(name)), None)
                 if audio is None:
                     continue
             fout.write(json.dumps(
-                {"audio": str(audio), "text": text.replace(" ", ""),
-                 "speaker": name[:7]},
+                {"audio": str(audio), "text": text,
+                 "speaker": name[:7], "speaker_verified": True,
+                 "source_id": source.id, "lang": "zh"},
                 ensure_ascii=False) + "\n")
             n += 1
     return n
@@ -420,6 +445,9 @@ def download_source(source_id: str, max_samples: int | None = None,
     """下载数据源到 data/raw/<id>/，返回目录。重复调用会覆盖 manifest。"""
     source = get_source(source_id)
     dest = DATA_RAW / source.id
+    if source.kind == "local":
+        raise ValueError(f"{source_id} 使用已审核的真人语料，请在加工页填写原始 JSONL 路径，"
+                         f"或放到 {dest}/manifest.jsonl；此入口不下载或生成录音")
     if source.kind == "openslr":
         n = _download_aishell3(source, dest, max_samples, progress)
     else:

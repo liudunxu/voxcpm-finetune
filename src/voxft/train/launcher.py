@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 from ..paths import CHECKPOINT_DIR, VOXCPM_REPO
@@ -16,13 +16,16 @@ def gpu_command(config_path: str | Path, gpus: int = 1,
     """生成 GPU 机器上的训练命令（本地无 CUDA 时复制到远程执行）。"""
     if not TRAIN_SCRIPT.exists():
         raise FileNotFoundError(f"官方训练脚本不存在: {TRAIN_SCRIPT}（submodule 未初始化？）")
+    if not isinstance(gpus, int) or gpus < 1:
+        raise ValueError("GPU 数必须为正整数")
+    script_args = f"{shlex.quote(str(TRAIN_SCRIPT))} --config_path {shlex.quote(str(Path(config_path).resolve()))}"
     if gpus > 1:
-        cmd = f"torchrun --nproc_per_node={gpus} {TRAIN_SCRIPT} --config_path {config_path}"
+        cmd = f"torchrun --nproc_per_node={gpus} {script_args}"
     else:
-        cmd = f"python {TRAIN_SCRIPT} --config_path {config_path}"
+        cmd = f"python {script_args}"
     cmd = f"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {cmd}"
     if cuda_devices:
-        cmd = f"CUDA_VISIBLE_DEVICES={cuda_devices} {cmd}"
+        cmd = f"CUDA_VISIBLE_DEVICES={shlex.quote(cuda_devices)} {cmd}"
     return cmd
 
 
@@ -69,7 +72,7 @@ def resolve_base_path(path: str, progress=None) -> str:
 
     t = threading.Thread(target=watcher, daemon=True) if progress else None
     if t:
-        progress(f"下载进度监控已启动（每 5 秒更新）")
+        progress("下载进度监控已启动（每 5 秒更新）")
         t.start()
     try:
         if progress:
@@ -87,7 +90,7 @@ def resolve_base_path(path: str, progress=None) -> str:
     return local
 
 
-def preflight(config_path: str | Path) -> list[str]:
+def preflight(config_path: str | Path, gpus: int | None = None) -> list[str]:
     """训练前预检；返回问题列表（空 = 通过）。把报错提前到启动前。"""
     import json
     import yaml
@@ -96,12 +99,22 @@ def preflight(config_path: str | Path) -> list[str]:
     cfg_path = Path(config_path)
     if not cfg_path.exists():
         return [f"配置文件不存在: {cfg_path}"]
-    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    try:
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        if not isinstance(cfg, dict):
+            raise ValueError("YAML 必须为对象")
+    except (ValueError, yaml.YAMLError) as exc:
+        return [f"训练配置无效: {exc}"]
 
     if not TRAIN_SCRIPT.exists():
         issues.append(f"官方训练脚本不存在: {TRAIN_SCRIPT}（执行过 git submodule update --init？）")
 
+    memberships = {}
+    counts = {}
+    controls = refs = 0
     for key, required in (("train_manifest", True), ("val_manifest", False)):
+        members = memberships[key] = set()
+        counts[key] = 0
         p = str(cfg.get(key, "") or "")
         if not p:
             if required:
@@ -113,17 +126,57 @@ def preflight(config_path: str | Path) -> list[str]:
             continue
         with mp.open(encoding="utf-8") as f:
             for i, line in enumerate(f):
-                if i >= 3:
-                    break
+                if not line.strip():
+                    continue
+                counts[key] += 1
                 try:
                     rec = json.loads(line)
+                    if not isinstance(rec, dict):
+                        raise ValueError("每行必须为对象")
                 except Exception:
                     issues.append(f"{key} 第 {i + 1} 行不是合法 JSON")
                     continue
-                if not Path(rec.get("audio", "")).exists():
+                if not isinstance(rec.get("audio"), str) or not Path(rec["audio"]).is_file():
                     issues.append(f"{key} 第 {i + 1} 行音频不存在: {rec.get('audio')}")
+                    continue
+                if not isinstance(rec.get("text"), str) or not rec["text"].strip():
+                    issues.append(f"{key} 第 {i + 1} 行缺少训练文本")
+                if key == "train_manifest":
+                    controls += isinstance(rec.get("text"), str) and rec["text"].startswith("(")
+                    refs += bool(rec.get("ref_audio"))
+                for field in ("audio", "ref_audio", "origin_audio", "ref_origin_audio"):
+                    if rec.get(field):
+                        if isinstance(rec[field], str):
+                            members.add(("audio", str(Path(rec[field]).resolve())))
+                        else:
+                            issues.append(f"{key} 第 {i + 1} 行 {field} 必须为路径字符串")
+                if rec.get("speaker_verified") is True:
+                    members.add(("speaker", rec.get("speaker")))
+                if rec.get("session"):
+                    members.add(("session", rec.get("source_id", ""), rec["session"]))
+                if rec.get("ref_audio"):
+                    if not isinstance(rec["ref_audio"], str):
+                        continue
+                    if not Path(rec["ref_audio"]).is_file():
+                        issues.append(f"{key} 第 {i + 1} 行参考音频不存在")
+                    if (rec.get("speaker_verified") is not True or not rec.get("speaker")
+                            or rec.get("ref_speaker") != rec["speaker"]):
+                        issues.append(f"{key} 第 {i + 1} 行 ref 缺少已验证的同人身份，请重新加工")
+                    if rec["ref_audio"] == rec.get("audio"):
+                        issues.append(f"{key} 第 {i + 1} 行 ref 与目标音频相同")
+        if not counts[key]:
+            issues.append(f"{key} 为空；无验证集时应将 val_manifest 留空")
+    if memberships["train_manifest"] & memberships["val_manifest"]:
+        issues.append("训练/验证集共享音频、ref、说话人或会话，请先按组重新加工")
+    if counts["train_manifest"]:
+        if controls / counts["train_manifest"] < 0.25:
+            issues.append("警告：带前缀目标不足 25%，请检查真实标签覆盖，勿用猜测标签补齐")
+        if refs / counts["train_manifest"] < 0.3:
+            issues.append("警告：同人 ref 覆盖不足 30%，请补已核验同人录音；不要强配未知身份")
 
     pre = str(cfg.get("pretrained_path", "") or "")
+    if not pre:
+        issues.append("pretrained_path 未配置")
     if pre and not Path(pre).is_dir():
         if pre.count("/") == 1:
             issues.append(f"pretrained_path 是 HF 仓库 ID（{pre}），训练脚本要求本地目录："
@@ -131,6 +184,27 @@ def preflight(config_path: str | Path) -> list[str]:
                           "或在 .env 设置 VOXCPM_BASE_PATH 指向本地基座目录")
         else:
             issues.append(f"pretrained_path 既非本地目录也非 HF 仓库 ID（owner/name）: {pre}")
+    elif pre:
+        model_config = Path(pre) / "config.json"
+        if not model_config.exists():
+            issues.append("基座缺少 config.json")
+        else:
+            model_cfg = json.loads(model_config.read_text(encoding="utf-8"))
+            rate = model_cfg.get("dit_config", {}).get("cfm_config", {}).get("training_cfg_rate", 0.1)
+            if rate != 0.1:
+                issues.append(f"基座 training_cfg_rate={rate}，本项目要求保留 0.1")
+    if "training_cfg_rate" in cfg:
+        issues.append("training_cfg_rate 不能放在训练 YAML 顶层，请检查基座模型配置")
+    plan_path = cfg_path.with_suffix(".plan.json")
+    if plan_path.exists() and gpus is not None:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        if plan.get("epochs") is not None and plan.get("gpus") != gpus:
+            issues.append("GPU 数与按 epoch 生成配置时不同，请按实际 GPU 数重新生成配置")
+        if plan.get("epochs") is not None and plan.get("train_samples") != counts["train_manifest"]:
+            issues.append("训练条数与生成计划时不同，请重新生成配置")
+    effective_batch = cfg.get("batch_size", 2) * cfg.get("grad_accum_steps", 8) * (gpus or 1)
+    if counts["train_manifest"] and cfg.get("num_iters", 0) * effective_batch > 3 * counts["train_manifest"]:
+        issues.append("警告：预计训练超过 3 epoch，小语料还需计入混合重复曝光")
 
     save = Path(cfg.get("save_path", ""))
     try:
@@ -155,7 +229,7 @@ def start_local(config_path: str | Path, gpus: int = 1) -> Path:
     global _PROC
     if _PROC is not None and _PROC.poll() is None:
         raise RuntimeError("已有训练任务在运行；先停止或等待其结束")
-    issues = preflight(config_path)
+    issues = preflight(config_path, gpus)
     fatal = [i for i in issues if not i.startswith("警告")]
     if fatal:
         raise RuntimeError("预检未通过：\n" + "\n".join(issues))

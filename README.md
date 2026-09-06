@@ -1,125 +1,162 @@
 # voxft — VoxCPM 2 微调工作台
 
-基于 [VoxCPM 2](https://github.com/OpenBMB/VoxCPM) 的微调工作台：Tagalog/泰语高质量语料加工、跨语言（中文→目标语言）混合微调、wandb 监控、LoRA merge、HuggingFace 同步。
+基于 [VoxCPM 2](https://github.com/OpenBMB/VoxCPM) 的短剧配音微调工作台：中/英文参考音频克隆 → 泰语、Tagalog/Taglish，结合中英文情绪/语气前缀。涵盖数据加工、混合、LoRA 训练、离线验收、merge 和 HF 同步。
 
-> 开发与代理协作约定见 [AGENTS.md](AGENTS.md)。
+开发约定见 [AGENTS.md](AGENTS.md)。本轮只调整微调数据、配置及离线评测，不调整翻译或生产配音链路。
 
-## 快速开始
-
-```bash
-git clone --recurse-submodules <repo>   # 必须带 --recurse-submodules
-uv sync                # Mac 开发机（含 torch CPU/MPS 轮子）
-uv run voxft-ui        # 打开微调工作台：http://0.0.0.0:6006
-```
-
-已经克隆过但 `third_party/VoxCPM` 是空目录的（训练预检报"官方训练脚本不存在"），补一条：
+## 环境与启动
 
 ```bash
+git clone --recurse-submodules <repo>
+uv sync                       # Python 3.11；macOS CPU/MPS，Linux CUDA 12.4
+uv run voxft-ui               # Gradio 6006
+# 已克隆但 submodule 为空时：
 git submodule update --init --recursive
 ```
 
-GPU 服务器（Linux）上同样 `uv sync`（自动解析 cu124 轮子）；大数据目录建议指到大盘：
+复制 `.env.example` 为 `.env`，配置 `HF_TOKEN`、`WANDB_API_KEY`、`VOXCPM_BASE_PATH`。数据下载、真实音频加工和训练在远程 GPU 机器执行；本地只做开发与合成小样本测试。
 
-```bash
-echo 'VOXFT_DATA_ROOT=/root/autodl-tmp/voxft_data' >> .env
-echo 'VOXFT_CKPT_ROOT=/root/autodl-tmp/voxft_ckpt' >> .env
-# HF 缓存（基座模型 + 数据集分片）默认在 ~/.cache，系统盘容易满，也指到大盘：
-echo 'HF_HOME=/root/autodl-tmp/hf_home' >> .env
+远程 `.env` 的大盘设置示例（按实际目录调整）：
+
+```dotenv
+VOXFT_DATA_ROOT=/root/autodl-tmp/voxft_data
+VOXFT_CKPT_ROOT=/root/autodl-tmp/voxft_ckpt
+HF_HOME=/root/autodl-tmp/hf_home
+HF_ENDPOINT=https://hf-mirror.com
 ```
 
-> `hf`/`huggingface-cli` 不读项目 `.env`。**用项目自己的预取入口就不用手动 export**（它会自动套用镜像并关掉 xet）：
->
-> ```bash
-> uv run python -m voxft.data.prefetch --whisper large-v3   # 转写用，约 3GB
-> uv run python -m voxft.data.prefetch --repo openbmb/VoxCPM2
-> ```
->
-> 一定要用 `hf` 命令的话，三个变量都得带上（漏掉 `HF_HUB_DISABLE_XET` 会在 reconstruction 阶段报 401）：
->
-> ```bash
-> HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 HF_HOME=/root/autodl-tmp/hf_home \
->   uv run hf download Systran/faster-whisper-large-v3
-> ```
+```bash
+uv sync --group qc
+uv run python -m voxft.data.prefetch --whisper large-v3
+uv run python -m voxft.data.prefetch --repo openbmb/VoxCPM2
+```
 
-## 密钥
+项目入口自动读取 `.env`，镜像模式默认禁用 Xet。独立 `hf` 命令不读 `.env`，需自行设置 `HF_ENDPOINT`、`HF_HOME`、`HF_HUB_DISABLE_XET=1`。
 
-复制 `.env.example` 为 `.env` 并填写：
-- `HF_TOKEN` — 下载受限数据集与上传模型/数据集（默认仓库 `FrankLiuDundun/voxcpm-finetune-lora`）。Common Voice 22 官方已撤架，现走社区镜像，无需同意条款
-- `WANDB_API_KEY` — 训练时自动把 TensorBoard 指标/验证音频桥接到 wandb
-- `VOXCPM_BASE_PATH` — 本地基座目录（不填默认从 `openbmb/VoxCPM2` 拉取）
+## 数据策略：先修监督，再扩规模
 
-## 典型流程（中文 → 泰语/Tagalog）
+微调可改善目标语言发音/重音、自然对白韵律、情绪指令响应，以及模型造成的漏词和音色漂移；不能保证解决所有同类反馈。错误翻译、输入台词缺词、剪辑截断和角色选角不在本轮范围。笑声等非语言发声可以训练，但必须有对应真人音频和明确、经过试听核验的控制描述。
 
-1. **数据集页**：选数据源（表现力主力：泰语 `thai_ser`、Tagalog `filipino_emotion`；锚点：FLEURS/CV22）→ 下载 → 加工（16k/裁静音/3-30s/质检/表现力指标/伪说话人聚类/按说话人响度对齐/控制前缀/ref 配对）
-2. **混合**：目标语言为主 + 中文防遗忘（短剧泰语+Tagalog 场景见下方「数据策略」）
-3. **训练页**：生成配置（默认 LoRA r=64/alpha=64/dropout=0.05，`max_grad_norm=1.0`）→ 本机启动或复制命令到 GPU 机；中断后用同一配置重启即自动从 `latest/` 断点续训
-4. **验证效果**：看 `loss/diff`、`val/loss` 曲线（wandb/TensorBoard）→ 听验证音频 → 试听页 A/B 对比（可填情绪 prompt，种子固定）→ `voxft.eval` 看贴合度/截断率/语调起伏；出现"忽略文本/停不下来"即回退更早 checkpoint
-5. **模型管理页**：merge LoRA 导出完整模型 → 上传 HuggingFace
+### 数据源取舍
 
-## 数据策略（短剧配音：泰语 + Tagalog，目标：自然、有情绪、不像念稿）
+| 数据源 | 在微调中的用途 | 限制与当前处理 |
+|---|---|---|
+| `thai_ser` | 泰语表演/即兴情绪对白 | 仅保留 `turn_type=impro`、agreement ≥ 0.7；保留 actor、强度、轮次元数据；无正文时 large-v3 转写后人工校对 |
+| `yodas_th` | 经人工抽检的泰语自然语流 | 视频 ID 不等于真实说话人；默认不配 ref、不合成音量标签、不拼接短句 |
+| `drama_tl` / `drama_th` | 自有授权、真人短剧对白主力 | JSONL 导入；要求核实身份、转写、标签和来源，不用模型合成语音补量 |
+| `filswitch` | 低比例 Taglish 发音/切换补充 | **新闻朗读**，不是自然对话或情绪主力；许可另行核实 |
+| `filipino_emotion` | 待审候选 | 缺文本、可靠身份及完整来源信息；不再列为表现力首选，默认不生成可信控制/refs |
+| FLEURS / CV22 / Porjai | 小比例发音补充 | 朗读风格，不宜充当去念稿感主力；身份未知者不配 ref |
+| `aishell3` | 中文多说话人回放 | 约 85h；清除原始正文中交错的拼音，仅保留汉字 |
+| `replay_en` | 英文多说话人回放 | 自备审核 JSONL，例如经授权核验的 VCTK；不是跨语言同人 ref 的替代品 |
 
-场景：短剧翻译配音，音色靠**参考音频零样本克隆**（对齐 OmniVoice 生产）。**首要目标是自然、有情绪、不像念稿**，其次才是发音准。
+来源核对：[THAI-SER 数据卡](https://huggingface.co/datasets/airesearch/thai-ser)、[YODAS 数据卡](https://huggingface.co/datasets/Chalermdej/yodas2_sidon_th_tts)、[FilSwitch 数据卡](https://huggingface.co/datasets/qwerttyuiiop/FilSwitch)、[AISHELL-3](https://www.openslr.org/93/)、[VCTK](https://datashare.ed.ac.uk/items/30e7453c-9ea8-48b4-8e18-f96d0dc62928/full)。数据卡的许可标记不代替对原录音来源、演员授权及商用范围的核验。
 
-> 先分清责任层：**同角色跨句跨集变声、角色选角不贴、翻译用词、非语言发声（笑/痛呼）、整体音量**都不是微调能解的，属于配音链路（固定 voice bank + 固定 seed + ref 去噪 + MT 层）。微调能解的是：**念稿感 / 目标语言发音与重音 / Taglish 句内英文词 / 词被吃掉 / 语速失控 / 响应情绪 prompt**。
+### 首轮配比（实验起点，不是已验证最优值）
 
-**两类语料，作用不同（别混为一谈）**
-- **朗读语料**（FLEURS / CV22 / Porjai）：教发音准、吐字清，是"锚点"。但它们本身是念稿风格，**占比过高会加重念稿感**。
-- **情感/口语语料**（`thai_ser` / `filipino_emotion`）：教语速起伏、停顿、情绪、语气——**这才是去念稿感的主力**，应占目标语言混合的 30–50%。
+按**过滤后训练音频时长**计算，先分别训练 TH / TL LoRA，确认有效后再考虑联合多语种。
 
-**数据源优先级**（页面下拉里带【首选】标记）
+| 数据角色 | TH | TL |
+|---|---:|---:|
+| 真人短剧/即兴表演 | 45%（THAI-SER impro + 自有对白） | 45%（自有真人对白） |
+| 自然口语 | 35%（审核后的 YODAS） | 30%（自有自然 TL/Taglish） |
+| 发音补充 | 5% | 10%（FilSwitch 等） |
+| 中文回放 | 10% | 10% |
+| 英文回放 | 5% | 5% |
 
-| 语种 | 表现力主力（去念稿） | 发音/口语锚点 | 其余可选 |
-|---|---|---|---|
-| 泰语 | **`thai_ser`** 首选 — airesearch/thai-ser，2.8 万条/41h，200 名演员、5 情绪、有 `actor_id`；`turn_type=impro` 是即兴对话，最值钱。CC-BY-SA-4.0 | **`yodas_th`** 首选 — Chalermdej/yodas2_sidon_th_tts，14 万条/156h **YouTube 真实口语**（不是朗读腔），4199 说话人，DNSMOS + 三路 ASR 交叉校验分级，**CC-BY-3.0 商用友好** | `cv22_th`、`fleurs_th`、`porjai_th`（都是朗读腔，配比别高） |
-| Tagalog | **`filipino_emotion`** 首选 — 1.1 万条、6 情绪、中位 3.0s，无文本→自动转写 | **`filswitch`** 首选 — 2.7K 条 Taglish，句内中英混杂，中位 8.5s（时长分布最贴 VoxCPM），教的是「RAW 该怎么念」 | `fleurs_tl`；`filipino_speech`（见下方警告） |
-| 中文 | — | — | **`aishell3`** 首选（防遗忘，有说话人可 ref 配对）、`fleurs_zh` |
+TL 先补 5–10h 干净真人对白做试验，覆盖多名女声、男声和年龄段；重点补质疑、克制愤怒、担心、讽刺、哭腔、带笑说话与自然停顿，避免某种情绪只来自某一名演员。每条必须是完整、单人、可听清的 3–30s 语流，不把孤立词或无真实连续时间关系的句子拼成长音频。
 
-> 泰语两个首选是互补的，不是二选一：`thai_ser` 是**演员表演的情绪**，唯一能喂控制前缀（有情绪标签）；`yodas_th` 是**真人日常语流**，替掉 FLEURS/CV22 那类朗读锚点。锚点用朗读语料本身就在加重念稿感。
+混合器按时长采样，每条原始目标音频最多 3 次曝光（嵌套混合也检查），验证集不重复。小源不足时不强凑配比，`mix.json` 记录请求时长、实际时长占比、唯一目标/ref 数、各自最大曝光、control/ref 联合覆盖。3× 上限针对训练目标，ref 复用另行统计。**目标重复 3× 再训练 3 epoch，相当于最多约 9 次曝光**，因此先跑 1 epoch。
 
-**扫过但没选的**（记录一下，别重复调研）
-- Tagalog：`SilencioNetwork/tagalog-filipino-speech` —— 100% 自由说话、人工校验转写、**带词级时间戳**（能在真实停顿处切分），质量是全场最好的，但只有 90 条/2 小时且 **CC-BY-NC-4.0 禁商用**，只能做实验对照；`RidheshBhati/filipino-tts-10k-final` 是圣经/文学朗读，对念稿感是负作用；`Nexdata` 1100h 全双工对话只在 HF 放了无转写的 sample，要付费；YODAS2 的 230 个语种目录里**没有 tl/fil**，这块公开数据是真空。
-- 泰语：`Saltywan/Thai-Duplex-Bench`（双工对话，但 viewer 关闭、是 bench 不是训练集）、`Nexdata` 211h 全双工（付费）、`thai_elderly_speech`（老年语音，属选角问题不是微调问题）、`dubbing-ai/vaja-thai`（需授权）。
+### 真人对白 / 跨语言同人 ref 导入
 
-**去念稿感三杠杆**（微调只是其一，需并行）
-1. **情感语料 + 控制前缀微调**：把模型韵律先验往"有起伏"推，并让它在目标语言下听得懂中英文情绪指令。
-2. **参考音频必须有情绪**：克隆输出韵律主要由参考音频决定，务必用**带情绪的台词**做参考，别用平淡朗读；每个角色一条固定 5–10s 干净 ref，全剧全集复用（这条同时解决"变声"）。
-3. **推理参数放松**：`cfg_value` 偏高会更贴文本但更僵，试 1.2–1.6（生产 2.0）；seed 固定。
+原始清单示例，音频路径相对 JSONL 所在目录；以下是格式模板，不包含实际录音：
 
-**关键规则**（加工页已**自动配置**，无需手选）
-- **控制前缀**：VoxCPM2 的情绪控制就是文本前缀 `(控制指令)正文`，没有独立条件通道。加工会按情绪标签 + 实测语速/音量，给 25–50% 样本自动生成中英文前缀（如 `(愤怒地，语速快)`），其余保持裸文本。**训练文本全裸会把基座的情绪 prompt 能力冲掉**——这是"微调后情绪反而更不灵"的主因
-- **ref 配对**：有说话人列的源自动 0.4 同说话人配对；无说话人列的源（FLEURS 全系 / `filipino_emotion`）走 MFCC **伪说话人聚类**后再配对；ref 候选限定 3–10s 且优先高信噪比，对齐线上参考音频分布
-- **响度**：按说话人整体增益对齐到 −24 dBFS，不做逐条峰值归一（逐条归一会抹掉"音量=情绪强度"）
-- **表现力指标**：每条样本落 `f0_std_st`（语调起伏，半音）/ `energy_std_db` / `rate` / `snr_db`，可用 SNR 与 f0 起伏门限筛掉噪声样本和平读样本
-- 质检自动分档：干净源不质检；众包/未知源自动 Whisper 转写校验；无文本列的源自动 large-v3 转写 + 语种过滤（转写结果写回原始清单复用）
-- 一个 LoRA 覆盖两语种：建议 **泰语 45% + Tagalog 45% + 中文 10%**；每个目标语言内部，情感语料占 30–50%；混合时小语料重复上限 3×
-- **验收看三个数**（`voxft.eval`）：文本贴合度↑、**截断率↓**（"词被吃掉"）、**语调起伏↑**（"robotic"）；再用同一有情绪的参考音频做基座 vs LoRA A/B
+```jsonl
+{"audio":"audio/actor01_tl_001.wav","text":"Hindi mo alam na buntis ka?","lang":"tl","speaker":"actor01","speaker_namespace":"cast_v1","speaker_verified":true,"session":"recording01","emotion":"surprised","emotion_verified":true,"control_zh":"惊讶地，语气克制","control_en":"surprised, restrained","control_verified":true}
+{"audio":"audio/actor01_en_ref.wav","lang":"en","speaker":"actor01","speaker_namespace":"cast_v1","speaker_verified":true,"session":"recording02","reference_only":true}
+```
 
-## 命令速查
+- `speaker_verified=true` 是人工/可靠原始身份确认，不是“有一列 speaker”。仅 MFCC 相似、同视频、相同角色名均不够；同一演员跨数据源时使用统一 `speaker_namespace` 和 ID。
+- 同人中文/英文 ref 作为 `reference_only=true` 独立行导入，3–10s，文本可空；只参与该 split 内配对，不作为训练目标。**不要拿另一个人的英文声音配目标人声**。同语言 ref 是有效基础，但不等同于跨语言训练。
+- 按身份、会话、原始音频的连通组先隔离 train/val，再配 ref；同人中/英文候选优先。仅一个独立组时不会伪造验证集，需要另备未见演员评测集。
+- 目标联合覆盖：ref+control 30%、ref+裸文本 20%、无 ref+control 20%、无 ref+裸文本 30%。这是有足够已审核标签与身份时的目标；逐源加工后再混合，**最终覆盖不保证自动达到**，检查 `stats.json` / `mix.json`，缺口用真实标注补齐。
+- 控制前缀只能是中/英文。有可信 `emotion_verified` 才映射基本情绪；“生气”不会自动扩写为“大声喊叫”。哭腔、笑声、停顿、速度/音量等细节需 `control_verified` 和真实录音支持。未知标签保持裸文本，不能凭能量/F0 猜标签。
+- 仅对已验证身份使用同人统一增益，防削波时整个说话人共同回退，保留相对动态；未知身份不调统一响度。已经被上游逐条归一的动态无法凭此恢复。
+- `f0_std_st`、`energy_std_db`、`energy_range_db`、`rate` 仅供诊断。能量分位差不是 SNR；泰语 F0 含词汇声调、`rate` 也不是可靠词速，不据此硬筛平读或生成指令。
 
 ```bash
-uv run python -m voxft.data.prefetch --whisper large-v3     # 预取转写权重（走 .env 镜像设置）
-uv run python -m voxft.data.download --source fleurs_th --max-samples 100
-uv run python -m voxft.data.pipeline --source thai_ser --max-items 200 --control-ratio 0.5 --min-snr-db 12
-uv run python -m voxft.train.launcher configs/xxx.yaml 1   # 打印训练命令
-uv run python -m voxft.lora.merge --lora-dir checkpoints/run/latest --out checkpoints/merged
-# 客观评测：贴合度↑ / 截断率↓ / 语调起伏↑（需 --group qc）
-uv run python -m voxft.eval base checkpoints/run/latest --lang tl \
-    --ref-audio ref.wav --control "愤怒地，语速快"
+# 以下命令只在远程执行；本地不下载语料。
+uv run python -m voxft.data.download --source thai_ser
+uv run python -m voxft.data.pipeline --source thai_ser --out thai_ser_v2
+uv run python -m voxft.data.pipeline --source drama_tl --manifest /path/to/acted_tl.jsonl --out drama_tl_v2
+uv run python -m voxft.data.pipeline --source drama_tl --manifest /path/to/natural_tl.jsonl --out natural_tl_v2
+uv run python -m voxft.data.pipeline --source replay_en --manifest /path/to/replay_en.jsonl --out replay_en_v2
+# 下列名称均需先完成加工；页面也支持逐行填写相同多源配比。
+uv run python -m voxft.data.pipeline --mix drama_tl_v2=45 natural_tl_v2=30 filswitch_v2=10 aishell3_v2=10 replay_en_v2=5 --out tl_drama_v2
+```
+
+自有 acted/natural 两份清单如果共享演员/会话，需在分源前统一安排 holdout；混合器会拒绝跨源 train/val 泄漏。也可先合并原始清单统一加工，接受两类语料内部的自然时长配比。
+
+## 训练方案
+
+默认 LoRA：`r=64 / alpha=64 / dropout=0.05`，`enable_lm=true / enable_dit=true / enable_proj=false`，lr `1e-4`，weight decay `0.01`，grad norm `1.0`；采样率 `16000`（VAE 输入），`48000` 仅推理输出。暂不默认全量微调。
+
+页面默认按 1 epoch 计算步数：`ceil(训练条数 × epoch / (batch_size × 梯度累积 × GPU数))`，默认 batch=2、累积=8。这是按清单条数的近似，官方 loader 的丢尾、长度过滤会有偏差；观察日志实际样本数。允许 1–3 epoch，手动步数仅供受控实验。更改 GPU 数或训练清单后必须重新生成配置。
+
+`training_cfg_rate=0.1` 来自基座 `config.json` 的 `dit_config.cfm_config`（省略时使用模型默认），**不是训练 YAML 顶层参数**。预检会检查它、完整训练/验证清单、ref 身份与集合隔离。生成器另写 `.plan.json` 记录卡数、epoch、等效 batch，不向官方 YAML 塞额外字段。
+
+```bash
+# 路径按远程实际目录填写；--base 必须指向已下载的本地模型目录。
+uv run python -m voxft.train.yaml_builder --train /root/autodl-tmp/voxft_data/processed/tl_drama_v2/train.jsonl --val /root/autodl-tmp/voxft_data/processed/tl_drama_v2/val.jsonl --base /path/to/VoxCPM2 --run tl_drama_e1 --epochs 1 --gpus 1
+uv run python -m voxft.train.launcher configs/tl_drama_e1.yaml 1
+```
+
+最后一条打印训练命令；在 GPU 机器上先通过页面预检再启动。wandb 桥接沿用原配置，保存/验证默认每 250 步，结束时官方脚本也保存。不同实验用不同 run 名，不覆盖旧 run；同配置恢复会从 `latest/` 继续。
+
+实验顺序：
+
+1. R0：基座保留为固定评测基线；旧 LoRA 若可用也测一次。
+2. R1：仅用修正后的高质量目标语言 + 中英回放，1 epoch，确定发音/漏词没有退化。
+3. R2：加入真人表演及可信中英控制标签，训练相同预算，重点比较自然度和情绪。
+4. R3：有真实同人跨语言素材后补 ref 配对，比较中/英文 ref → TH/TL 的音色保持；无素材时不要声称完成该验证。
+
+每轮从同一基座开始，尽量固定总训练时长与采样曝光，仅改变要检验的数据因素。达标后才试第二个 epoch；出现内容服从、情绪或音色退化就选择更早 checkpoint，不以 loss 最低作为唯一依据。
+
+## 离线验收
+
+试听页 A/B 严格读取 checkpoint 的 `lora_config`，检查 loaded/skipped/missing keys，用同一模型禁用/启用适配器；加载失败直接停止。A/B 和批量评测关闭自动坏例重试，避免换种子掩盖差异。普通试听参数保持不变。
+
+准备未见演员、未见会话的固定评测 JSONL（不要取训练 ref），逐条保存条件，例如：
+
+```jsonl
+{"case_id":"tl_female_surprise_enref","text":"Hindi mo alam na buntis ka?","lang":"tl","ref_audio":"refs/female_en.wav","ref_lang":"en","control":"surprised, in disbelief","speaker":"heldout_f01","kind":"emotion","seed":42}
+{"case_id":"tl_female_plain_zhref","text":"Hindi talaga kami bagay sa isa't isa.","lang":"tl","ref_audio":"refs/female_zh.wav","ref_lang":"zh","control":"","speaker":"heldout_f01","kind":"plain","seed":42}
+```
+
+```bash
+uv run python -m voxft.eval base /path/to/run/latest --texts-file /path/to/eval.jsonl --seeds 42 43 44
 uv run pytest
 ```
 
-## 数据源许可速览
+建议每个目标语言先固定 80–100 条：覆盖中/英文 ref、无前缀/有前缀、女主/其他女声/男声、普通口语/强情绪/Taglish/长短句，并加中英文回放回归。保留用户反馈里的难词及漏尾句，但先让母语者确认台词与预期读法；翻译改写不是本轮训练标签自动修复项。
 
-| 数据源 | 许可 |
-|---|---|
-| THAI-SER（泰语情感 41h） | CC-BY-SA-4.0（SA 有传染性，商用前确认权重分发口径） |
-| YODAS2-Sidon 泰语 TTS 精选（156h） | CC-BY-3.0（署名即可，商用友好） |
-| qwerttyuiiop/FilSwitch（Taglish） | 未声明，商用前核实 |
-| CMKL Porjai（泰 700h） | CC-BY-SA-4.0 |
-| FLEURS | CC-BY-4.0 |
-| hotdogs/thai-speech-20k | CC-BY-4.0 |
-| Common Voice 22（社区镜像 fsicoli） | CC0（官方已撤架，镜像无需条款） |
-| AISHELL-3 | Apache-2.0 |
-| welyjesch/tagalog_tts、filipino-emotion-tts | 未知，商用前核实 |
-| sapinsapin/filipinospeechcorpus | MIT（但绝大部分是孤立单词，见「数据策略」警告） |
-| Speech-data/Filipino-Tagalog | CC-BY-NC-ND（非商用） |
+报告保存逐条条件、CER、适用语言的 WER、疑似漏尾、音频路径与待填 `human_review`；多次运行不覆盖。ASR 无法代替母语发音判定，泰语保留声调组合符，Taglish 不强制单一 ASR 语言。F0/能量仅描述，不是越高越好。
+
+验收由至少两名母语评审随机盲听同条件 A/B：自然度、情绪匹配、清晰度、克隆音色分别评分，标记真实截断/噪声/发音错。分 ref 语言、角色及情绪查看结果；目标是自然度/情绪改善且清晰度与音色不退化。自动报告不生成“通过”结论。
+
+## 旧数据迁移
+
+- 所有旧 processed/mixed 清单重加工为新名称（如 `_v2`），不要混用旧伪说话人 refs、拼接音频或拼音污染正文。
+- 旧 THAI-SER manifest 缺 `turn_type` 会明确报错，需在远程重下；过滤条件缺列/无效值不再静默放行。
+- Whisper 调用不再传不支持的 `batched`，ndarray 始终先转 16k。每 300 条及退出时原子保存完整原清单；推理异常中止，保留已完成转写与被排除的原始记录。`--max-items` 试跑不回写原清单。
+- 每次加工写新的音频子目录，避免失败/重跑覆盖旧清单引用的音频；旧音频不自动删除，确认无训练/混合清单引用后再人工清理。
+- 原能量差字段改名 `energy_range_db`；启用旧 `min_snr_db`/`min_f0_std` 硬筛会报错。
+
+## 模型管理
+
+```bash
+uv run python -m voxft.lora.merge --lora-dir /path/to/run/latest --out /path/to/merged
+```
+
+合并支持官方嵌套 `lora_config`；页面上传 HF 功能沿用原流程。只有训练与盲听实际通过后才发布新权重。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -9,17 +10,16 @@ PREFERRED_TAG = "【首选】"
 @dataclass(frozen=True)
 class Source:
     id: str
-    lang: str  # th / tl / zh
+    lang: str  # th / tl / zh / en
     label: str
-    kind: str  # hf_dataset | openslr
+    kind: str  # hf_dataset | openslr | local
     repo: str = ""
     config: str = ""
     split: str = "train"
     license: str = ""
     note: str = ""
-    has_speaker: bool = False   # 有说话人列 → 加工自动按 0.4 配对，否则 0（除非 pseudo_speaker）
+    has_speaker: bool = False   # 有可靠的说话人身份；视频 ID 不算
     qc: str = "none"            # none / whisper / full(+UTMOS)；UTMOS 权重源已失效，默认仅 whisper
-    concat_target: float = 0.0  # >0：短句语料同会话拼接到约该秒数（0=不拼）
     needs_transcribe: bool = False  # 有条目缺文本 → 加工时自动 Whisper 转写 + 语种过滤
 
     # ---- 列映射（留空则按通用规则探测）----
@@ -27,8 +27,8 @@ class Source:
     text_cols: tuple[str, ...] = ()
     speaker_cols: tuple[str, ...] = ()
     emotion_col: str = ""               # 情绪标签列 → 写入 manifest 的 emotion 字段
-    session_col: str = ""               # 同一次录音的分组列 → 拼接只在组内进行
-    session_prefix_sep: str = ""        # 会话值取分隔符前的前缀（如 utt_id 的 YouTube video id）
+    session_col: str = ""               # 同一次录音的分组列，用于训练/验证隔离
+    session_prefix_sep: str = ""        # YODAS 从右侧移除序号与两个时间戳，保留完整视频 ID
     label_names: tuple[str, ...] = ()   # emotion_col 是 ClassLabel 整数时的取值表
 
     # ---- 行级过滤：(列, 操作, 值)，操作 in / not_in / >= / <= ----
@@ -39,8 +39,7 @@ class Source:
     role: str = "anchor"           # expressive 表现力主力 / anchor 发音·口语锚点 / antiforget 中文防遗忘
     preferred: bool = False        # 该语种该角色下的首选源
     expressive: bool = False       # 情感/口语语料：去念稿感主力，参与控制前缀生成
-    pseudo_speaker: bool = False   # 无说话人列但值得聚类出伪说话人，以启用 ref 配对
-    sent_sep: str = ""             # 拼接时的句间分隔（留空按语种取默认）
+    pseudo_speaker: bool = False   # 仅辅助审计，不作为 ref 身份依据
 
     def audio_column(self, columns) -> str | None:
         for c in self.audio_cols or ("audio",):
@@ -60,8 +59,10 @@ class Source:
 
     def session_of(self, value) -> str:
         v = "" if value is None else str(value).strip()
+        if v.lower() in ("none", "nan", "null"):
+            return ""
         if v and self.session_prefix_sep:
-            v = v.split(self.session_prefix_sep)[0]
+            v = v.rsplit(self.session_prefix_sep, 3)[0]
         return v
 
     def display(self) -> str:
@@ -69,14 +70,14 @@ class Source:
         tag = f" {PREFERRED_TAG}" if self.preferred else ""
         return f"{self.id}{tag} — {self.label} [{self.license}]"
 
-    def separator(self) -> str:
-        if self.sent_sep:
-            return self.sent_sep
-        # 泰语句间用空格（其书写习惯无句点），中文用全角句号，其余用英文句点
-        return {"th": " ", "zh": "。"}.get(self.lang, ". ")
-
-
 SOURCES: list[Source] = [
+    Source("drama_tl", "tl", "已审核真人 Tagalog/Taglish 短剧对白（自备 JSONL）", "local",
+           license="按自有授权", note="填写 speaker_verified=true；英文/中文同人参考可标 reference_only=true",
+           has_speaker=True, role="expressive", preferred=True, expressive=True),
+    Source("drama_th", "th", "已审核真人泰语短剧对白（自备 JSONL）", "local",
+           license="按自有授权", has_speaker=True, role="expressive", expressive=True),
+    Source("replay_en", "en", "英文多说话人回放（自备已审核 JSONL，如 VCTK）", "local",
+           license="按原数据授权", has_speaker=True, role="antiforget"),
     # ---- 泰语 ----
     Source(
         "thai_ser", "th", "THAI-SER 泰语情感语音（2.8 万条/41h，200 名演员，5 情绪）",
@@ -90,17 +91,17 @@ SOURCES: list[Source] = [
         speaker_cols=("actor_id",),
         emotion_col="majority_emo",
         session_col="session_id",
-        row_filters=(("agreement", ">=", 0.7),),  # 标注一致性低的丢掉
+        row_filters=(("agreement", ">=", 0.7), ("turn_type", "in", ("impro",))),
         role="expressive", preferred=True, expressive=True,
     ),
     Source(
-        "yodas_th", "th", "YODAS2-Sidon 泰语 TTS 精选（14 万条/156h，YouTube 真实口语，4199 说话人）",
+        "yodas_th", "th", "YODAS2-Sidon 泰语 TTS 精选（14 万条/156h，YouTube 视频语音）",
         "hf_dataset", "Chalermdej/yodas2_sidon_th_tts", "", "train",
         "CC-BY-3.0",
-        "口语锚点首选：来源是 YouTube 自然说话（不是朗读腔），已用 DNSMOS + 三路 ASR 交叉校验并分级。"
-        "有 speaker_id 可 ref 配对，许可商用友好。中位 3.5s 偏短，按同一视频（utt_id 前缀）"
-        "顺序拼到 ~8s 以还原连续语流；整包 26.6GB，试跑用 max_samples",
-        has_speaker=True, qc="none", concat_target=8.0,
+        "口语候选：来自 YouTube 视频，需筛选自然对白、排除多人重叠；已有 DNSMOS + 三路 ASR 分级。"
+        "speaker_id 是视频级近似身份，默认不配 ref；上游逐条峰值归一，不生成音量指令。"
+        "保留完整 3-30s 片段，不自动拼接；整包 26.6GB，试跑用 max_samples",
+        has_speaker=False, qc="none",
         text_cols=("text",), speaker_cols=("speaker_id",),
         session_col="utt_id", session_prefix_sep="-",
         row_filters=(("grade_avg", "in", ("S+", "S")),
@@ -116,14 +117,14 @@ SOURCES: list[Source] = [
     Source(
         "fleurs_th", "th", "FLEURS 泰语（~12h，干净朗读，发音锚点）",
         "hf_dataset", "google/fleurs", "th_th", "train",
-        "CC-BY-4.0", "高质锚点；无说话人列，加工时聚类伪说话人以启用 ref 配对",
-        has_speaker=False, qc="none", pseudo_speaker=True,
+        "CC-BY-4.0", "朗读发音补充；无可靠说话人身份，不配 ref",
+        has_speaker=False, qc="none",
     ),
     Source(
         "thai20k", "th", "hotdogs/thai-speech-20k（1-10 万条）",
         "hf_dataset", "hotdogs/thai-speech-20k", "", "train",
         "CC-BY-4.0", "补充语料；质量未知，自动 Whisper 校验",
-        has_speaker=False, qc="whisper", pseudo_speaker=True,
+        has_speaker=False, qc="whisper",
     ),
     Source(
         "cv22_th", "th", "Common Voice 22 泰语（量大但噪，发音锚点）",
@@ -135,25 +136,25 @@ SOURCES: list[Source] = [
     Source(
         "filipino_emotion", "tl", "filipino-emotion-tts（1.1 万条，6 情绪）",
         "hf_dataset", "danielquillanroxas/filipino-emotion-tts", "", "train",
-        "未知", "中位 3.0s，带情绪标签；无文本列，加工自动转写；商用前先核实许可",
+        "未知", "待审计候选：缺文本/说话人/完整来源说明，核验真人录音和情绪标签后再使用",
         has_speaker=False, qc="none", needs_transcribe=True,
         emotion_col="label",
         label_names=("angry", "fearful", "happy", "neutral", "sad", "surprised"),
-        role="expressive", preferred=True, expressive=True, pseudo_speaker=True,
+        role="expressive", expressive=True,
     ),
     Source(
         "fleurs_tl", "tl", "FLEURS Tagalog（~12h，干净朗读，发音锚点）",
         "hf_dataset", "google/fleurs", "fil_ph", "train",
-        "CC-BY-4.0", "高质锚点；无说话人列，加工时聚类伪说话人",
-        has_speaker=False, qc="none", pseudo_speaker=True,
+        "CC-BY-4.0", "朗读发音补充；无可靠说话人身份，不配 ref",
+        has_speaker=False, qc="none",
     ),
     Source(
         "filipino_speech", "tl", "filipinospeechcorpus（22 万条，绝大部分是孤立单词）",
         "hf_dataset", "sapinsapin/filipinospeechcorpus", "", "train",
         "MIT",
         "⚠️ 中位 0.63s / num_words 中位 1：直接拼接会训出报菜名式念稿感。"
-        "已自动过滤掉 speech_type=machine 与 num_words<4，剩余部分按 source_file 同会话拼到 ~6s",
-        has_speaker=True, qc="whisper", concat_target=6.0,
+        "已过滤 speech_type=machine 与 num_words<4，仅保留完整句，不拼接孤立词",
+        has_speaker=True, qc="whisper",
         speaker_cols=("speaker_id",),
         session_col="source_file",
         row_filters=(("speech_type", "not_in", ("machine",)),
@@ -162,21 +163,21 @@ SOURCES: list[Source] = [
     Source(
         "filswitch", "tl", "FilSwitch（2.7K 条 Taglish 语料，句内中英混杂）",
         "hf_dataset", "qwerttyuiiop/FilSwitch", "", "train",
-        "未声明", "中位 8.5s、2-32s，时长分布最贴 VoxCPM；新闻/社媒口播风格，"
+        "未声明", "新闻朗读语料，仅作低占比 Taglish 发音补充；"
         "教的是句内英文词与数字怎么念（对应线上「RAW 被念成英文」类反馈），不是情绪。"
         "不做语种过滤，否则英文占比高的样本会被 Whisper 判成 en 而误杀；商用前先核实许可",
-        has_speaker=False, qc="none", pseudo_speaker=True,
+        has_speaker=False, qc="none",
         role="anchor", preferred=True,
     ),
     Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",
         "hf_dataset", "welyjesch/tagalog_tts", "", "train",
         "未知", "仅 audio 列，加工自动转写；商用前先核实许可",
-        has_speaker=False, qc="none", needs_transcribe=True, pseudo_speaker=True,
+        has_speaker=False, qc="none", needs_transcribe=True,
     ),
     # ---- 中文（混合防遗忘，建议占比 10-20%） ----
     Source(
-        "aishell3", "zh", "AISHELL-3（~440h 多说话人朗读，录音棚级）",
+        "aishell3", "zh", "AISHELL-3（~85h 多说话人朗读）",
         "openslr", "https://www.openslr.org/resources/93/data_aishell3.tgz", "", "",
         "Apache-2.0", "约 20GB，下载耗时；有说话人列可 ref 配对，中文防遗忘首选",
         has_speaker=True, qc="none", role="antiforget", preferred=True,
@@ -185,7 +186,7 @@ SOURCES: list[Source] = [
         "fleurs_zh", "zh", "FLEURS 普通话（~10h，干净朗读）",
         "hf_dataset", "google/fleurs", "cmn_hans_cn", "train",
         "CC-BY-4.0", "少量高质补充",
-        has_speaker=False, qc="none", pseudo_speaker=True, role="antiforget",
+        has_speaker=False, qc="none", role="antiforget",
     ),
 ]
 
@@ -198,11 +199,11 @@ def get_source(source_id: str) -> Source:
 
 
 def row_passes(src: Source, get) -> bool:
-    """行级过滤；get(col) 返回该列的值（缺列返回 None，视为通过）。"""
+    """已声明的过滤条件缺列/无效值时不放行，避免未知数据进入训练。"""
     for col, op, val in src.row_filters:
         v = get(col)
         if v is None:
-            continue
+            return False
         if op == "in" and v not in val:
             return False
         if op == "not_in" and v in val:
@@ -211,7 +212,9 @@ def row_passes(src: Source, get) -> bool:
             try:
                 fv = float(v)
             except (TypeError, ValueError):
-                continue
+                return False
+            if not math.isfinite(fv):
+                return False
             if op == ">=" and fv < float(val):
                 return False
             if op == "<=" and fv > float(val):

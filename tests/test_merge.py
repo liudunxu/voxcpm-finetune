@@ -1,5 +1,6 @@
 """LoRA merge 数学正确性自测（合成矩阵）。"""
 import json
+import pytest
 
 import torch
 from safetensors.torch import load_file, save_file
@@ -7,7 +8,8 @@ from safetensors.torch import load_file, save_file
 from voxft.lora.merge import merge_lora
 
 
-def test_merge_math(tmp_path):
+@pytest.mark.parametrize("nested", [False, True])
+def test_merge_math(tmp_path, nested):
     torch.manual_seed(0)
     out_f, in_f, r, alpha = 5, 4, 2, 4.0
     W = torch.randn(out_f, in_f)
@@ -24,7 +26,9 @@ def test_merge_math(tmp_path):
     lora.mkdir()
     save_file({"lm.layer.lora_A": A, "lm.layer.lora_B": B},
               str(lora / "lora_weights.safetensors"))
-    (lora / "lora_config.json").write_text(json.dumps({"r": r, "alpha": alpha}))
+    params = {"r": r, "alpha": alpha}
+    (lora / "lora_config.json").write_text(json.dumps(
+        {"base_model": str(base), "lora_config": params} if nested else params))
 
     out = merge_lora(base, lora, tmp_path / "merged")
     merged = load_file(str(out / "model.safetensors"))["lm.layer.weight"]

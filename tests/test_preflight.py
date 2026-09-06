@@ -10,6 +10,7 @@ def _cfg(tmp_path, train=None, pre=None):
     if pre is None:  # 训练脚本要求本地基座目录，裸 HF 仓库 ID 本身就是致命问题
         base = tmp_path / "base"
         base.mkdir(exist_ok=True)
+        (base / "config.json").write_text("{}", encoding="utf-8")
         pre = str(base)
     c = {
         "pretrained_path": pre,
