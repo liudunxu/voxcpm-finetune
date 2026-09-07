@@ -68,6 +68,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - **Whisper 权重**：large-v3 约 3GB，国内直连 huggingface.co 常在 SSL 握手就超时。加载带 3 次重试并打印 endpoint；失败时报错里给了预下载命令。可用 `VOXFT_WHISPER_MODEL` / `VOXFT_WHISPER_MODEL_LARGE` 指向本地目录
 - **万级转写必须能断点续跑**：每 300 条及退出时原子保存完整原清单（包括坏例、尚未处理的行），重跑跳过已转写行。WhisperModel.transcribe 不接受 `batched`；ndarray 输入先转 16k。推理异常必须中止，不可当语料坏例吞掉。`--max-items` 试跑不回写原清单
 - **数据源首选**：泰语 `thai_ser` 仅 impro / 审核后 `yodas_th`；Tagalog 自有真人 `drama_tl`；`filipino_emotion` 仅待审候选。`filswitch` 是新闻朗读，仅低比例补 Taglish 发音。中英文回放 `aishell3` / 自备 `replay_en`。不能把朗读数据当去念稿感主力
+- **FilSwitch 下载**：转换 parquet 可以只有元数据，音频在原仓库的独立 FLAC 文件。`bytes=None` 不等于无音频；共享 `_load_audio` 支持内嵌 bytes、HF URL/路径和已解码数组，外链通过 hf_hub_download 保留原 revision、镜像、认证和缓存。不要把音频地址套到 `refs/convert/parquet` 分支；读取失败必须记录原因，不能静默跳过整包
 - **Tagalog 系不能只认 tl 语种**：短剧台词是 Taglish，句内英文多的样本 Whisper 会判成 en，只认 tl 会把最该保留的 code-switch 样本全部误杀。`Source.languages()` 对 tl 默认放行 `("tl","en")`
 - **`yodas_th` 会话**：`utt_id.rsplit("-", 3)[0]` 保留可能含 `-` 的完整视频 ID。speaker_id 为视频级近似身份，不作 ref 依据；上游逐条峰值归一，不据此标音量。无原始连续时间关系就不拼接
 - **数据身份**：MFCC 聚类仅供审计，不能证明同人，更不能调低阈值强凑 ref。身份未知默认不配 ref。同一演员跨源使用统一 speaker_namespace/ID；先隔离 train/val，再在集合内配 ref，混合与训练前再次检查泄漏

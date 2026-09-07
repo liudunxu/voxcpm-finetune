@@ -77,13 +77,57 @@ def _emotion(source: Source, value) -> str:
     return _clean_text(value).lower()
 
 
-def _audio_bytes(value):
-    """音频单元格 → 原始字节；兼容 {bytes,path} 结构体与被包成单元素列表的情况。"""
-    if isinstance(value, (list, tuple)):
-        value = value[0] if len(value) else None
-    if isinstance(value, dict):
-        return value.get("bytes")
-    return value
+def _load_audio(value, source: Source, token: str = ""):
+    """共享音频读取：内嵌 bytes、HF 地址/相对路径、流式已解码数组。"""
+    import io
+    from urllib.parse import urlparse
+
+    import numpy as np
+    from huggingface_hub import HfFileSystem, hf_hub_download
+
+    if isinstance(value, (list, tuple, np.ndarray)):
+        if len(value) != 1:
+            raise ValueError("音频列必须是单个音频，不能为空或包含多个音轨")
+        value = value[0]
+    if isinstance(value, dict) and value.get("array") is not None:
+        wav = np.asarray(value["array"], dtype=np.float32)
+        sr = value.get("sampling_rate")
+        if wav.ndim != 1 or not wav.size or not sr:
+            raise ValueError("已解码音频缺少单声道数组或采样率")
+        return wav, int(sr)
+
+    raw = value.get("bytes") if isinstance(value, dict) else value
+    if isinstance(raw, (bytes, bytearray, memoryview)) and len(raw):
+        location = io.BytesIO(bytes(raw))
+    else:
+        path = (value.get("path") or value.get("src")) if isinstance(value, dict) else value
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("音频列没有 bytes 或 path/src")
+        revision = "main"
+        if path.startswith("hf://"):
+            resolved = HfFileSystem(token=token or None).resolve_path(path)
+            if resolved.repo_type != "dataset" or resolved.repo_id != source.repo:
+                raise ValueError("音频地址不属于当前数据集仓库")
+            filename, revision = resolved.path_in_repo, resolved.revision
+        elif urlparse(path).scheme:
+            url = urlparse(path)
+            hosts = {"huggingface.co", "hf-mirror.com", urlparse(env("HF_ENDPOINT")).netloc}
+            if (url.scheme not in ("http", "https") or url.netloc not in hosts
+                    or not url.path.startswith(f"/datasets/{source.repo}/resolve/")):
+                raise ValueError("音频 URL 必须是当前 HF 数据集的 resolve 地址")
+            filename, revision = _resolve_parquet_ref(path)
+        else:
+            filename = path
+        if not filename or Path(filename).is_absolute() or ".." in Path(filename).parts:
+            raise ValueError("音频相对路径无效")
+        # 音频在原仓库的 main/固定 revision，不在 refs/convert/parquet；
+        # 走官方下载器保留缓存、认证及 .env 的镜像/大盘配置。
+        location = hf_hub_download(repo_id=source.repo, filename=filename,
+                                   repo_type="dataset", revision=revision, token=token or None)
+    wav, sr = sf.read(location, dtype="float32", always_2d=True)
+    if not len(wav):
+        raise ValueError("解码得到空音频")
+    return wav.mean(axis=1), sr
 
 
 _GATED_HINT = ("为受限（gated）数据集：请先在 "
@@ -184,7 +228,7 @@ def _write_record(f, audio_dir: Path, n: int, wav, sr: int, text: str,
     if emotion:
         rec["emotion"] = emotion     # → 加工时转成 (情绪) 控制前缀
     if session:
-        rec["session"] = session     # → 拼接只在同一次录音内进行
+        rec["session"] = session     # → 训练/验证集隔离
     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
@@ -210,14 +254,12 @@ def _resolve_parquet_ref(entry: str) -> tuple[str, str]:
     return path.lstrip("/"), "main"
 
 
-def _download_parquet(source: Source, files: list[str], dest: Path,
+def _download_parquet(source: Source, files: list[tuple[str, str]], dest: Path,
                       max_samples: int | None, token: str, progress=None) -> int:
     """逐分片下载（hf_hub_download 自带断点续传与缓存）并解析。"""
-    import io
     from functools import partial
 
     import pandas as pd
-    import torchaudio
     from huggingface_hub import hf_hub_download
 
     from ..log import LogBar
@@ -226,6 +268,7 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
     audio_dir.mkdir(parents=True, exist_ok=True)
     manifest = dest / "manifest.jsonl"
     bar = partial(LogBar, log=progress) if progress else None
+    log = progress or print
     n = 0
     with manifest.open("w", encoding="utf-8") as f:
         for fi, (repo_file, revision) in enumerate(files):
@@ -272,7 +315,7 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
             if progress:
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 含 {len(df)} 条"
                          f"（音频列 {a_col}，文本列 {t_col or '无→待转写'}），写入音频...")
-            before, dropped = n, 0
+            before, dropped, missing_text, bad_audio = n, 0, 0, 0
             for _, row in df.iterrows():
                 if max_samples is not None and n >= max_samples:
                     break
@@ -281,25 +324,29 @@ def _download_parquet(source: Source, files: list[str], dest: Path,
                     continue
                 text = _clean_text(row[t_col]) if t_col else ""
                 if t_col and not text and not source.needs_transcribe:
-                    continue
-                raw = _audio_bytes(row[a_col])
-                if raw is None:
+                    missing_text += 1
                     continue
                 try:
-                    wav, sr = torchaudio.load(io.BytesIO(raw))
-                except Exception:
+                    wav, sr = _load_audio(row[a_col], source, token)
+                except (sf.LibsndfileError, ValueError, TypeError) as exc:
+                    bad_audio += 1
+                    if bad_audio <= 3:
+                        log(f"{source.id}: 分片 {name} 第 {row.name} 行音频读取失败：{type(exc).__name__}: {exc}")
                     continue
-                _write_record(f, audio_dir, n, wav.mean(0).numpy(), sr, text,
+                _write_record(f, audio_dir, n, wav, sr, text,
                               str(row[s_col]) if s_col else None,
                               _emotion(source, row[e_col]) if e_col else "",
                               source.session_of(row[g_col]) if g_col else "",
                               _metadata(source, row.get))
                 n += 1
-                if progress and n % 200 == 0:
+                if progress and (n == 1 or n % 25 == 0):
                     progress(f"{source.id}: 已写入 {n} 条")
-            if progress:
-                progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 完成"
-                         f"（写入 {n - before} 条，行过滤丢弃 {dropped} 条，累计 {n} 条）")
+            log(f"{source.id}: 分片 {fi + 1}/{len(files)} 完成"
+                f"（写入 {n - before} 条，行过滤 {dropped} 条，缺文本 {missing_text} 条，"
+                f"音频读取失败 {bad_audio} 条，累计 {n} 条）")
+            if bad_audio and n == before:
+                raise RuntimeError(f"{source.id}: 分片 {name} 的候选音频全部读取失败；"
+                                   "请看上方首批具体错误，不是行过滤或分片下载失败")
     return n
 
 
@@ -336,11 +383,10 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
                 continue
             if not row_passes(source, row.get):
                 continue
-            a = row[a_col]
-            array, sr = a.get("array"), a.get("sampling_rate") or 16000
             text = _clean_text(row[t_col]) if t_col else ""
             if t_col and not text and not source.needs_transcribe:
                 continue
+            array, sr = _load_audio(row[a_col], source, token)
             _write_record(f, audio_dir, n, array, sr, text,
                           str(row[s_col]) if s_col else None,
                           _emotion(source, row.get(source.emotion_col))

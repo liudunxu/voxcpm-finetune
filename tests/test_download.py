@@ -1,4 +1,12 @@
 """parquet 索引条目解析自测（离线）。"""
+import io
+import json
+
+import numpy as np
+import pandas as pd
+import pytest
+import soundfile as sf
+
 from voxft.data.download import _resolve_parquet_ref
 
 
@@ -66,3 +74,90 @@ def test_aishell_mixed_pinyin_and_source_metadata():
     assert row_passes(src, row.get)
     assert not row_passes(src, {**row, "agreement": float("nan")}.get)
     assert _metadata(get_source("yodas_th"), {}.get)["speaker_verified"] is False
+
+
+def test_audio_bytes_paths_and_stream_share_reader(tmp_path, monkeypatch):
+    """只用合成音频和模拟下载；不访问或下载真实语料。"""
+    from types import SimpleNamespace
+    from voxft.data.download import _load_audio
+    from voxft.data.registry import get_source
+    source = get_source("filswitch")
+    wav = np.column_stack([np.full(160, 0.1), np.full(160, 0.3)])
+    data = io.BytesIO()
+    sf.write(data, wav, 16000, format="FLAC")
+    local = tmp_path / "sample.flac"
+    local.write_bytes(data.getvalue())
+    downloads = []
+    monkeypatch.setattr("huggingface_hub.hf_hub_download",
+                        lambda **kw: downloads.append(kw) or str(local))
+    monkeypatch.setattr("huggingface_hub.HfFileSystem.resolve_path", lambda self, path:
+                        SimpleNamespace(repo_type="dataset", repo_id=source.repo,
+                                        path_in_repo="train/sample.flac", revision="pinned"))
+    forms = [
+        {"bytes": data.getvalue(), "path": "unused.flac"},
+        np.array([{"bytes": None, "path": f"hf://datasets/{source.repo}@pinned/train/sample.flac"}]),
+        {"bytes": None, "path": f"https://huggingface.co/datasets/{source.repo}/resolve/pinned/train/sample.flac"},
+        [{"src": f"https://hf-mirror.com/datasets/{source.repo}/resolve/pinned/train/sample.flac"}],
+        "train/sample.flac",
+        {"array": np.full(160, 0.2), "sampling_rate": 16000},
+    ]
+    for value in forms:
+        mono, sr = _load_audio(value, source, "test-token")
+        assert sr == 16000 and mono.shape == (160,)
+        assert np.allclose(mono, 0.2, atol=1e-4)
+    assert len(downloads) == 4
+    assert [call["revision"] for call in downloads] == ["pinned", "pinned", "pinned", "main"]
+    assert all(call["repo_id"] == source.repo and call["token"] == "test-token"
+               and call["filename"] == "train/sample.flac" for call in downloads)
+    for bad in ({"bytes": None, "path": None}, "/etc/passwd", "../outside.wav",
+                "https://example.com/private.wav", ["a.wav", "b.wav"]):
+        with pytest.raises(ValueError):
+            _load_audio(bad, source)
+    assert len(downloads) == 4  # 非当前 HF 仓库地址不带 token 发请求
+
+
+def test_path_only_parquet_writes_audio_and_logs_bad_rows(tmp_path, monkeypatch):
+    from voxft.data import download as dl
+    from voxft.data.registry import get_source
+    parquet = tmp_path / "metadata.parquet"
+    frame = pd.DataFrame([
+        {"audio": {"bytes": None, "path": "train/sample.flac"}, "text": "hello", "uuid": "ok"},
+        {"audio": {"bytes": None, "path": None}, "text": "missing audio", "uuid": "bad"},
+        {"audio": {"bytes": None, "path": None}, "text": "", "uuid": "empty text"},
+        {"audio": {"bytes": b"broken", "path": None}, "text": "broken audio", "uuid": "broken"},
+    ])
+    frame.to_parquet(parquet)
+    flac = tmp_path / "sample.flac"
+    sf.write(flac, np.full(160, 0.2), 16000)
+    calls = []
+    def download(**kw):
+        calls.append(kw)
+        return str(parquet if kw["filename"].endswith(".parquet") else flac)
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
+    log = []
+    source = get_source("filswitch")
+    count = dl._download_parquet(source, [("default/train/0000.parquet", "refs/convert/parquet")],
+                                 tmp_path / "output", None, "", log.append)
+    rows = [json.loads(line) for line in (tmp_path / "output/manifest.jsonl").read_text().splitlines()]
+    assert count == len(rows) == 1 and rows[0]["uuid"] == "ok"
+    assert sf.info(rows[0]["audio"]).frames == 160
+    assert [call["revision"] for call in calls] == ["refs/convert/parquet", "main"]
+    assert any("缺文本 1 条" in line and "音频读取失败 2 条" in line for line in log)
+    assert any("音频列没有 bytes 或 path/src" in line for line in log)
+
+    # 单个坏例可定位，全分片解码失败则中止，不再笼统提示检查权限。
+    frame.iloc[[1, 3]].to_parquet(parquet)
+    with pytest.raises(RuntimeError, match="候选音频全部读取失败"):
+        dl._download_parquet(source, [("bad.parquet", "main")],
+                             tmp_path / "failed", None, "", log.append)
+
+    # HTTP/认证/下载异常不能被当成单条坏音频吞掉。
+    frame.iloc[[0]].to_parquet(parquet)
+    def network_error(**kw):
+        if kw["filename"].endswith(".parquet"):
+            return str(parquet)
+        raise OSError("audio download unavailable")
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", network_error)
+    with pytest.raises(OSError, match="audio download unavailable"):
+        dl._download_parquet(source, [("bad.parquet", "main")],
+                             tmp_path / "network_failure", None, "", log.append)
