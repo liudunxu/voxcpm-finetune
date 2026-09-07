@@ -4,18 +4,18 @@
 VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语高质量语料的下载与加工、跨语言（中文→目标语言）混合微调、LoRA/全量训练管理、wandb 监控、LoRA merge、HuggingFace 同步。Gradio 页面端口 **6006**。
 
 ## 环境
-- Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检）。
+- Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检 + PyAV 视频解码）。
 - torch 平台分流（见 pyproject `[tool.uv.sources]`）：macOS → PyPI 轮子（CPU/MPS）；Linux → pytorch-cu124 index（CUDA 12.4）。训练只在 Linux GPU 机执行。
 - **数据集下载只在远程 GPU 机器进行**：本地开发环境不下载数据集，也无需本地验证下载流程。
 - 密钥走 `.env`（复制 `.env.example`）：`HF_TOKEN`、`WANDB_API_KEY`、`WANDB_PROJECT`、`VOXCPM_BASE_PATH`、`HF_ENDPOINT`（国内默认 `https://hf-mirror.com`，导入 voxft 即自动加载）。
 
 ## 目录结构
-- `src/voxft/data/` — 数据源清单（registry）、下载（download）、加工管线（pipeline）
+- `src/voxft/data/` — 数据源清单（registry）、下载（download）、加工管线（pipeline）、成片导入（ingest）
 - `src/voxft/train/` — yaml_builder（生成官方训练配置）、launcher（子进程启动训练）、tb_wandb_bridge（TensorBoard→wandb 桥接）
 - `src/voxft/lora/merge.py` — LoRA 合并导出完整模型
 - `src/voxft/hub/sync.py` — HuggingFace 上传
 - `src/voxft/qc/utmos.py` — UTMOS 音质打分（移植自 OmniVoice，注明来源）
-- `src/voxft/ui/` — Gradio 4 Tab 页面（数据集/训练/试听/模型管理）
+- `src/voxft/ui/` — Gradio 6 Tab 页面（数据集/素材导入/训练/试听/模型管理/日志）
 - `third_party/VoxCPM/` — **官方仓库 submodule，只读，禁止直接修改**；训练入口为其内 `scripts/train_voxcpm_finetune.py`
 - `configs/` — 生成的训练 YAML；`data/`、`checkpoints/` 为大文件产物（已 gitignore）
 
@@ -25,6 +25,9 @@ uv sync                              # 安装依赖
 uv run voxft-ui                      # 启动微调工作台（端口 6006）
 uv run python -m voxft.data.prefetch --whisper large-v3   # 预取权重（自动用 .env 镜像设置）
 uv run python -m voxft.data.download --source fleurs_th --max-samples 100
+# 成片导入（需 --group qc）：PyAV 解码 → VAD 切 3-30s → large-v3 逐条转写；标注在页面「素材导入」做
+uv run python -m voxft.data.ingest --input /root/autodl-tmp/drama/ep01.mp4
+uv run python -m voxft.data.ingest --input ep01.mp4 --append --holdout ep01 --process
 # 离线诊断（需 --group qc）：ASR 内容误差/疑似漏尾；自然度与情绪另做母语盲听
 uv run python -m voxft.eval base checkpoints/<run>/latest --lang th --ref-audio ref.wav --control "愤怒地，语速快"
 uv run pytest                        # 测试（testpaths=tests，不会去收 third_party 的官方脚本）
@@ -34,9 +37,10 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 
 ## 标准工作流
 1. 数据集 Tab：下载或导入已审核 JSONL → 16k / 裁静音 / 3–30s / 质检 / 声学描述 → 按身份、会话、原音频隔离 train/val → 已验证说话人整体增益 → 可信控制前缀 → split 内 ref 配对
-2. 混合：首轮目标语言 85% + 中文 10% + 英文 5%（实验起点），**按有效音频时长**采样；原始目标音频最多 3×（含嵌套混合），ref 复用另统计，验证集不重复，实际占比/曝光/联合覆盖写进 mix.json
-3. 训练 Tab：填表单 → 生成 YAML → 启动；wandb 桥接自动转发指标
-4. 试听 Tab：加载 checkpoint 试听；模型管理 Tab：merge LoRA / 上传 HF
+2. 素材导入 Tab（自备成片）：喂视频/音轨 → 自动切分转写 → 逐条试听淘汰 BGM 重的、标说话人与情绪 → 追加进原始清单 → 可选自动加工；钉一集进 `holdout.json` 当固定验证集
+3. 混合：首轮目标语言 85% + 中文 10% + 英文 5%（实验起点），**按有效音频时长**采样；原始目标音频最多 3×（含嵌套混合），ref 复用另统计，验证集不重复，实际占比/曝光/联合覆盖写进 mix.json
+4. 训练 Tab：填表单 → 生成 YAML → 启动；wandb 桥接自动转发指标
+5. 试听 Tab：加载 checkpoint 试听；模型管理 Tab：merge LoRA / 上传 HF
 
 ## 微调铁律（来自官方文档/FAQ，不要违反）
 - VoxCPM 2：`sample_rate=16000`（AudioVAE 编码器输入）、`out_sample_rate=48000`（仅推理）
@@ -79,6 +83,12 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - **AISHELL-3**：约 85h；content.txt 的同一正文列交错汉字与拼音，必须剔除拼音。旧 processed 清单重新加工，不能直接混入
 - **离线验收**：逐 case 固定 text/lang/ref_audio/ref_lang/control/seed；A/B 禁用自动坏例重试，普通试听保持原设置。CER/WER/疑似漏尾仅诊断，自然度/情绪/音色/真实截断需母语盲听，F0 不作通过门限
 - **重加工**：每次写新音频子目录，不覆盖旧清单引用的音频；旧产物不自动清理。原始 reference-only 与人工审核标记的 JSONL 格式、远程执行命令见 README
+- **追加素材会让旧验证集泄漏**：`split_records` 的随机分组结果依赖清单长度，追加新素材后重新加工，上一轮的验证组会被整体重排进训练集，已训 run 的评测结论随之作废。挑一集写进 `data/raw/<source>/holdout.json`（`{"sessions": ["素材ID"]}`）钉住；钉住的分组不参与 shuffle，永远只进验证集，`stats.json` 的 `holdout_pinned_records` 可核对。矛盾组合（钉住了却 `val_ratio=0`、或全部素材都被钉住）直接报错，不静默把钉住的数据喂进训练。`ingest` 的 `session` 自动设为素材 ID，否则同一集的切片会各自成组跨 train/val
+- **库函数不许 print**：UI 进程的 stdout 可能是已断开的 pty（启动 voxft-ui 的 SSH/tmux/JupyterLab 终端关掉后进程还在跑），`print` 抛 `[Errno 5] Input/output error`，会把一次**已经成功**的操作报成失败——filswitch 写完 2709 条清单后显示"失败"就是 `download_source` 结尾那句与 progress 重复的 print。一律走 `progress` 回调，CLI 侧传 `progress=print`（download/merge 已改，utmos 的 print 已删）。启动 UI 用 `nohup ... > ui.out 2>&1 &` 或 tmux，别把 stdout 挂在会断的终端上
+- **视频容器解码走 PyAV**：soundfile 读不了 mp4/mkv，qc 组已显式声明 `av>=12`（本来就是 faster-whisper 的传递依赖）。不引入系统 ffmpeg 依赖，本地 macOS 与远程行为一致
+- **首尾裁切按源分流**：`Options.edge_trim_ratio` 朗读 0.06（约 −24dB 相对有声电平）/ 表演 0.02。FLEURS 首尾那一大段空白是换气+房间底噪，要激进裁；短剧的抽气声是表演的一部分，裁掉模型就学不会换气（0.02 会回落到原来的 `peak×0.01`，表演语料零回归）。边界按帧 RMS 判定，单个尖峰不再决定边界
+- **听不清的按 ASR 置信度丢**：只对 `needs_transcribe` 的源启用（`filipino_emotion`/`tagalog_tts`/`thai_ser` impro）——转写结果就是训练文本，没有原文可比相似度。门限沿用 faster-whisper 解码器自己的默认（时长加权 `avg_logprob < -1.0` 或 `no_speech_prob > 0.6`），`--asr-min-logprob`/`--asr-max-no-speech` 可调，数量记在 `stats.json` 的 `drop_transcribe`，日志打印原因分类。这不违反"拒绝 min_snr_db/min_f0_std 硬筛"——被禁的是能量分位差与 F0 这类伪指标，不是 ASR 自己的置信度
+- **Tagalog 无可商用的开源真人表演语料**（已核实，别重复调研）：Common Voice tl 官方 `recordedHours=0`（社区镜像也无 tl 音频）；YODAS/YODAS2 Sidon 的 224 个语种子集里没有 tl/fil；OpenSLR 无菲律宾语资源；HF 上 `modality:audio` 匹配 filipino/tagalog 的只有厂商 sample（`n<1K`，且多为 CC-BY-NC-ND 或 gated）。`filipino_emotion` 连数据卡都没有。有规模的真人语料只能付费（Nexdata 104h 菲律宾语对话、DataOceanAI 423.5h/257 人朗读、MagicHub ASR-SFDuSC 免费注册）或用「素材导入」自建 `drama_tl`
 
 ## Submodule 升级
 ```bash

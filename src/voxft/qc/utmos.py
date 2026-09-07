@@ -352,7 +352,6 @@ def get_scorer():
         _SCORER = (model, device)
     except Exception as exc:
         _SCORER_ERR = str(exc)
-        print(f"[utmos] 评分器不可用: {exc}")
     return _SCORER
 
 

@@ -2033,6 +2033,7 @@ dev = [
     { name = "pytest" },
 ]
 qc = [
+    { name = "av" },
     { name = "faster-whisper" },
 ]
 
@@ -2062,7 +2063,10 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]
-qc = [{ name = "faster-whisper", specifier = ">=1.0" }]
+qc = [
+    { name = "av", specifier = ">=12" },
+    { name = "faster-whisper", specifier = ">=1.0" },
+]
 
 [[package]]
 name = "wandb"

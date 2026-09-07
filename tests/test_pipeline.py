@@ -33,6 +33,107 @@ def test_trim_and_normalize():
     assert abs(float(np.abs(normed).max()) - 0.95) < 1e-6
 
 
+def test_leading_room_tone_trimmed_for_read_speech_kept_for_performance():
+    """FLEURS 首尾那一大段空白是换气+房间底噪，朗读语料必须裁掉；
+    但短剧的抽气声是表演的一部分，表演语料要用低门限留住它。"""
+    sr = 16000
+    rng = np.random.default_rng(0)
+    speech = 0.5 * np.sin(2 * np.pi * 440 * np.arange(sr) / sr)
+    room = rng.normal(0, 0.014, sr).astype(np.float32)   # 首秒底噪，RMS≈0.014
+    wav = np.concatenate([room, speech])
+    assert len(trim_silence(wav, sr, edge_ratio=0.06)) < 1.4 * sr, "朗读语料首段底噪没裁掉"
+    assert len(trim_silence(wav, sr, edge_ratio=0.02)) > 1.8 * sr, "表演语料的换气被裁掉了"
+
+
+def test_unintelligible_transcriptions_are_dropped(monkeypatch):
+    """filipino_emotion 这类源没有原文，转写结果直接当训练文本；
+    Whisper 自己都没把握的（含糊/糊成一团）必须挡在清单外。"""
+    from voxft.data import pipeline as pl
+
+    class _Seg:
+        def __init__(self, logprob, no_speech):
+            self.text, self.start, self.end = "uh huh", 0.0, 2.0
+            self.avg_logprob, self.no_speech_prob = logprob, no_speech
+
+    def _model(logprob, no_speech):
+        class _M:
+            def transcribe(self, wav, vad_filter=True):
+                info = type("Info", (), {"language": "tl"})()
+                return iter([_Seg(logprob, no_speech)]), info
+        return _M()
+
+    monkeypatch.setattr(pl, "load_wav_mono", lambda p: (np.zeros(1600, np.float32), 16000))
+    monkeypatch.setattr(pl, "_whisper_model", lambda *a, **k: _model(-2.5, 0.1))
+    kept, bad = pl._transcribe_manifest([{"audio": "a.wav", "text": ""}], "tl",
+                                        ("tl", "en"), min_logprob=-1.0)
+    assert kept == [] and bad == 1, "低置信度转写没被丢掉"
+
+    monkeypatch.setattr(pl, "_whisper_model", lambda *a, **k: _model(-0.2, 0.1))
+    kept, bad = pl._transcribe_manifest([{"audio": "a.wav", "text": ""}], "tl",
+                                        ("tl", "en"), min_logprob=-1.0)
+    assert len(kept) == 1 and bad == 0 and kept[0]["text"] == "uh huh"
+
+    # 不给门限时行为与改动前一致：已有原文的源不会因为这条被误杀
+    monkeypatch.setattr(pl, "_whisper_model", lambda *a, **k: _model(-9.0, 0.99))
+    kept, bad = pl._transcribe_manifest([{"audio": "a.wav", "text": ""}], "tl", ("tl", "en"))
+    assert len(kept) == 1 and bad == 0
+
+
+def test_options_gate_quality_checks_by_source_kind():
+    from voxft.data.pipeline import options_for
+    assert options_for("filipino_emotion").asr_min_logprob == -1.0  # 转写即文本
+    assert options_for("fleurs_tl").asr_min_logprob is None         # 有原文，用相似度
+    assert options_for("drama_tl").edge_trim_ratio == pytest.approx(0.02)   # 表演：留换气
+    assert options_for("fleurs_tl").edge_trim_ratio > 0.05                  # 朗读：激进裁
+
+
+def _session_rows(session, n=4):
+    return [{"audio": f"{session}_{i}.wav", "origin_audio": f"{session}_{i}.wav",
+             "session": session, "speaker": f"drama_tl:{session}",
+             "speaker_verified": False, "duration": 4.0} for i in range(n)]
+
+
+def test_holdout_pin_survives_appending_new_videos():
+    """追加新素材后清单变长，随机分组会整体重排：上一轮的验证集必须钉住，
+    否则已经训过的 run，其验证结论就作废了。"""
+    from voxft.data.pipeline import split_records
+    first = [r for s in ("ep01", "ep02", "ep03", "ep04") for r in _session_rows(s)]
+    _train, val = split_records(first, Options(val_ratio=0.25))
+    pinned = sorted({r["session"] for r in val})
+    assert pinned, "第一轮没留出验证集，用例前提不成立"
+
+    appended = first + [r for s in ("ep05", "ep06", "ep07") for r in _session_rows(s)]
+    naive_train, _naive_val = split_records(appended, Options(val_ratio=0.25))
+    leaked = set(pinned) & {r["session"] for r in naive_train}
+    assert leaked, "不钉住也没泄漏，这条用例测不出钉住的作用"
+
+    train, val2 = split_records(appended, Options(val_ratio=0.25,
+                                                 holdout_sessions=tuple(pinned)))
+    assert set(pinned) <= {r["session"] for r in val2}, "钉住的会话跑出了验证集"
+    assert not (set(pinned) & {r["session"] for r in train}), "钉住的会话进了训练集"
+
+
+def test_holdout_refuses_to_silently_train_on_pinned_data():
+    from voxft.data.pipeline import split_records
+    rows = [r for s in ("ep01", "ep02") for r in _session_rows(s)]
+    with pytest.raises(ValueError, match="钉住的数据不能进训练集"):
+        split_records(rows, Options(val_ratio=0.0, holdout_sessions=("ep01",)))
+    with pytest.raises(ValueError, match="都钉进验证集"):
+        split_records(rows, Options(val_ratio=0.25, holdout_sessions=("ep01", "ep02")))
+
+
+def test_malformed_holdout_file_raises(tmp_path):
+    """holdout.json 写错却静默当成没钉住，是最坏的失败模式。"""
+    from voxft.data.pipeline import _load_holdout
+    pin = tmp_path / "holdout.json"
+    assert _load_holdout(tmp_path / "manifest.jsonl") == ()   # 文件不存在 = 没钉
+    pin.write_text('{"sessions": "ep01"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="holdout.json 必须是"):
+        _load_holdout(pin)
+    pin.write_text('{"sessions": ["ep01", "ep02", "ep01"]}', encoding="utf-8")
+    assert _load_holdout(pin) == ("ep01", "ep02")
+
+
 def _make_source(tmp_path, name, n_spk=2, per_spk=6, dur=4.0):
     src = DATA_RAW / name
     audio = src / "audio"

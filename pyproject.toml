@@ -29,7 +29,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
-qc = ["faster-whisper>=1.0"]
+qc = ["faster-whisper>=1.0", "av>=12"]
 
 [project.scripts]
 voxft-ui = "voxft.ui.app:main"

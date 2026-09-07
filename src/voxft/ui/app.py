@@ -7,7 +7,7 @@ import gradio as gr
 
 from ..paths import DATA_PROCESSED, CHECKPOINT_DIR, env, load_dotenv
 from ..data.registry import sources_by_quality
-from ..data import download, pipeline
+from ..data import download, ingest, pipeline
 from ..train import launcher, yaml_builder
 from ..lora.merge import merge_lora
 from ..hub.sync import upload_folder
@@ -182,6 +182,156 @@ def do_mix(target_ds, target_w, zh_ds, zh_w, out_name, recipe=""):
             _ds_choices_update()
 
 
+# ---------------- Tab 1.5: 素材导入 ----------------
+
+def _ingest_sources() -> list[str]:
+    from ..data.registry import SOURCES
+    return [s.id for s in SOURCES if s.kind == "local"]
+
+
+def _known_speakers(source_id: str) -> list[str]:
+    """原始清单里已用过的说话人 ID；同一演员跨素材必须复用同一个 ID。"""
+    p = pipeline.DATA_RAW / source_id / "manifest.jsonl"
+    if not p.exists():
+        return []
+    return sorted({r["speaker"] for r in pipeline._read_manifest(p) if r.get("speaker")})
+
+
+def _clip_info(rows: list[dict]) -> str:
+    from collections import Counter, defaultdict
+    if not rows:
+        return "（暂无候选；先在上方切分素材）"
+    by_vid: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_vid[r.get("ingest_video", "?")].append(r)
+    lines = []
+    for vid, rs in sorted(by_vid.items()):
+        n = Counter(r.get("verdict") or "待定" for r in rs)
+        lines.append(f"{vid}: {len(rs)} 条 | 保留 {n['保留']} / 丢弃 {n['丢弃']} / 待定 {n['待定']}"
+                     f" | 听不清 {sum(1 for r in rs if r.get('transcribe_error'))}"
+                     f" | 已标说话人 {len({r['speaker'] for r in rs if r.get('speaker')})}")
+    return "\n".join(lines)
+
+
+def _clip_panel(source_id: str, keep: int | None = None):
+    """片段下拉框 + 批次统计。keep 是行号，保存后停在原位/下一条而不是跳回开头。"""
+    rows = ingest.load_candidates(source_id)
+    labels = [ingest.clip_label(i, r) for i, r in enumerate(rows)]
+    value = labels[keep] if keep is not None and keep < len(labels) \
+        else (labels[0] if labels else None)
+    return gr.update(choices=labels, value=value), _clip_info(rows)
+
+
+def _row_of(source_id: str, label: str) -> tuple[list[dict], int]:
+    """按 label 反查行号；label 由 clip_label 生成，别自己 split。"""
+    rows = ingest.load_candidates(source_id)
+    labels = [ingest.clip_label(i, r) for i, r in enumerate(rows)]
+    if not label or label not in labels:
+        raise ValueError("请先在片段列表里选一条（列表过期就点「刷新列表」）")
+    return rows, labels.index(label)
+
+
+def do_refresh_ingest(source_id):
+    panel, info = _clip_panel(source_id)
+    return panel, info, gr.update(choices=_known_speakers(source_id))
+
+
+def do_ingest(source_id, paths, video_id, min_dur, max_dur, max_items):
+    if not source_id or not (paths or "").strip():
+        yield "请填写数据源与远程素材路径（一行一个）", gr.update(), gr.update()
+        return
+
+    def fn(log):
+        import json
+        inputs = [p.strip() for p in paths.splitlines() if p.strip()]
+        vid = (video_id or "").strip() or None
+        if vid and len(inputs) > 1:
+            raise ValueError("素材 ID 只能在单个文件时指定；多个文件请用文件名作为 ID")
+        log(f"切分 {len(inputs)} 个素材 → {source_id}（{min_dur}-{max_dur}s；"
+            f"PyAV 解码 → Whisper VAD 定边界 → large-v3 逐条转写 + 语种过滤）")
+        summaries = [ingest.ingest_file(p, source_id, vid, float(min_dur), float(max_dur),
+                                        int(max_items) if max_items else None, progress=log)
+                     for p in inputs]
+        log("切分完成:\n" + json.dumps(summaries, ensure_ascii=False, indent=2))
+        log("下一步：选片段试听 → 标说话人/情绪 → 判定保留或丢弃 → 追加")
+        return None
+
+    text = ""
+    for text in _stream("ingest", fn):
+        yield text, gr.update(), gr.update()
+    panel, info = _clip_panel(source_id)
+    yield text, panel, info
+
+
+def _clip_empty():
+    return (None, "", "", gr.update(), False, "", False, "", "", False, "待定")
+
+
+def do_load_clip(source_id, label):
+    """选中片段 → 播放 + 回填已有标注（可反复修改）。"""
+    if not label:
+        return _clip_empty()
+    try:
+        rows, i = _row_of(source_id, label)
+    except ValueError as exc:
+        return (None, "", str(exc), *_clip_empty()[3:])
+    r = rows[i]
+    meta = (f"素材 {r.get('ingest_video')} | {r.get('start')}-{r.get('end')}s"
+            f"（{float(r.get('end', 0)) - float(r.get('start', 0)):.2f}s）\n"
+            f"语种 {r.get('lang')} | 转写 {r.get('transcript_source') or '—'}"
+            f" | 判定 {r.get('verdict') or '待定'}\n"
+            f"状态 {r.get('transcribe_error') or '通过'}\n{r.get('audio')}")
+    return (r["audio"], r.get("text", ""), meta,
+            gr.update(choices=_known_speakers(source_id), value=r.get("speaker") or None),
+            bool(r.get("speaker_verified")), r.get("emotion", ""),
+            bool(r.get("emotion_verified")), r.get("control_zh", ""), r.get("control_en", ""),
+            bool(r.get("control_verified")), r.get("verdict") or "待定")
+
+
+def do_save_clip(source_id, label, text, speaker, speaker_ok, emotion, emotion_ok,
+                 ctrl_zh, ctrl_en, ctrl_ok, verdict):
+    try:
+        rows, i = _row_of(source_id, label)
+        rows[i].update(ingest.validate_annotation(text, speaker, speaker_ok, emotion,
+                                                  emotion_ok, ctrl_zh, ctrl_en, ctrl_ok,
+                                                  verdict))
+        ingest.save_candidates(source_id, rows)
+        msg = f"已保存第 {i} 条（{verdict}）" + ("" if speaker_ok else "；未核实身份 → 不配 ref")
+    except ValueError as exc:
+        return f"标注未保存: {exc}", gr.update(), gr.update()
+    panel, info = _clip_panel(source_id, keep=min(i + 1, len(rows) - 1))
+    return msg, panel, info
+
+
+def do_append(source_id, pin, out_name, auto, min_dur, max_dur):
+    if not source_id:
+        yield "请选择目标数据源", gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
+        return
+
+    def fn(log):
+        import json
+        rows = ingest.load_candidates(source_id)
+        holdout = (pin or "").replace("，", " ").replace(",", " ").split()
+        res = ingest.append_to_source(source_id, rows, holdout, progress=log)
+        log("追加结果:\n" + json.dumps(res, ensure_ascii=False, indent=2))
+        if auto and res.get("appended"):
+            name = (out_name or "").strip() or None
+            log(f"重新加工 {source_id} → {name or source_id}"
+                f"（钉住的素材只进验证集，不会因清单变长被重排进训练）")
+            stats = pipeline.process_dataset(
+                source_id, name,
+                pipeline.options_for(source_id, min_dur=float(min_dur), max_dur=float(max_dur)),
+                progress=log)
+            log("加工完成，统计:\n" + json.dumps(stats, ensure_ascii=False, indent=2))
+        return None
+
+    for text in _stream("append", fn):
+        yield text, _dataset_table(), _ds_choices_update(), _ds_choices_update(), \
+            gr.update(), gr.update()
+    panel, info = _clip_panel(source_id)
+    yield text, _dataset_table(), _ds_choices_update(), _ds_choices_update(), panel, info
+
+
 # ---------------- Tab 2: 训练 ----------------
 
 def do_build_yaml(ftype, ds_name, r, alpha, lr, num_iters, batch_size,
@@ -320,7 +470,7 @@ def do_merge(base, lora_dir, out):
         base_path = launcher.resolve_base_path(base or env("VOXCPM_BASE_PATH")
                                                or "openbmb/VoxCPM2", progress=log)
         log(f"开始合并: 基座={base_path} lora={lora_dir} → {out}")
-        p = merge_lora(base_path, lora_dir, out)
+        p = merge_lora(base_path, lora_dir, out, progress=log)
         log(f"合并完成 → {p}")
         return None
 
@@ -412,6 +562,73 @@ def build_ui() -> gr.Blocks:
                                  placeholder="drama_tl=45\nnatural_tl=30\nfilswitch=10\naishell3=10\nreplay_en=5")
             m_out = gr.Textbox(label="混合日志", lines=6, interactive=False)
 
+        with gr.Tab("素材导入") as tab_ingest:
+            gr.Markdown("**成片 → 切分 → 转写 → 追加**（Tagalog 没有可商用的开源真人表演语料："
+                        "Common Voice tl 官方 0 小时、YODAS 无 tl 子集、OpenSLR 无菲律宾语资源，"
+                        "短剧素材只能自备。有对白轨就喂对白轨；成片混音轨靠试听淘汰 BGM 重的条目）")
+            with gr.Row():
+                ig_source = gr.Dropdown(_ingest_sources(), value="drama_tl",
+                                        label="目标数据源（自备语料）")
+                ig_vid = gr.Textbox("", label="素材 ID（空=文件名；同时作为 session 与 holdout 键）")
+            ig_input = gr.Textbox("", lines=3,
+                                  label="远程视频/音频路径（一行一个；mp4/mkv/wav/flac）",
+                                  placeholder="/root/autodl-tmp/drama/ep01.mp4")
+            with gr.Row():
+                ig_min = gr.Number(3.0, label="最短时长(s)")
+                ig_max = gr.Number(30.0, label="最长时长(s)")
+                ig_n = gr.Number(label="试跑条数（空=全部；试跑不追加）", precision=0)
+                ig_run = gr.Button("切分并转写", variant="primary")
+            ig_log = gr.Textbox(label="导入日志（实时）", lines=10, interactive=False)
+
+            gr.Markdown("---\n**试听与标注**（说话人只有勾选「已核实是本人」才会写 "
+                        "`speaker_verified=true`，那是 ref 配对与响度对齐的前提；"
+                        "情绪与控制描述只用中英文，没核实就别勾）")
+            with gr.Row():
+                ig_pick = gr.Dropdown([], label="片段（素材:序号 | 时长 | 判定 | 说话人）", scale=5)
+                ig_refresh = gr.Button("刷新列表", scale=1)
+            ig_info = gr.Textbox(label="批次统计", lines=3, interactive=False)
+            ig_audio = gr.Audio(label="片段音频", type="filepath")
+            ig_text = gr.Textbox("", lines=2, label="台词（转写结果，可直接改；必须是裸台词）")
+            ig_meta = gr.Textbox(label="片段信息", lines=4, interactive=False)
+            with gr.Row():
+                ig_spk = gr.Dropdown(_known_speakers("drama_tl"), label="说话人（可手填新 ID）",
+                                     allow_custom_value=True)
+                ig_spk_ok = gr.Checkbox(False, label="已核实是本人")
+            with gr.Row():
+                ig_emo = gr.Textbox("", label="情绪标签（可空，如 surprised）")
+                ig_emo_ok = gr.Checkbox(False, label="情绪已核实")
+            with gr.Row():
+                ig_ctrl_zh = gr.Textbox("", label="控制描述（中文，可空）")
+                ig_ctrl_en = gr.Textbox("", label="控制描述（英文，可空）")
+                ig_ctrl_ok = gr.Checkbox(False, label="控制描述已核实")
+            with gr.Row():
+                ig_verdict = gr.Radio(list(ingest.VERDICTS), value="待定", label="判定")
+                ig_save = gr.Button("保存并下一条", variant="primary")
+
+            gr.Markdown("---\n**追加到训练集**（只追加判定为「保留」且转写通过的条目；"
+                        "同一素材重切会替换它上次追加的行。钉住的素材永远只进验证集，"
+                        "否则追加后清单变长，随机分组会把旧验证集重排进训练集）")
+            with gr.Row():
+                ig_pin = gr.Textbox("", label="钉进验证集的素材 ID（空格/逗号分隔，通常只挑一集）")
+                ig_out = gr.Textbox("", label="加工输出名（空=与数据源同名）")
+                ig_auto = gr.Checkbox(True, label="追加后自动加工")
+            ig_append = gr.Button("追加（并按需加工）", variant="primary")
+
+            ig_run.click(do_ingest, [ig_source, ig_input, ig_vid, ig_min, ig_max, ig_n],
+                         [ig_log, ig_pick, ig_info])
+            ig_pick.change(do_load_clip, [ig_source, ig_pick],
+                           [ig_audio, ig_text, ig_meta, ig_spk, ig_spk_ok, ig_emo,
+                            ig_emo_ok, ig_ctrl_zh, ig_ctrl_en, ig_ctrl_ok, ig_verdict])
+            ig_save.click(do_save_clip,
+                          [ig_source, ig_pick, ig_text, ig_spk, ig_spk_ok, ig_emo, ig_emo_ok,
+                           ig_ctrl_zh, ig_ctrl_en, ig_ctrl_ok, ig_verdict],
+                          [ig_log, ig_pick, ig_info])
+            ig_refresh.click(do_refresh_ingest, ig_source, [ig_pick, ig_info, ig_spk])
+            ig_source.change(do_refresh_ingest, ig_source, [ig_pick, ig_info, ig_spk])
+            ig_append.click(do_append, [ig_source, ig_pin, ig_out, ig_auto, ig_min, ig_max],
+                            [ig_log, ds_table, m_target, m_zh, ig_pick, ig_info])
+            tab_ingest.select(do_refresh_ingest, ig_source, [ig_pick, ig_info, ig_spk])
+
         with gr.Tab("训练") as tab_train:
             with gr.Row():
                 ft_type = gr.Radio(["lora", "full"], value="lora", label="微调方式（推荐 LoRA）")
@@ -453,8 +670,9 @@ def build_ui() -> gr.Blocks:
                             [ft_type, ft_ds, ft_r, ft_alpha, ft_lr, ft_iters,
                              ft_bs, ft_ga, ft_save, ft_name, ft_epochs, gpus],
                             [ft_out, run_state, cfg_path])
-            tab_train.select(lambda: gr.update(choices=_config_files()),
-                             outputs=cfg_path)
+            tab_train.select(lambda: (gr.update(choices=_config_files()),
+                                      gr.update(choices=_processed_datasets())),
+                             outputs=[cfg_path, ft_ds])
             gr.Markdown("""---
 **续训**：官方脚本自动从 `save_path` 的 `latest/` 断点恢复（权重+优化器+调度器）；
 重启后用同一配置重新启动即可，无需任何额外参数。SIGTERM/SIGINT 会自动保存。

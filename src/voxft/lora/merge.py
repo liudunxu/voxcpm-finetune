@@ -33,7 +33,8 @@ def read_lora_config(path: str | Path) -> dict:
     return cfg.get("lora_config", cfg.get("lora", cfg))
 
 
-def merge_lora(base_path: str, lora_dir: str | Path, out_dir: str | Path) -> Path:
+def merge_lora(base_path: str, lora_dir: str | Path, out_dir: str | Path,
+               progress=None) -> Path:
     """把 LoRA 增量合并进基座，导出完整模型目录（与全量 checkpoint 同构）。
 
     base_path: 基座目录（含 model.safetensors + config.json + audiovae.pth）
@@ -65,13 +66,14 @@ def merge_lora(base_path: str, lora_dir: str | Path, out_dir: str | Path) -> Pat
                 tensors[base_key] = tensors[base_key].float().add_(b @ a * scale).to(tensors[base_key].dtype)
                 merged_n += 1
         save_file(tensors, str(out / f.name))
-    if merged_n != len(pairs):
-        print(f"[merge] 警告: {len(pairs)} 个 LoRA 层中 {merged_n} 个在基座中找到匹配；"
-              f"请核对基座与训练版本一致")
+    if merged_n != len(pairs) and progress:
+        progress(f"[merge] 警告: {len(pairs)} 个 LoRA 层中 {merged_n} 个在基座中找到匹配；"
+                 f"请核对基座与训练版本一致")
     for f in base.iterdir():
         if f.suffix != ".safetensors" and f.is_file():
             shutil.copy2(f, out / f.name)
-    print(f"[merge] 完成：{merged_n} 层合并，缩放 {scale:.3f} → {out}")
+    if progress:
+        progress(f"[merge] 完成：{merged_n} 层合并，缩放 {scale:.3f} → {out}")
     return out
 
 
@@ -86,4 +88,4 @@ if __name__ == "__main__":
     base = args.base or env("VOXCPM_BASE_PATH")
     if not base or not Path(base).is_dir():
         raise SystemExit("需要本地基座目录：先下载 openbmb/VoxCPM2 或设置 VOXCPM_BASE_PATH")
-    merge_lora(base, args.lora_dir, args.out)
+    merge_lora(base, args.lora_dir, args.out, progress=print)

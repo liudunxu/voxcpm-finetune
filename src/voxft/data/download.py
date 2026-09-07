@@ -154,7 +154,7 @@ def _tree(endpoint: str, repo: str, path: str, token: str) -> list[dict]:
 
 
 def _parquet_files(repo: str, config: str, split: str,
-                   token: str) -> list[tuple[str, str]]:
+                   token: str, progress=None) -> list[tuple[str, str]]:
     """返回 (仓库内相对路径, revision) 列表。
 
     首选遍历 refs/convert/parquet 分支树（可精确过滤 config/split）；
@@ -189,7 +189,8 @@ def _parquet_files(repo: str, config: str, split: str,
             return files
     except Exception as exc:
         _check_gated(exc, repo)
-        print(f"[{repo}] parquet 分支遍历失败（{exc}），回退索引 API")
+        if progress:
+            progress(f"[{repo}] parquet 分支遍历失败（{exc}），回退索引 API")
 
     params, headers = {}, {}
     if config:
@@ -406,7 +407,7 @@ def _download_hf(source: Source, dest: Path, max_samples: int | None,
         progress(f"{source.id}: 解析分片列表（repo={source.repo} "
                  f"config={source.config or '-'} split={source.split}）...")
     try:
-        files = _parquet_files(source.repo, source.config, source.split, token)
+        files = _parquet_files(source.repo, source.config, source.split, token, progress)
     except Exception as exc:
         _check_gated(exc, source.repo)
         if progress:
@@ -502,7 +503,6 @@ def download_source(source_id: str, max_samples: int | None = None,
         raise RuntimeError(f"{source_id}: 未下载到任何样本，请检查数据源/权限")
     if progress:
         progress(f"{source_id}: 完成，共 {n} 条 → {dest}/manifest.jsonl")
-    print(f"[{source_id}] 完成，共 {n} 条 → {dest}/manifest.jsonl")
     return dest
 
 
@@ -512,7 +512,7 @@ def main() -> None:
     ap.add_argument("--source", required=True, choices=[s.id for s in SOURCES])
     ap.add_argument("--max-samples", type=int, default=None)
     args = ap.parse_args()
-    download_source(args.source, args.max_samples)
+    download_source(args.source, args.max_samples, progress=print)
 
 
 if __name__ == "__main__":

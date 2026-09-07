@@ -19,6 +19,10 @@ from ..paths import DATA_PROCESSED, DATA_RAW
 
 TARGET_SR = 16000
 
+# 首尾裁切门限相对"有声帧电平"的比例。朗读语料用 0.06（约 -24dB）能裁掉换气+房间底噪；
+# 表演语料的抽气声是表演的一部分，必须调低（见 options_for）。再高会啃掉词首清辅音。
+_EDGE_TRIM_RATIO = 0.06
+
 
 @dataclass
 class Options:
@@ -34,6 +38,10 @@ class Options:
     whisper_lang: str | None = None      # "th"/"tl"/"zh"；None = 不做转写校验
     accept_langs: tuple[str, ...] = ()   # 允许的检测语种（留空=只认 whisper_lang）
     whisper_min_sim: float = 0.55
+    # 转写文本即训练文本的源（needs_transcribe）没有原文可比相似度，
+    # 只能用 Whisper 自己的置信度挡含糊音；沿用 faster-whisper 解码器的门限。
+    asr_min_logprob: float | None = None     # 时长加权 avg_logprob 低于此值 = 听不清
+    asr_max_no_speech: float | None = None   # 时长加权 no_speech_prob 高于此值 = 不是人声
     control_ratio: float = 0.5       # 带 (情绪/语速/音量) 控制前缀的样本比例
     control_zh_ratio: float = 0.5    # 前缀用中文的比例，其余用英文（对齐线上 prompt 语言）
     pseudo_speaker: bool = False     # 可选的审计分组，不会赋予 ref 身份可信度
@@ -42,6 +50,8 @@ class Options:
     min_snr_db: float | None = None  # 仅兼容旧参数；启用会报错，能量分位差不是 SNR
     min_f0_std: float | None = None  # 仅兼容旧参数；不能按音高起伏硬筛
     target_dbfs: float = -24.0       # 按说话人整体增益对齐，保留条内与条间动态
+    edge_trim_ratio: float = _EDGE_TRIM_RATIO  # 首尾裁切门限/有声电平；表演语料调低保留换气
+    holdout_sessions: tuple[str, ...] = ()  # 钉住的会话永远进验证集，不参与随机分组
     seed: int = 42
 
 
@@ -62,30 +72,39 @@ def load_wav_mono(path: str | Path) -> tuple[np.ndarray, int]:
     return arr.mean(axis=1), sr
 
 
+def _frame_hop(sr: int, win: float = 0.025) -> int:
+    return max(256, int(win * sr)) // 2
+
+
 def _frame_rms(wav: np.ndarray, sr: int, win: float = 0.025) -> np.ndarray:
     n = max(256, int(win * sr))
-    return librosa.feature.rms(y=wav, frame_length=n, hop_length=n // 2)[0]
+    return librosa.feature.rms(y=wav, frame_length=n, hop_length=_frame_hop(sr, win))[0]
 
 
 def trim_silence(wav: np.ndarray, sr: int, floor: float = 1e-3,
-                 tail_keep: float = 0.3) -> np.ndarray:
+                 tail_keep: float = 0.3,
+                 edge_ratio: float = _EDGE_TRIM_RATIO) -> np.ndarray:
     """裁掉首尾静音；尾部最多保留 tail_keep 秒（官方要求 <0.5s，防生成失控）。
 
-    阈值取"峰值 × floor"与"实测底噪 × 3"的较大者：众包语料底噪高，
-    只用相对峰值的固定门限（-60dB）经常整条裁不动。
+    阈值取"峰值 × floor"与"实测底噪 × 3 / 有声电平 × edge_ratio"的较大者：
+    众包语料底噪高，只用相对峰值的固定门限（-60dB）经常整条裁不动。
+    边界按帧 RMS 判定而不是逐采样点：一声口水音的单个尖峰不该把整段空白留下。
     """
     peak = float(np.abs(wav).max()) if wav.size else 0.0
     if peak < 1e-8:
         return wav
     rms = _frame_rms(wav, sr)
     noise = float(np.percentile(rms, 10)) if rms.size else 0.0
+    # p99 是"有声电平"；整条几乎全是静音时它退化为 0，回落到 peak*0.01。
+    voiced = float(np.percentile(rms, 99)) if rms.size else 0.0
     # 无明显静音时，p10 可能是轻声语音；限制门限，避免把弱辅音当底噪裁掉。
-    thr = max(peak * floor, min(noise * 3.0, peak * 0.01))
-    nz = np.nonzero(np.abs(wav) > thr)[0]
+    thr = max(peak * floor, min(noise * 3.0, max(voiced * edge_ratio, peak * 0.01)))
+    nz = np.nonzero(rms > thr)[0]
     if len(nz) == 0:
         return wav
-    start = max(0, nz[0] - int(0.05 * sr))
-    end = min(len(wav), nz[-1] + 1 + int(tail_keep * sr))
+    hop = _frame_hop(sr)
+    start = max(0, nz[0] * hop - int(0.05 * sr))
+    end = min(len(wav), nz[-1] * hop + hop + int(tail_keep * sr))
     return wav[start:end]
 
 
@@ -246,16 +265,21 @@ _VOL_PHRASES = {"quiet": {"zh": ["轻声", "音量小"], "en": ["soft voice", "q
                 "loud": {"zh": ["音量大"], "en": ["loud"]}}
 
 
+def _assert_control_lang(control) -> str:
+    """控制前缀只写中英文（线上 prompt 就是中英文）；返回去掉括号的规范文本。"""
+    control = re.sub(r"[()（）]", "", str(control)).strip()
+    if re.search(r"[\u0e00-\u0e7f]", control):
+        raise ValueError("控制前缀只能使用中英文")
+    return control
+
+
 def build_control(rec: dict, rng: random.Random, zh_ratio: float) -> str:
     """只使用经审核的中英文指令/标签；不从音量、空格数猜测表演方式。"""
     lang = "zh" if rng.random() < zh_ratio else "en"
     if rec.get("control_verified") is True:
         control = rec.get(f"control_{lang}") or rec.get("control_zh") or rec.get("control_en")
         if control:
-            control = re.sub(r"[()（）]", "", str(control)).strip()
-            if re.search(r"[\u0e00-\u0e7f]", control):
-                raise ValueError("控制前缀只能使用中英文")
-            return control
+            return _assert_control_lang(control)
     parts: list[str] = []
     emo = (rec.get("emotion") or "").lower()
     pool = _EMO_PHRASES.get(emo) if rec.get("emotion_verified") is True else None
@@ -356,9 +380,31 @@ def _read_manifest(manifest: Path) -> list[dict]:
     return rows
 
 
+def _unintelligible(segs, text: str, det: str, ok: tuple[str, ...],
+                    min_logprob: float | None, max_no_speech: float | None) -> str:
+    """转写结果就是训练文本，含糊不清的必须挡在这里；返回排除原因，空串=通过。"""
+    if not text or (det and det.split("-")[0] not in ok):
+        return f"empty_text_or_language:{det}"
+    if min_logprob is None and max_no_speech is None:
+        return ""
+    weighted = [(max(0.0, float(s.end) - float(s.start)), s) for s in segs]
+    total = sum(d for d, _ in weighted)
+    if not total:
+        return ""
+    logprob = sum(d * float(s.avg_logprob) for d, s in weighted) / total
+    if min_logprob is not None and logprob < min_logprob:
+        return f"unintelligible:logprob={logprob:.2f}"
+    no_speech = sum(d * float(s.no_speech_prob) for d, s in weighted) / total
+    if max_no_speech is not None and no_speech > max_no_speech:
+        return f"unintelligible:no_speech={no_speech:.2f}"
+    return ""
+
+
 def _transcribe_manifest(rows: list[dict], lang: str, accept: tuple[str, ...] = (),
                          progress=None, checkpoint=None,
-                         checkpoint_every: int = 300) -> tuple[list[dict], int]:
+                         checkpoint_every: int = 300,
+                         min_logprob: float | None = None,
+                         max_no_speech: float | None = None) -> tuple[list[dict], int]:
     """每 300 条及退出时保存完整原清单；坏例仅从本次输出排除，不删除原记录。"""
     if checkpoint_every < 1:
         raise ValueError("checkpoint_every 必须大于 0")
@@ -368,8 +414,11 @@ def _transcribe_manifest(rows: list[dict], lang: str, accept: tuple[str, ...] = 
         return working, 0
     model = _whisper_model(lang, "large-v3", progress)
     if progress:
-        progress(f"Whisper large-v3 就绪，待转写 {todo} 条")
+        progress(f"Whisper large-v3 就绪，待转写 {todo} 条"
+                 + (f"；听不清门限 logprob>{min_logprob} no_speech<{max_no_speech}"
+                    if min_logprob is not None or max_no_speech is not None else ""))
     out, bad, done = [], 0, 0
+    reasons: dict[str, int] = defaultdict(int)
 
     def _flush():
         if checkpoint:
@@ -385,20 +434,24 @@ def _transcribe_manifest(rows: list[dict], lang: str, accept: tuple[str, ...] = 
             except (OSError, ValueError, RuntimeError) as exc:
                 row["transcribe_error"] = f"decode: {exc}"
                 bad += 1
+                reasons["decode"] += 1
                 continue
             try:
                 if sr != TARGET_SR:
                     wav = librosa.resample(wav, orig_sr=sr, target_sr=TARGET_SR)
                 segs, info = model.transcribe(wav, vad_filter=True)
+                segs = list(segs)  # 生成器只能遍历一次，算置信度前先物化
                 text = " ".join(s.text.strip() for s in segs).strip()
             except Exception as exc:
                 raise RuntimeError(f"转写失败，已保留原记录与进度：{row['audio']}: {exc}") from exc
             det = getattr(info, "language", "")
-            ok = accept or (lang,)
+            reason = _unintelligible(segs, text, det, accept or (lang,),
+                                     min_logprob, max_no_speech)
             done += 1
-            if not text or (det and det.split("-")[0] not in ok):
-                row["transcribe_error"] = f"empty_text_or_language:{det}"
+            if reason:
+                row["transcribe_error"] = reason
                 bad += 1
+                reasons[reason.split(":")[0]] += 1
             else:
                 row.update(text=text, transcript_source="whisper-large-v3")
                 row.pop("transcribe_error", None)
@@ -409,6 +462,10 @@ def _transcribe_manifest(rows: list[dict], lang: str, accept: tuple[str, ...] = 
                 _flush()
     finally:
         _flush()
+    if progress and bad:
+        progress(f"转写排除 {bad} 条：{dict(reasons)}"
+                 "（empty_text_or_language=语种不符或空，unintelligible=听不清；"
+                 "门限过紧会连好数据一起砍，看这里判断）")
     return out, bad
 
 
@@ -432,7 +489,8 @@ def _write_jsonl(records: list[dict], path: Path) -> None:
 
 # ---------------------------------------------------------------- 解码
 
-def _decoded_clips(rows: list[dict], stats: dict):
+def _decoded_clips(rows: list[dict], stats: dict,
+                   edge_ratio: float = _EDGE_TRIM_RATIO):
     """逐条解码 → 16k → 裁静音（不做逐条响度归一，留给按说话人的增益对齐）。"""
     for row in rows:
         try:
@@ -445,7 +503,8 @@ def _decoded_clips(rows: list[dict], stats: dict):
         if not wav.size or not np.isfinite(wav).all() or np.abs(wav).max() < 1e-8:
             stats["drop_decode"] += 1
             continue
-        yield Clip(trim_silence(wav, TARGET_SR), str(row["text"]).strip(),
+        yield Clip(trim_silence(wav, TARGET_SR, edge_ratio=edge_ratio),
+                   str(row["text"]).strip(),
                    row.get("speaker", "default"), row.get("emotion", ""),
                    row.get("session", ""), dict(row))
 
@@ -463,6 +522,13 @@ def options_for(source_id: str, **overrides) -> Options:
         pseudo_speaker=src.pseudo_speaker,
         accept_langs=src.languages(),
         control_ratio=0.5 if src.expressive else 0.25,
+        # 文本由 Whisper 生成的源没有原文可比相似度，含糊音只能靠解码置信度挡。
+        # 门限取 faster-whisper 解码器自己的默认值，不是本项目自造的。
+        asr_min_logprob=-1.0 if src.needs_transcribe else None,
+        asr_max_no_speech=0.6 if src.needs_transcribe else None,
+        # 表演语料的抽气声是表演的一部分，裁掉模型就学不会换气；0.02 时门限
+        # 回落到 peak*0.01，与引入有声电平之前的行为一致。朗读语料才激进裁。
+        edge_trim_ratio=0.02 if src.expressive else _EDGE_TRIM_RATIO,
     )
     for k, v in overrides.items():
         if v is not None:
@@ -478,6 +544,21 @@ def _source_lang(source_id: str) -> str:
         return get_source(source_id).lang
     except KeyError:
         return "zh"
+
+
+def _load_holdout(manifest: Path) -> tuple[str, ...]:
+    """读清单同目录的 holdout.json：钉住的会话永远留在验证集。
+
+    split_records 的随机分组结果依赖清单长度，追加新素材后重新加工会把旧的验证组
+    整体重排进训练集——已经训过的 run，其验证结论就此失效。钉住是唯一可靠的办法。
+    """
+    pin = manifest.parent / "holdout.json"
+    if not pin.exists():
+        return ()
+    sessions = json.loads(pin.read_text(encoding="utf-8")).get("sessions")
+    if not isinstance(sessions, list) or any(not isinstance(s, str) or not s for s in sessions):
+        raise ValueError(f'holdout.json 必须是 {{"sessions": ["素材ID", ...]}}: {pin}')
+    return tuple(sorted(set(sessions)))
 
 
 def split_records(records: list[dict], opts: Options) -> tuple[list[dict], list[dict]]:
@@ -504,16 +585,28 @@ def split_records(records: list[dict], opts: Options) -> tuple[list[dict], list[
     groups = defaultdict(list)
     for i, r in enumerate(records):
         groups[root(i)].append(r)
-    # 按稳定 ID 排序和独立种子分组，改变控制前缀比例不会改变验证集。
     groups = sorted(groups.values(), key=lambda rs: min(r.get("origin_audio", r["audio"]) for r in rs))
-    random.Random(opts.seed).shuffle(groups)
+    hold = frozenset(opts.holdout_sessions)
+
+    def is_pinned(group):
+        return any(r.get("session") in hold for r in group)
+
+    pinned = [g for g in groups if hold and is_pinned(g)]
+    rest = [g for g in groups if not hold or not is_pinned(g)]
+    # 按稳定 ID 排序和独立种子分组，改变控制前缀比例不会改变验证集。
+    # 只 shuffle 未钉住的分组：追加新素材后清单变长，钉住的会话必须原地不动。
+    random.Random(opts.seed).shuffle(rest)
     if opts.val_ratio <= 0 or len(groups) < 2:
+        if pinned:
+            raise ValueError("holdout 钉住了会话，但 val_ratio=0 或独立分组不足；"
+                             "钉住的数据不能进训练集，请提高 val_ratio 或补充独立素材")
         return records, []
     target = min(opts.val_max, max(1, round(sum(not r.get("reference_only") for r in records) * opts.val_ratio)))
-    val, train = [], []
-    remaining = sum(any(not r.get("reference_only") for r in g) for g in groups)
-    val_targets = 0
-    for group in groups:
+    val = [r for g in pinned for r in g]
+    train = []
+    val_targets = sum(not r.get("reference_only") for r in val)
+    remaining = sum(any(not r.get("reference_only") for r in g) for g in rest)
+    for group in rest:
         n = sum(not r.get("reference_only") for r in group)
         if val_targets < target and n and remaining > 1:
             val.extend(group)
@@ -521,6 +614,8 @@ def split_records(records: list[dict], opts: Options) -> tuple[list[dict], list[
         else:
             train.extend(group)
         remaining -= bool(n)
+    if not train and pinned:
+        raise ValueError("holdout 把所有分组都钉进验证集了；请减少钉住的素材或补充新素材")
     return train, val
 
 
@@ -646,6 +741,7 @@ def process_dataset(source_id: str, out_name: str | None = None,
     if max_items:
         rows = rows[:max_items]
 
+    n_bad = 0
     if any(not r.get("text") and not r.get("reference_only") for r in rows):
         lang = _source_lang(source_id)
         n_missing = sum(1 for r in rows if not r.get("text"))
@@ -668,9 +764,11 @@ def process_dataset(source_id: str, out_name: str | None = None,
             _write_jsonl(saved, manifest)
         ckpt = None if truncated else save_transcripts
         rows, n_bad = _transcribe_manifest(rows, lang, opts.accept_langs,
-                                           progress, ckpt)
+                                           progress, ckpt,
+                                           min_logprob=opts.asr_min_logprob,
+                                           max_no_speech=opts.asr_max_no_speech)
         if progress:
-            progress(f"转写完成：保留 {len(rows)} 条，丢弃 {n_bad} 条（语种不符/空）")
+            progress(f"转写完成：保留 {len(rows)} 条，丢弃 {n_bad} 条（语种不符/空/听不清）")
         if not rows:
             raise RuntimeError(f"{source_id}: 转写后无可用样本")
 
@@ -709,9 +807,9 @@ def process_dataset(source_id: str, out_name: str | None = None,
 
     kept: list[dict] = []
     embs: list[np.ndarray] = []
-    stats = {"total": len(rows), "drop_decode": 0, "drop_duration": 0,
-             "drop_lang": 0, "drop_whisper": 0, "drop_utmos": 0}
-    samples = _decoded_clips(rows, stats)
+    stats = {"total": len(rows), "drop_transcribe": n_bad, "drop_decode": 0,
+             "drop_duration": 0, "drop_lang": 0, "drop_whisper": 0, "drop_utmos": 0}
+    samples = _decoded_clips(rows, stats, opts.edge_trim_ratio)
     for i, clip in enumerate(samples):
         if progress and i % 50 == 0:
             progress(f"加工 {source_id}: 已产出 {i} 条样本")
@@ -767,9 +865,18 @@ def process_dataset(source_id: str, out_name: str | None = None,
             if n_clusters > 0.4 * len(kept):
                 progress("伪说话人仅供审计；不会降低阈值或直接用于 ref 配对")
 
+    if not opts.holdout_sessions:
+        opts.holdout_sessions = _load_holdout(manifest)
+    if opts.holdout_sessions and progress:
+        progress(f"holdout 钉住 {len(opts.holdout_sessions)} 个会话永远留在验证集："
+                 f"{'、'.join(opts.holdout_sessions[:5])}"
+                 f"{'…' if len(opts.holdout_sessions) > 5 else ''}")
     if progress:
         progress(f"按说话人对齐响度到 {opts.target_dbfs} dBFS（保留条间动态）...")
     train, val = split_records(kept, opts)
+    if opts.holdout_sessions:
+        stats["holdout_pinned_records"] = sum(
+            1 for r in val if r.get("session") in opts.holdout_sessions)
     for split in (train, val):
         apply_speaker_gain(split, opts.target_dbfs, progress)
         apply_control_prefixes(split, opts, rng)
@@ -904,6 +1011,12 @@ if __name__ == "__main__":
     ap.add_argument("--utmos-min", type=float, default=None)
     ap.add_argument("--whisper-lang", default=None)
     ap.add_argument("--control-ratio", type=float, default=None)
+    ap.add_argument("--asr-min-logprob", type=float, default=None,
+                    help="转写即文本的源：时长加权 avg_logprob 低于此值判为听不清并丢弃"
+                         "（默认 -1.0，砍太多就调低，如 -1.5）")
+    ap.add_argument("--asr-max-no-speech", type=float, default=None,
+                    help="转写即文本的源：时长加权 no_speech_prob 高于此值判为非人声并丢弃"
+                         "（默认 0.6）")
     ap.add_argument("--min-snr-db", type=float, default=None)
     ap.add_argument("--ref-audio-ratio", type=float, default=None)
     ap.add_argument("--ref-control-ratio", type=float, default=None)
@@ -918,6 +1031,8 @@ if __name__ == "__main__":
     o = options_for(args.source, utmos_min=args.utmos_min,
                     whisper_lang=args.whisper_lang,
                     control_ratio=args.control_ratio,
+                    asr_min_logprob=args.asr_min_logprob,
+                    asr_max_no_speech=args.asr_max_no_speech,
                     min_snr_db=args.min_snr_db, ref_audio_ratio=args.ref_audio_ratio,
                     ref_control_ratio=args.ref_control_ratio, val_ratio=args.val_ratio)
     print(json.dumps(process_dataset(args.source, args.out, o, args.max_items,

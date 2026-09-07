@@ -86,6 +86,7 @@ TL 先补 5–10h 干净真人对白做试验，覆盖多名女声、男声和�
 - 控制前缀只能是中/英文。有可信 `emotion_verified` 才映射基本情绪；“生气”不会自动扩写为“大声喊叫”。哭腔、笑声、停顿、速度/音量等细节需 `control_verified` 和真实录音支持。未知标签保持裸文本，不能凭能量/F0 猜标签。
 - 仅对已验证身份使用同人统一增益，防削波时整个说话人共同回退，保留相对动态；未知身份不调统一响度。已经被上游逐条归一的动态无法凭此恢复。
 - `f0_std_st`、`energy_std_db`、`energy_range_db`、`rate` 仅供诊断。能量分位差不是 SNR；泰语 F0 含词汇声调、`rate` 也不是可靠词速，不据此硬筛平读或生成指令。
+- 首尾裁切按**帧 RMS** 判定边界（一声口水音的单个尖峰不再把整段空白留在训练音频里），门限相对该条的"有声电平"（p99 帧 RMS）：朗读语料（FLEURS/Porjai/FilSwitch）用 0.06（约 −24dB），把首尾的换气与房间底噪裁掉；表演语料（短剧、THAI-SER impro）用 0.02，回落到原来的 `peak×0.01`，**保留抽气声**——那是表演的一部分，裁掉模型就学不会换气。`Options.edge_trim_ratio` 可调。
 
 ```bash
 # 以下命令只在远程执行；本地不下载语料。
@@ -99,6 +100,34 @@ uv run python -m voxft.data.pipeline --mix drama_tl_v2=45 natural_tl_v2=30 filsw
 ```
 
 自有 acted/natural 两份清单如果共享演员/会话，需在分源前统一安排 holdout；混合器会拒绝跨源 train/val 泄漏。也可先合并原始清单统一加工，接受两类语料内部的自然时长配比。
+
+### 成片素材导入（切分 → 转写 → 试听标注 → 追加）
+
+素材是成片视频或音轨时，用「素材导入」页（或 CLI）代替手工切片：PyAV 解码 → Whisper VAD 定边界（medium）→ 隔 ≤0.7s 的相邻区间合并成 3–30s 候选（超长的在最安静的一帧切开，不切在词中间）→ large-v3 逐条转写并按语种过滤（tl 源放行 `tl`/`en`，Taglish 不会被误杀）→ 页面逐条试听、标说话人/情绪、判定保留或丢弃 → 追加进 `data/raw/<source>/manifest.jsonl`，可选自动重新加工。
+
+```
+data/raw/drama_tl/manifest.jsonl        # 追加目标，加工读它
+data/raw/drama_tl/holdout.json          # {"sessions": ["ep01"]}：钉住的素材只进验证集
+data/raw/drama_tl/ingest/<素材ID>/
+    source.wav                          # 解码后的 16k 单声道全轨（重切不必重解码）
+    clips/0001_s0012.34_e0018.90.wav
+    candidates.jsonl                    # 全量候选，含坏例与「丢弃/待定」；人工标注写回这里
+```
+
+```bash
+# 只在远程执行；需要 uv sync --group qc（faster-whisper + PyAV）
+uv run python -m voxft.data.ingest --input /root/autodl-tmp/drama/ep01.mp4
+uv run python -m voxft.data.ingest --input ep02.mp4 ep03.mp4          # 批量，素材 ID 取文件名
+uv run python -m voxft.data.ingest --input ep01.mp4 --max-items 20    # 试跑，不追加
+uv run python -m voxft.data.ingest --input ep01.mp4 --append --holdout ep01 --process --out drama_tl_v2
+```
+
+- **不做声源分离/降噪**：没有 demucs 依赖，官方 zipenhancer 需要 modelscope（不在 lock 里，试听也统一 `load_denoiser=False`）。有对白轨（dialogue stem）就喂对白轨；只有成片混音轨时，BGM/音效重的条目在试听环节判「丢弃」。
+- **身份必须人工核实**：切分不出说话人。只有勾了「已核实是本人」才写 `speaker_verified=true`，那是 ref 配对与同人响度对齐的前提；只写 ID 不勾选则落成未验证身份，不配 ref、不调响度。
+- `session` 自动设为素材 ID，保证同一集的切片不会被拆到 train/val 两边（`origin_audio` 是每条切片自己，光靠它每条都会独立成组）。
+- **追加会让旧验证集泄漏**：`split_records` 的随机分组结果依赖清单长度，追加新素材后重新加工，上一轮的验证组会被整体重排进训练集，已训 run 的评测结论随之作废。挑一集写进 `holdout.json` 钉住（页面填「钉进验证集的素材 ID」）：钉住的分组不参与 shuffle，永远只进验证集，`stats.json` 的 `holdout_pinned_records` 可核对。矛盾组合（钉住了却 `val_ratio=0`、或全部素材都被钉住）直接报错，不会静默把钉住的数据喂进训练。
+- 同一素材重切会**替换**它上次追加的行（按 `ingest_video`），不会叠加成近似重复样本；再按音频绝对路径去重。
+- 转写复用 `pipeline._transcribe_manifest`：每 100 条落盘、重跑跳过已转写行、坏例只排除不删除。文本由 Whisper 生成的源（`filipino_emotion`、`tagalog_tts`、`thai_ser` impro）另按解码置信度丢掉听不清的条目——时长加权 `avg_logprob < -1.0` 或 `no_speech_prob > 0.6`，取 faster-whisper 解码器自己的默认门限；`--asr-min-logprob` / `--asr-max-no-speech` 可调，丢弃数记在 `stats.json` 的 `drop_transcribe`，日志会打印原因分类以便判断门限是否过紧。
 
 ## 训练方案
 
