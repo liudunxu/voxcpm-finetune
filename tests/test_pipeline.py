@@ -45,6 +45,29 @@ def test_leading_room_tone_trimmed_for_read_speech_kept_for_performance():
     assert len(trim_silence(wav, sr, edge_ratio=0.02)) > 1.8 * sr, "表演语料的换气被裁掉了"
 
 
+def test_short_edge_consonant_survives_min_run_guard():
+    """门限是有声电平的相对值，词首清辅音也在门限以下；只有连续 min_run 以上的
+    首尾低电平段才算留白，否则提高门限就会把 /s/ /h/ 一起啃掉。"""
+    sr = 16000
+    rng = np.random.default_rng(0)
+    speech = 0.5 * np.sin(2 * np.pi * 440 * np.arange(sr) / sr)
+    weak = rng.normal(0, 0.014, sr).astype(np.float32)      # 与门限以下底噪同电平
+    short = np.concatenate([weak[:int(0.1 * sr)], speech])   # 100ms ≈ 词首清辅音
+    assert len(trim_silence(short, sr, edge_ratio=0.06)) == len(short), "词首清辅音被当成留白裁掉了"
+    long = np.concatenate([weak, speech])                    # 1s 留白
+    assert len(trim_silence(long, sr, edge_ratio=0.06)) < 1.4 * sr, "长留白没裁掉"
+
+
+def test_edge_vad_only_for_read_speech_and_falls_back():
+    """朗读语料首尾的换气/房间底噪电平常在有声电平 −24dB 以内，RMS 门限整条裁不动，
+    改用 Silero VAD；表演语料的抽气声是表演的一部分，仍走 RMS 低门限。"""
+    from voxft.data import pipeline as pl
+    from voxft.data.pipeline import options_for
+    assert options_for("fleurs_tl").edge_vad          # 朗读
+    assert not options_for("drama_tl").edge_vad       # 表演
+    assert pl._vad_bounds(np.zeros(16000 * 2), 16000) is None, "无语音必须回落 RMS，不能裁成空"
+
+
 def test_unintelligible_transcriptions_are_dropped(monkeypatch):
     """filipino_emotion 这类源没有原文，转写结果直接当训练文本；
     Whisper 自己都没把握的（含糊/糊成一团）必须挡在清单外。"""

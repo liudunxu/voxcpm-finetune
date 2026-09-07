@@ -137,7 +137,10 @@ SOURCES: list[Source] = [
     Source(
         "filipino_emotion", "tl", "filipino-emotion-tts（1.1 万条，6 情绪）",
         "hf_dataset", "danielquillanroxas/filipino-emotion-tts", "", "train",
-        "未知", "待审计候选：缺文本/说话人/完整来源说明，核验真人录音和情绪标签后再使用",
+        "未知", "待审计候选：缺文本/说话人/完整来源说明，核验真人录音和情绪标签后再使用。"
+        "已核实数据形态：只有 audio+label 两列（无文本，全库 13811 条都要转写）；"
+        "原始 wav 平均 151KB/条，按 16k/16bit 折算中位约 1.6s，多数低于 3s 时长下限，"
+        "短情绪爆发过 VAD + 置信度门限几乎必被排除——先量时长分布再决定是否值得加工",
         has_speaker=False, qc="none", needs_transcribe=True,
         emotion_col="label",
         label_names=("angry", "fearful", "happy", "neutral", "sad", "surprised"),

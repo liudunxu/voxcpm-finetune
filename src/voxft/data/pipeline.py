@@ -51,6 +51,7 @@ class Options:
     min_f0_std: float | None = None  # 仅兼容旧参数；不能按音高起伏硬筛
     target_dbfs: float = -24.0       # 按说话人整体增益对齐，保留条内与条间动态
     edge_trim_ratio: float = _EDGE_TRIM_RATIO  # 首尾裁切门限/有声电平；表演语料调低保留换气
+    edge_vad: bool = False       # 用 Silero VAD 定首尾边界（朗读语料）；表演语料走 RMS 留换气
     holdout_sessions: tuple[str, ...] = ()  # 钉住的会话永远进验证集，不参与随机分组
     seed: int = 42
 
@@ -81,14 +82,45 @@ def _frame_rms(wav: np.ndarray, sr: int, win: float = 0.025) -> np.ndarray:
     return librosa.feature.rms(y=wav, frame_length=n, hop_length=_frame_hop(sr, win))[0]
 
 
+_VAD = None
+
+
+def _vad_bounds(wav: np.ndarray, sr: int, head_keep: float = 0.05,
+                tail_keep: float = 0.3) -> tuple[int, int] | None:
+    """Silero VAD 的语音区间 → 裁切边界（样本点）；无语音或缺 qc 依赖时返回 None。
+
+    朗读语料首尾的换气与房间底噪只要在有声电平 −24dB 以内，RMS 门限就整条裁不动
+    （输出长度与输入完全一致）；VAD 按语音/非语音分类，不受电平影响，实测首尾误差
+    ±0.04s。min_silence_duration_ms 必须从 faster-whisper 默认的 2000 降到 500：
+    默认值是为长音频分段设计的，会把不足 2s 的尾部底噪并进语音块，实测多留 1.0s。
+    """
+    global _VAD
+    try:
+        from faster_whisper.vad import VadOptions, get_speech_timestamps, get_vad_model
+    except ImportError:
+        return None
+    if _VAD is None:
+        _VAD = get_vad_model()
+    ts = get_speech_timestamps(
+        wav.astype(np.float32, copy=False),   # ONNX 只吃 float32，float64 会直接报错中断
+        VadOptions(min_silence_duration_ms=500, speech_pad_ms=0), sampling_rate=sr)
+    if not ts:
+        return None
+    return (max(0, ts[0]["start"] - int(head_keep * sr)),
+            min(len(wav), ts[-1]["end"] + int(tail_keep * sr)))
+
+
 def trim_silence(wav: np.ndarray, sr: int, floor: float = 1e-3,
                  tail_keep: float = 0.3,
-                 edge_ratio: float = _EDGE_TRIM_RATIO) -> np.ndarray:
+                 edge_ratio: float = _EDGE_TRIM_RATIO,
+                 min_run: float = 0.25) -> np.ndarray:
     """裁掉首尾静音；尾部最多保留 tail_keep 秒（官方要求 <0.5s，防生成失控）。
 
     阈值取"峰值 × floor"与"实测底噪 × 3 / 有声电平 × edge_ratio"的较大者：
     众包语料底噪高，只用相对峰值的固定门限（-60dB）经常整条裁不动。
     边界按帧 RMS 判定而不是逐采样点：一声口水音的单个尖峰不该把整段空白留下。
+    首尾静音还必须连续 min_run 秒以上才裁：门限是有声电平的相对值，响亮的换气会
+    整条裁不动，而词首清辅音（/s/ 80–120ms、/h/ 40–80ms）比 min_run 短，不会误啃。
     """
     peak = float(np.abs(wav).max()) if wav.size else 0.0
     if peak < 1e-8:
@@ -99,12 +131,19 @@ def trim_silence(wav: np.ndarray, sr: int, floor: float = 1e-3,
     voiced = float(np.percentile(rms, 99)) if rms.size else 0.0
     # 无明显静音时，p10 可能是轻声语音；限制门限，避免把弱辅音当底噪裁掉。
     thr = max(peak * floor, min(noise * 3.0, max(voiced * edge_ratio, peak * 0.01)))
-    nz = np.nonzero(rms > thr)[0]
-    if len(nz) == 0:
-        return wav
+    below = rms <= thr
     hop = _frame_hop(sr)
-    start = max(0, nz[0] * hop - int(0.05 * sr))
-    end = min(len(wav), nz[-1] * hop + hop + int(tail_keep * sr))
+    run = max(1, int(min_run * sr / hop))
+    s = 0
+    while s < len(below) and below[s]:
+        s += 1
+    e = len(below)
+    while e > 0 and below[e - 1]:
+        e -= 1
+    if s >= e:
+        return wav
+    start = max(0, s * hop - int(0.05 * sr)) if s >= run else 0
+    end = min(len(wav), e * hop + hop + int(tail_keep * sr)) if len(below) - e >= run else len(wav)
     return wav[start:end]
 
 
@@ -457,7 +496,8 @@ def _transcribe_manifest(rows: list[dict], lang: str, accept: tuple[str, ...] = 
                 row.pop("transcribe_error", None)
                 out.append(row)
             if progress and done % 100 == 0:
-                progress(f"转写 {done}/{todo}（本次排除 {bad} 条，原记录保留）")
+                progress(f"转写 {done}/{todo}（本次排除 {bad} 条"
+                         + (f"：{dict(reasons)}" if bad else "") + "，原记录保留）")
             if done % checkpoint_every == 0:
                 _flush()
     finally:
@@ -490,7 +530,7 @@ def _write_jsonl(records: list[dict], path: Path) -> None:
 # ---------------------------------------------------------------- 解码
 
 def _decoded_clips(rows: list[dict], stats: dict,
-                   edge_ratio: float = _EDGE_TRIM_RATIO):
+                   edge_ratio: float = _EDGE_TRIM_RATIO, edge_vad: bool = False):
     """逐条解码 → 16k → 裁静音（不做逐条响度归一，留给按说话人的增益对齐）。"""
     for row in rows:
         try:
@@ -503,7 +543,10 @@ def _decoded_clips(rows: list[dict], stats: dict,
         if not wav.size or not np.isfinite(wav).all() or np.abs(wav).max() < 1e-8:
             stats["drop_decode"] += 1
             continue
-        yield Clip(trim_silence(wav, TARGET_SR, edge_ratio=edge_ratio),
+        bounds = _vad_bounds(wav, TARGET_SR) if edge_vad else None
+        out = wav[bounds[0]:bounds[1]] if bounds else \
+            trim_silence(wav, TARGET_SR, edge_ratio=edge_ratio)
+        yield Clip(out,
                    str(row["text"]).strip(),
                    row.get("speaker", "default"), row.get("emotion", ""),
                    row.get("session", ""), dict(row))
@@ -529,6 +572,9 @@ def options_for(source_id: str, **overrides) -> Options:
         # 表演语料的抽气声是表演的一部分，裁掉模型就学不会换气；0.02 时门限
         # 回落到 peak*0.01，与引入有声电平之前的行为一致。朗读语料才激进裁。
         edge_trim_ratio=0.02 if src.expressive else _EDGE_TRIM_RATIO,
+        # 朗读语料首尾是换气+房间底噪，电平常在有声电平 −24dB 以内，RMS 门限整条裁
+        # 不动；VAD 不受电平影响。表演语料的抽气声是表演的一部分，仍走 RMS 低门限。
+        edge_vad=not src.expressive,
     )
     for k, v in overrides.items():
         if v is not None:
@@ -746,7 +792,8 @@ def process_dataset(source_id: str, out_name: str | None = None,
         lang = _source_lang(source_id)
         n_missing = sum(1 for r in rows if not r.get("text"))
         if progress:
-            progress(f"{source_id}: {n_missing} 条缺文本，自动 Whisper 转写 + 语种过滤（{lang}）")
+            progress(f"{source_id}: {n_missing} 条缺文本，自动 Whisper 转写 + 语种过滤"
+                     f"（{'/'.join(opts.accept_langs) or lang}）")
         def save_transcripts(updated):
             by_audio = {r["audio"]: r for r in updated}
             saved = []
@@ -808,8 +855,9 @@ def process_dataset(source_id: str, out_name: str | None = None,
     kept: list[dict] = []
     embs: list[np.ndarray] = []
     stats = {"total": len(rows), "drop_transcribe": n_bad, "drop_decode": 0,
-             "drop_duration": 0, "drop_lang": 0, "drop_whisper": 0, "drop_utmos": 0}
-    samples = _decoded_clips(rows, stats, opts.edge_trim_ratio)
+             "drop_duration": 0, "drop_lang": 0, "drop_whisper": 0, "drop_utmos": 0,
+             "edge_vad": opts.edge_vad, "edge_trim_ratio": opts.edge_trim_ratio}
+    samples = _decoded_clips(rows, stats, opts.edge_trim_ratio, opts.edge_vad)
     for i, clip in enumerate(samples):
         if progress and i % 50 == 0:
             progress(f"加工 {source_id}: 已产出 {i} 条样本")

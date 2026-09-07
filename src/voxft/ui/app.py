@@ -146,6 +146,7 @@ def do_process(source_id, min_dur, max_dur, val_ratio,
             f"ref_audio={opts.ref_audio_ratio}"
             f"（仅配已核验同说话人；源身份={'可信' if src.has_speaker else '未核验'}），"
             f"UTMOS={opts.utmos_min or '关'}，Whisper={opts.whisper_lang or '关'}，"
+            f"首尾裁切={'VAD 定边界' if opts.edge_vad else f'RMS 门限 {opts.edge_trim_ratio}'}，"
             f"不拼接短句；有可信标签的控制前缀目标={opts.control_ratio}")
         stats = pipeline.process_dataset(source_id, opts=opts, progress=log,
                                          manifest_path=manifest_path or None)
