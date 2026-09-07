@@ -217,6 +217,23 @@ def test_preferred_source_per_lang_and_role():
     assert len(slots) == len(set(slots)), "同一槽位出现多个首选"
 
 
+def test_sources_are_sorted_by_quality():
+    from voxft.data.registry import sources_by_quality
+
+    grouped = {}
+    for source in sources_by_quality():
+        grouped.setdefault(source.lang, []).append(source)
+    for sources in grouped.values():
+        assert [s.quality for s in sources] == sorted(
+            (s.quality for s in sources), reverse=True)
+    assert [s.id for s in grouped["th"]] == [
+        "drama_th", "thai_ser", "yodas_th", "porjai_th", "fleurs_th",
+        "thai20k", "cv22_th"]
+    assert [s.id for s in grouped["tl"]] == [
+        "drama_tl", "fleurs_tl", "filipino_speech", "filswitch",
+        "filipino_emotion", "tagalog_tts"]
+
+
 def test_yodas_th_session_from_utt_id():
     """完整视频 ID 用于 holdout，不当作真实说话人 ID。"""
     src = get_source("yodas_th")

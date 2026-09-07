@@ -6,7 +6,7 @@ import time
 import gradio as gr
 
 from ..paths import DATA_PROCESSED, CHECKPOINT_DIR, env, load_dotenv
-from ..data.registry import SOURCES
+from ..data.registry import sources_by_quality
 from ..data import download, pipeline
 from ..train import launcher, yaml_builder
 from ..lora.merge import merge_lora
@@ -354,9 +354,7 @@ def _ckpt_choices() -> list[str]:
 
 
 def build_ui() -> gr.Blocks:
-    _role_order = {"expressive": 0, "anchor": 1, "antiforget": 2}
-    _sorted_sources = sorted(
-        SOURCES, key=lambda s: (s.lang, _role_order.get(s.role, 9), not s.preferred))
+    _sorted_sources = sources_by_quality()
     source_choices = [s.display() for s in _sorted_sources if s.kind != "local"]
 
     with gr.Blocks(title="VoxCPM 微调工作台") as demo:

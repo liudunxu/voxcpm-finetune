@@ -40,6 +40,7 @@ class Source:
     preferred: bool = False        # 该语种该角色下的首选源
     expressive: bool = False       # 情感/口语语料：去念稿感主力，参与控制前缀生成
     pseudo_speaker: bool = False   # 仅辅助审计，不作为 ref 身份依据
+    quality: int = 0               # 同语种下 UI 排序，越高越优先
 
     def audio_column(self, columns) -> str | None:
         for c in self.audio_cols or ("audio",):
@@ -73,11 +74,11 @@ class Source:
 SOURCES: list[Source] = [
     Source("drama_tl", "tl", "已审核真人 Tagalog/Taglish 短剧对白（自备 JSONL）", "local",
            license="按自有授权", note="填写 speaker_verified=true；英文/中文同人参考可标 reference_only=true",
-           has_speaker=True, role="expressive", preferred=True, expressive=True),
+           has_speaker=True, role="expressive", preferred=True, expressive=True, quality=100),
     Source("drama_th", "th", "已审核真人泰语短剧对白（自备 JSONL）", "local",
-           license="按自有授权", has_speaker=True, role="expressive", expressive=True),
+           license="按自有授权", has_speaker=True, role="expressive", expressive=True, quality=100),
     Source("replay_en", "en", "英文多说话人回放（自备已审核 JSONL，如 VCTK）", "local",
-           license="按原数据授权", has_speaker=True, role="antiforget"),
+           license="按原数据授权", has_speaker=True, role="antiforget", quality=100),
     # ---- 泰语 ----
     Source(
         "thai_ser", "th", "THAI-SER 泰语情感语音（2.8 万条/41h，200 名演员，5 情绪）",
@@ -92,7 +93,7 @@ SOURCES: list[Source] = [
         emotion_col="majority_emo",
         session_col="session_id",
         row_filters=(("agreement", ">=", 0.7), ("turn_type", "in", ("impro",))),
-        role="expressive", preferred=True, expressive=True,
+        role="expressive", preferred=True, expressive=True, quality=90,
     ),
     Source(
         "yodas_th", "th", "YODAS2-Sidon 泰语 TTS 精选（14 万条/156h，YouTube 视频语音）",
@@ -106,31 +107,31 @@ SOURCES: list[Source] = [
         session_col="utt_id", session_prefix_sep="-",
         row_filters=(("grade_avg", "in", ("S+", "S")),
                      ("dnsmos_overall", ">=", 3.2)),
-        role="anchor", preferred=True,
+        role="anchor", preferred=True, quality=80,
     ),
     Source(
         "porjai_th", "th", "CMKL Porjai 标准泰语（700h，TTS 专用，录音棚朗读）",
         "hf_dataset", "CMKL/Porjai-Thai-voice-dataset-central", "", "train",
         "CC-BY-SA-4.0", "录音棚级干净语料；体积大，建议先小样本试跑",
-        has_speaker=False, qc="none",
+        has_speaker=False, qc="none", quality=70,
     ),
     Source(
         "fleurs_th", "th", "FLEURS 泰语（~12h，干净朗读，发音锚点）",
         "hf_dataset", "google/fleurs", "th_th", "train",
         "CC-BY-4.0", "朗读发音补充；无可靠说话人身份，不配 ref",
-        has_speaker=False, qc="none",
+        has_speaker=False, qc="none", quality=60,
     ),
     Source(
         "thai20k", "th", "hotdogs/thai-speech-20k（1-10 万条）",
         "hf_dataset", "hotdogs/thai-speech-20k", "", "train",
         "CC-BY-4.0", "补充语料；质量未知，自动 Whisper 校验",
-        has_speaker=False, qc="whisper",
+        has_speaker=False, qc="whisper", quality=40,
     ),
     Source(
         "cv22_th", "th", "Common Voice 22 泰语（量大但噪，发音锚点）",
         "hf_dataset", "fsicoli/common_voice_22_0", "th", "train",
         "CC0", "官方已撤架，此为社区镜像（无需同意条款）；众包噪音大，自动 Whisper 校验",
-        has_speaker=True, qc="whisper",
+        has_speaker=True, qc="whisper", quality=30,
     ),
     # ---- Tagalog ----
     Source(
@@ -140,13 +141,13 @@ SOURCES: list[Source] = [
         has_speaker=False, qc="none", needs_transcribe=True,
         emotion_col="label",
         label_names=("angry", "fearful", "happy", "neutral", "sad", "surprised"),
-        role="expressive", expressive=True,
+        role="expressive", expressive=True, quality=40,
     ),
     Source(
         "fleurs_tl", "tl", "FLEURS Tagalog（~12h，干净朗读，发音锚点）",
         "hf_dataset", "google/fleurs", "fil_ph", "train",
         "CC-BY-4.0", "朗读发音补充；无可靠说话人身份，不配 ref",
-        has_speaker=False, qc="none",
+        has_speaker=False, qc="none", quality=80,
     ),
     Source(
         "filipino_speech", "tl", "filipinospeechcorpus（22 万条，绝大部分是孤立单词）",
@@ -156,7 +157,7 @@ SOURCES: list[Source] = [
         "已过滤 speech_type=machine 与 num_words<4，仅保留完整句，不拼接孤立词",
         has_speaker=True, qc="whisper",
         speaker_cols=("speaker_id",),
-        session_col="source_file",
+        session_col="source_file", quality=60,
         row_filters=(("speech_type", "not_in", ("machine",)),
                      ("num_words", ">=", 4)),
     ),
@@ -167,26 +168,26 @@ SOURCES: list[Source] = [
         "教的是句内英文词与数字怎么念（对应线上「RAW 被念成英文」类反馈），不是情绪。"
         "不做语种过滤，否则英文占比高的样本会被 Whisper 判成 en 而误杀；商用前先核实许可",
         has_speaker=False, qc="none",
-        role="anchor", preferred=True,
+        role="anchor", preferred=True, quality=50,
     ),
     Source(
         "tagalog_tts", "tl", "welyjesch/tagalog_tts（1K-10K 条，许可待确认）",
         "hf_dataset", "welyjesch/tagalog_tts", "", "train",
         "未知", "仅 audio 列，加工自动转写；商用前先核实许可",
-        has_speaker=False, qc="none", needs_transcribe=True,
+        has_speaker=False, qc="none", needs_transcribe=True, quality=30,
     ),
     # ---- 中文（混合防遗忘，建议占比 10-20%） ----
     Source(
         "aishell3", "zh", "AISHELL-3（~85h 多说话人朗读）",
         "openslr", "https://www.openslr.org/resources/93/data_aishell3.tgz", "", "",
         "Apache-2.0", "约 20GB，下载耗时；有说话人列可 ref 配对，中文防遗忘首选",
-        has_speaker=True, qc="none", role="antiforget", preferred=True,
+        has_speaker=True, qc="none", role="antiforget", preferred=True, quality=90,
     ),
     Source(
         "fleurs_zh", "zh", "FLEURS 普通话（~10h，干净朗读）",
         "hf_dataset", "google/fleurs", "cmn_hans_cn", "train",
         "CC-BY-4.0", "少量高质补充",
-        has_speaker=False, qc="none", role="antiforget",
+        has_speaker=False, qc="none", role="antiforget", quality=80,
     ),
 ]
 
@@ -232,3 +233,8 @@ def source_id_from_display(label: str) -> str:
 def preferred_sources() -> dict[tuple[str, str], Source]:
     """每个 (语种, 角色) 下的首选源，用于页面标注与混合建议。"""
     return {(s.lang, s.role): s for s in SOURCES if s.preferred}
+
+
+def sources_by_quality() -> list[Source]:
+    """按语种分组，并在每组内按当前质量判断倒序排列。"""
+    return sorted(SOURCES, key=lambda s: (s.lang, -s.quality, s.id))
