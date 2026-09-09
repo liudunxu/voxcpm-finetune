@@ -55,15 +55,34 @@
 
 ## 2. 三个决策点
 
-### 决策点 1 · Tagalog 的表演语料只能自建
+### 决策点 1 · 表演语料从哪来：现成的补不上情绪，只能自建那一档
 
-已核实过、不要重复调研：Common Voice tl 官方 `recordedHours=0`，YODAS/YODAS2 Sidon 的 224 语种里没有 tl/fil，OpenSLR 无菲律宾语资源，HF 上 `modality:audio` 匹配 filipino/tagalog 的只有厂商 sample（`n<1K`，多为 CC-BY-NC-ND 或 gated）。`filipino_emotion` 连数据卡都没有，且实测中位时长约 1.6s，绝大多数低于 3s 下限。
+**逐项核实结论见 [docs/corpus_sourcing.md](corpus_sourcing.md)**（含厂商询价模板和自建录制脚本模板）。这里只给结论。
 
-**结论：TL 的情绪表现力上限 = 你愿意投入多少小时自有短剧素材做导入和人工标注。** 公开源只能提供发音锚点（`fleurs_tl`）和低比例 Taglish 补充（`filswitch`，新闻朗读）。
+已核实、不要重复调研的死路：Common Voice tl 官方 `recordedHours=0`，YODAS/YODAS2 Sidon 的 224 语种里没有 tl/fil，OpenSLR 无菲律宾语资源，SEACrowd 的 23 个 th/tl/fil 数据集全是文本无音频，HF 上 `modality:audio` 匹配 filipino/tagalog 的只有厂商 sample（`n<1K`，多为 CC-BY-NC-ND、gated 或**完全没有许可声明**）。`filipino_emotion` 连数据卡都没有，实测中位时长约 1.6s，绝大多数低于 3s 下限。**泰语同样没有公开的情感/表演语料** —— THAI-SER 之后没有新的，Nexdata/Datatang 的泰语 SKU 里也没有现成情感库。
 
-首轮 TL 目标：**5–10h 干净真人对白**，覆盖多名女声、男声和不同年龄段，重点补质疑、克制愤怒、担心、讽刺、哭腔、带笑说话、自然停顿。避免某种情绪只来自某一名演员 —— 那会让模型学成「这个情绪 = 这个人的音色」。
+**两个陷阱**（都很容易踩，因为看起来完全对口）：
 
-TH 好一些：`thai_ser` 的 impro（即兴对话）子集有 `actor_id` 和情绪标签，是开源里最值钱的泰语表演语料；`yodas_th` 提供自然口语语流。
+- `laion/dramabox-voice-acting-data-annotated` —— CC-BY-4.0、10 万–100 万条、标签写着 `voice-acting`、数据卡还讲「同说话人跨情绪配对片段」。**但它是 TTS 合成的**（源头 `ResembleAI/Dramabox` + `gemini-2.5-pro-tts`，文件名带 `_seed{NN}`）。违反「不用模型合成语音补量」，情绪标签也是生成 prompt 不是真实表演标注。只有标注 schema 可参考
+- MagicHub **`ASR-SFDuSC`** —— 4.58h / 10 人**朗读**，**CC-BY-NC-ND**（NC 禁商用、ND 禁演绎，微调就是演绎）。可用性 0。别和下面那个库搞混
+
+**现成能买的（补的是「自然口语 + 说话人身份」，不是情绪）**：
+
+- **MagicHub `ASR-BigFTagaCSC`** —— **1285h / 514 人**菲律宾语自发对话，16kHz WAV + TXT 转写，专有授权需询价。514 个**真实说话人身份**是 YouTube 抓取源给不了的（那些 speaker_id 是视频级近似身份，不能做 ref），能同时补自然口语锚点和 ref 配对身份。**但无情绪标签、不是表演**，对应配比表的「自然口语 30%」档，不是「真人短剧/表演 45%」档
+- **Nexdata 1004 Hours Thai**（SKU 1687）—— 商业买断、低背景噪声、16kHz mono WAV、**带 speaker ID + gender**、WAR 98%。许可干净的泰语自然语音，是 `yodas_th` 的升级替代
+- `speechcolab/gigaspeech2` th —— **Apache-2.0**（无 SA/NC 污染），但短句为主、无说话人身份，`gated: auto`
+
+**结论：表演/情绪这一档只能定制采集或自建。** 最省力的做法不是继续找数据，而是**一次录制同时解决三件事**（详见 sourcing 文档 §5）：
+
+1. 真人表演对白语料（配比表 45% 主力档）
+2. **跨语言同人 ref** —— 让同一演员在同一场次里既录目标语言台词、又录 20–30 条中文和英文短句。每人多花 10 分钟，就拿到了决策点 2 里那个「拿不到就无法验证」的硬约束的唯一解
+3. **可信情绪标签** —— 按情绪脚本录，`emotion_verified` / `control_verified` 当场就是真的
+
+规模：每语言 6–8 名演员 × 5–8h ≈ 30–60h ≈ 1–2 万条 ≈ 单卡 1 epoch 600–1300 步，几小时一轮。**台词直接从产品实际要配的短剧剧本里选**，分布和线上推理一致，比通用情绪脚本有效得多。
+
+首轮 TL 表演语料目标：**5–10h 干净真人对白**，覆盖多名女声、男声和不同年龄段，重点补质疑、克制愤怒、担心、讽刺、哭腔、带笑说话、自然停顿。**每种情绪必须由 ≥3 名不同演员录** —— 否则模型学成「这个情绪 = 这个人的音色」。
+
+TH 好一些：`thai_ser` 的 impro（即兴对话）子集有 `actor_id` 和情绪标签，是开源里唯一带可靠身份的泰语表演语料。**但它是 CC-BY-SA-4.0**，触发交付红线，见 Phase 8。
 
 ### 决策点 2 · 跨语言同人 ref 是硬约束，不是可以凑的字段
 
@@ -873,17 +892,31 @@ uv run python -m voxft.lora.merge \
 
 支持官方嵌套 `lora_config`。页面「模型管理」Tab 同样能做。
 
-### 8.2 上传 HF
+### 8.2 许可红线：含 CC-BY-SA 数据的权重不得对外分发
+
+**这条在上传/交付任何权重之前先看。**
+
+我们在用的两个最好的泰语源都是 **CC-BY-SA-4.0**：`thai_ser`（THAI-SER）和 `Porjai-central`。Porjai 的 `pattani` / `khummuang` 子集更差，是 **CC-BY-NC-SA**，直接排除。
+
+- SA 的触发条件是**「向公众分享改编物」**。模型权重算不算「改编物」**在法律上无定论、无判例**；CC 官方说过「模型若基于 SA 内容训练且公开发布，建议以同许可发布」，但那是**保守合规建议，不是法律要求**
+- **红线：含 SA 数据训练的 LoRA 与 merge 后的完整模型一律不对外分发** —— 不传 HF、不随客户交付、不开源。只通过 API 交付合成音频。SA 不追及模型输出（除非输出实质复现了原音频，TTS 不会）
+- 确实需要对外发布权重时，两条路：① 向版权方谈商业授权 —— **THAI-SER 的出资方是 AIS + DEPA，有明确的谈判主体**（VISTEC / airesearch）；② 该实验只用 Apache-2.0 / CC-BY 源（如 `speechcolab/gigaspeech2` th、`aishell3`）
+- EU DSM 指令第 4 条 TDM 例外、日本著作权法 30-4 条、美国 fair use 任一成立时 CC 条件可被架空，且**单纯挂 CC 许可本身不构成 TDM 保留**。但这属于法务判断，不要自己下结论
+
+**以上是保守合规立场，不是法律意见。重大决策请咨询法务。**
+
+### 8.3 上传 HF
 
 ```python
 from voxft.hub import sync
 sync.upload_folder("/root/autodl-tmp/merged/th_r2_e1_s1000", "<org>/<repo>", kind="model")
 ```
 
-或页面上传功能。**只有训练与盲听实际通过后才发布新权重。**
+或页面上传功能。**只有训练与盲听实际通过后才发布新权重**，且必须先过 [8.2](#82-许可红线含-cc-by-sa-数据的权重不得对外分发) 的许可检查。
 
-### 8.3 交付前最后一遍
+### 8.4 交付前最后一遍
 
+- [ ] **训练数据里没有 CC-BY-SA / NC 源；如果有，权重不对外分发，只走 API**（见 8.2）
 - [ ] 用**生产链路的实际调用方式**（不是本项目试听页）跑一遍评测集，确认参数一致 —— 特别是 reference-only 模式
 - [ ] **`kind=clarity` 分组用生产参数复跑过，`intelligibility` 没有相对基座退化**（试听页达标不代表线上达标，多半是 `inference_timesteps` 不同）
 - [ ] 中英 ref → 目标语言的音色保持已 A/B 实测，没有相对基座退化
