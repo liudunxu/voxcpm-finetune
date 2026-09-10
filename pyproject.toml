@@ -1,7 +1,7 @@
 [project]
 name = "voxft"
 version = "0.1.0"
-description = "VoxCPM 2 微调工作台：Tagalog/泰语高质量语料加工、LoRA/全量微调、wandb 监控、HF 同步"
+description = "VoxCPM 2 微调工作台：Tagalog/泰语/越南语/印尼语高质量语料加工、LoRA/全量微调、wandb 监控、HF 同步"
 requires-python = "==3.11.*"
 dependencies = [
     "gradio>=4.44",

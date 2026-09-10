@@ -35,7 +35,7 @@ class Options:
     val_ratio: float = 0.02
     val_max: int = 200               # 按组切分的软目标，不拆说话人来满足上限
     utmos_min: float | None = None       # 如 3.5；None = 不做 UTMOS 过滤
-    whisper_lang: str | None = None      # "th"/"tl"/"zh"；None = 不做转写校验
+    whisper_lang: str | None = None      # "th"/"tl"/"vi"/"id"/"zh"；None = 不做转写校验
     accept_langs: tuple[str, ...] = ()   # 允许的检测语种（留空=只认 whisper_lang）
     whisper_min_sim: float = 0.55
     # 转写文本即训练文本的源（needs_transcribe）没有原文可比相似度，
@@ -303,11 +303,16 @@ _RATE_PHRASES = {"slow": {"zh": ["语速慢"], "en": ["slow paced"]},
 _VOL_PHRASES = {"quiet": {"zh": ["轻声", "音量小"], "en": ["soft voice", "quiet"]},
                 "loud": {"zh": ["音量大"], "en": ["loud"]}}
 
+# 泰文区 + 越南语专属字符（ơ ư đ 与带声调元音）可可靠识别；印尼语是纯 ASCII 拉丁
+# 字母，与英文无法区分，只能靠标注规范约束，别指望这条守卫。
+_NON_CONTROL_LANG = re.compile(
+    r"[\u0e00-\u0e7f\u0102\u0103\u0110\u0111\u01a0\u01a1\u01af\u01b0\u1ea0-\u1ef9]")
+
 
 def _assert_control_lang(control) -> str:
     """控制前缀只写中英文（线上 prompt 就是中英文）；返回去掉括号的规范文本。"""
     control = re.sub(r"[()（）]", "", str(control)).strip()
-    if re.search(r"[\u0e00-\u0e7f]", control):
+    if _NON_CONTROL_LANG.search(control):
         raise ValueError("控制前缀只能使用中英文")
     return control
 

@@ -1,9 +1,11 @@
-"""成片音轨 → 切分 → 转写 → 追加到自备语料（drama_tl / drama_th / replay_en）。
+"""成片音轨 → 切分 → 转写 → 追加到自备语料（drama_tl / drama_th / drama_vi / drama_id / replay_en）。
 
 Tagalog 没有可商用的开源真人表演语料：Common Voice tl 官方 0 小时、YODAS/YODAS2 的
 224 个语种子集里没有 tl、OpenSLR 无菲律宾语资源、HF 上带 audio 的只有厂商 sample。
-所以 drama_tl 只能来自自有授权素材，本模块把"手工切片 + 手写字段"换成
-"自动切分转写 + 人工试听标注"，并保证追加后重新加工不泄漏旧验证集（holdout.json）。
+vi / id 处境相同：本轮未能核实到任何可商用的开源真人情感/表演语料（见
+docs/vi_id_support.md 的待核实清单）。所以 drama_* 只能来自自有授权素材，本模块把
+"手工切片 + 手写字段"换成"自动切分转写 + 人工试听标注"，并保证追加后重新加工不泄漏
+旧验证集（holdout.json）。
 
 只在远程 GPU 机跑；解码视频容器需要 PyAV（uv sync --group qc）。
 """

@@ -534,7 +534,7 @@ def build_ui() -> gr.Blocks:
             gr.Markdown("---\n**加工**（16k → 裁静音 → 时长过滤 → 质检 → 表现力指标 → "
                         "已核验说话人响度对齐 → 按身份/会话切分 → 可信控制前缀 → 集合内 ref 配对；"
                         "各项按数据源自动配置，日志里可见）")
-            p_manifest = gr.Textbox("", label="远程原始 JSONL 路径（可空；drama_tl/th、replay_en 在此导入）")
+            p_manifest = gr.Textbox("", label="远程原始 JSONL 路径（可空；drama_tl/th/vi/id、replay_en 在此导入）")
             with gr.Row():
                 p_src = gr.Dropdown([s.id for s in _sorted_sources], label="原始数据源")
                 p_min = gr.Number(3.0, label="最短时长(s)")
@@ -549,7 +549,10 @@ def build_ui() -> gr.Blocks:
             gr.Markdown(
                 "泰语：`thai_ser` 仅 impro + 审核后的 `yodas_th`；"
                 "Tagalog：真人短剧 `drama_tl` 优先，`filipino_emotion` 仅待审候选；"
-                "`filswitch` 是新闻朗读，低比例补发音。中英回放：`aishell3` / `replay_en`。")
+                "`filswitch` 是新闻朗读，低比例补发音。中英回放：`aishell3` / `replay_en`。\n\n"
+                "越南语 / 印尼语：表现力只能靠自建 `drama_vi` / `drama_id`（无已核实的开源真人情感语料）；"
+                "公开源里 `gigaspeech2_vi/id` 许可最干净（Apache-2.0）但**字段形态未核实，先 "
+                "`--max-samples 20` 试跑**，`fleurs_*` / `cv22_*` 只当发音锚点。详见 `docs/vi_id_support.md`。")
             gr.Markdown("---\n**跨语言混合**（按音频时长采样；建议目标语言 85% + 中文 10% + 英文 5%；"
                         "训练重复上限 3×，验证集不重复；实际占比与曝光记录在 mix.json）")
             with gr.Row():
@@ -564,9 +567,11 @@ def build_ui() -> gr.Blocks:
             m_out = gr.Textbox(label="混合日志", lines=6, interactive=False)
 
         with gr.Tab("素材导入") as tab_ingest:
-            gr.Markdown("**成片 → 切分 → 转写 → 追加**（Tagalog 没有可商用的开源真人表演语料："
-                        "Common Voice tl 官方 0 小时、YODAS 无 tl 子集、OpenSLR 无菲律宾语资源，"
-                        "短剧素材只能自备。有对白轨就喂对白轨；成片混音轨靠试听淘汰 BGM 重的条目）")
+            gr.Markdown("**成片 → 切分 → 转写 → 追加**（Tagalog / 越南语 / 印尼语都没有已核实的"
+                        "可商用开源真人表演语料：Common Voice tl 官方 0 小时、YODAS 无 tl 子集、"
+                        "OpenSLR 无菲律宾语资源，vi/id 侧的情感语料本轮也未能核实到任何现货，"
+                        "短剧素材只能自备。目标源要按语种显式选（`drama_tl` / `drama_vi` / `drama_id`）。"
+                        "有对白轨就喂对白轨；成片混音轨靠试听淘汰 BGM 重的条目）")
             with gr.Row():
                 ig_source = gr.Dropdown(_ingest_sources(), value="drama_tl",
                                         label="目标数据源（自备语料）")
@@ -685,7 +690,8 @@ def build_ui() -> gr.Blocks:
    都保留 checkpoint，在「试听」页用不同 step 逐一 A/B 对比
 3. 过拟合信号（立即回退到更早 checkpoint）：生成忽略输入文本、无论输什么都相似、
    生成停不下来（检查数据尾静音是否 >0.5s）
-4. 客观对比：`uv run python -m voxft.eval base <lora_dir> --lang th`（需 qc 组）——
+4. 客观对比：`uv run python -m voxft.eval base <lora_dir> --lang th`
+   （`--lang` 支持 th/tl/vi/id/zh/en；vi 的 WER 是音节级口径，不与词级横向比。需 qc 组）——
    固定 case/ref/control/seed → ASR 内容误差与疑似漏尾诊断；
    自然度、情绪和音色由母语盲听验收，F0 起伏不是越高越好""")
 

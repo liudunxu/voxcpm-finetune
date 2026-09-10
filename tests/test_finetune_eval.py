@@ -97,3 +97,28 @@ def test_eval_keeps_conditions_thai_marks_and_unique_reports(tmp_path, monkeypat
     assert report["items"][0]["human_review"]["emotion_fit_1_5"] is None
     assert [kw["seed"] for kw in kwargs] == [42, 43, 42, 43]
     assert all(not kw["retry_badcase"] and kw["text"].startswith("(surprised)") for kw in kwargs)
+
+
+def test_every_registry_lang_has_eval_channel():
+    """加语种时必须同步 SAMPLE_BY_LANG，否则 eval 直接拒绝该语种的 case。"""
+    from voxft.data.registry import SOURCES
+    missing = {s.lang for s in SOURCES} - set(evaluation.SAMPLE_BY_LANG)
+    assert not missing, f"registry 里有语种没有验收通道: {missing}"
+    assert evaluation.AUTO_DETECT_LANGS == {"tl"}
+    assert set(evaluation.WER_LANGS) == {"tl", "en", "vi", "id"}
+
+
+def test_eval_computes_cer_and_wer_for_vi_and_id(tmp_path, monkeypatch):
+    """vi 正字法按音节空格分隔，WER 有值但是音节级口径；id 是词级。"""
+    from voxft.data import pipeline
+    monkeypatch.setattr(evaluation, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
+    monkeypatch.setattr(infer, "get_model", lambda *args: object())
+    monkeypatch.setattr(infer, "_run", lambda model, kw: ("fake.wav", 0.1))
+    monkeypatch.setattr(evaluation, "_prosody", lambda *a: {"f0_std_st": 1.0})
+    for lang, text in (("vi", "Tôi không biết"), ("id", "Saya tidak tahu")):
+        monkeypatch.setattr(evaluation, "_transcribe", lambda *a, text=text: text)
+        report = evaluation.evaluate("base", lang, [{"text": text, "lang": lang}])
+        item = report["items"][0]
+        assert item["cer"] == 0 and item["wer"] == 0, f"{lang} 应算出 CER 与 WER"
+        assert report["asr_auto_detect_langs"] == ["tl"]

@@ -312,10 +312,17 @@ def test_thai_ser_column_mapping():
     assert not row_passes(src, {"agreement": 0.9, "turn_type": "script"}.get)
 
 
-def test_taglish_languages_accept_english():
-    """Tagalog 源必须放行 en：只认 tl 会把句内英文多的 code-switch 样本全部误杀。"""
+def test_code_switch_languages_accept_english():
+    """tl / id 必须放行 en：只认目标语种会把句内英文多的 code-switch 样本全部误杀。"""
     assert set(get_source("filipino_emotion").languages()) == {"tl", "en"}
     assert set(get_source("filswitch").languages()) == {"tl", "en"}
+    assert set(get_source("drama_id").languages()) == {"id", "en"}
+    assert set(get_source("gigaspeech2_id").languages()) == {"id", "en"}
+    # vi 的混英以词内借词为主，默认从严；朗读源有权威文本，语种不符就是错行，
+    # 用 accept_langs 覆盖掉 id 的英文放行。
+    assert get_source("drama_vi").languages() == ("vi",)
+    assert get_source("fleurs_id").languages() == ("id",)
+    assert get_source("cv22_id").languages() == ("id",)
     assert get_source("thai_ser").languages() == ("th",)
     assert get_source("aishell3").languages() == ("zh",)
 
@@ -330,12 +337,37 @@ def test_filswitch_is_anchor_not_expressive():
     assert o.control_ratio == 0.25 and o.whisper_lang is None
 
 
+def test_vi_id_sources_split_by_role():
+    """vi/id 的公开源全是朗读/网页口语，走 VAD 首尾裁切与低控制比例；表演档只有自建。"""
+    from voxft.data.pipeline import options_for
+    anchor = options_for("gigaspeech2_vi")
+    assert anchor.edge_vad and anchor.edge_trim_ratio == 0.06
+    assert anchor.control_ratio == 0.25 and anchor.whisper_lang is None
+    assert anchor.asr_min_logprob is None      # 有原文可比相似度，不用解码置信度挡
+    assert options_for("cv22_id").whisper_lang == "id"    # qc=whisper 才开转写校验
+    acted = options_for("drama_id")
+    assert not acted.edge_vad and acted.edge_trim_ratio == 0.02   # 保留换气
+    assert acted.control_ratio == 0.5
+
+
+def test_control_prefix_rejects_target_language():
+    """控制前缀只写中英文；印尼语与英文同为 ASCII 拉丁字母，守卫挡不住，靠标注规范。"""
+    from voxft.data.pipeline import _assert_control_lang
+    assert _assert_control_lang("（愤怒地）") == "愤怒地"
+    assert _assert_control_lang("sad, slow") == "sad, slow"
+    for bad in ("โกรธ", "giận dữ", "bực bội"):
+        with pytest.raises(ValueError, match="只能使用中英文"):
+            _assert_control_lang(bad)
+
+
 def test_preferred_source_per_lang_and_role():
     """每个 (语种, 角色) 槽位有且只有一个首选，页面与混合建议都依赖它。"""
     from voxft.data.registry import SOURCES, preferred_sources
     pref = preferred_sources()
     assert set(pref) == {("th", "expressive"), ("th", "anchor"),
                          ("tl", "expressive"), ("tl", "anchor"),
+                         ("vi", "expressive"), ("vi", "anchor"),
+                         ("id", "expressive"), ("id", "anchor"),
                          ("zh", "antiforget")}
     slots = [(s.lang, s.role) for s in SOURCES if s.preferred]
     assert len(slots) == len(set(slots)), "同一槽位出现多个首选"
@@ -356,6 +388,10 @@ def test_sources_are_sorted_by_quality():
     assert [s.id for s in grouped["tl"]] == [
         "drama_tl", "fleurs_tl", "filipino_speech", "filswitch",
         "filipino_emotion", "tagalog_tts"]
+    assert [s.id for s in grouped["vi"]] == [
+        "drama_vi", "gigaspeech2_vi", "fleurs_vi", "cv22_vi"]
+    assert [s.id for s in grouped["id"]] == [
+        "drama_id", "gigaspeech2_id", "fleurs_id", "cv22_id"]
 
 
 def test_yodas_th_session_from_utt_id():

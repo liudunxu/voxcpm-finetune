@@ -6,11 +6,16 @@ from dataclasses import dataclass
 
 PREFERRED_TAG = "【首选】"
 
+# Whisper 会把句内英文多的 code-switch 样本判成 en，只认目标语种会误杀最该保留的样本。
+# id 的日常口语与短剧台词混英文程度接近 Taglish；vi 的混英以词内借词为主，默认从严，
+# 实测 drop_lang 误杀再给该源单独加 accept_langs=("vi", "en")。
+CODE_SWITCH_ACCEPT = {"tl": ("tl", "en"), "id": ("id", "en")}
+
 
 @dataclass(frozen=True)
 class Source:
     id: str
-    lang: str  # th / tl / zh / en
+    lang: str  # th / tl / vi / id / zh / en
     label: str
     kind: str  # hf_dataset | openslr | local
     repo: str = ""
@@ -51,12 +56,13 @@ class Source:
     def languages(self) -> tuple[str, ...]:
         """Whisper 转写/质检时允许的语种。
 
-        Tagalog 默认放行 en：短剧台词是 Taglish，句内英文词多的样本 Whisper 常判成
-        en，只认 tl 会把最该保留的 code-switch 样本全部误杀。
+        tl / id 默认放行 en：短剧台词与自然口语都是 code-switch，句内英文词多的样本
+        Whisper 常判成 en，只认目标语种会把最该保留的样本全部误杀。vi 不在此列，
+        实测误杀再按源加 accept_langs。
         """
         if self.accept_langs:
             return self.accept_langs
-        return ("tl", "en") if self.lang == "tl" else (self.lang,)
+        return CODE_SWITCH_ACCEPT.get(self.lang, (self.lang,))
 
     def session_of(self, value) -> str:
         v = "" if value is None else str(value).strip()
@@ -77,6 +83,16 @@ SOURCES: list[Source] = [
            has_speaker=True, role="expressive", preferred=True, expressive=True, quality=100),
     Source("drama_th", "th", "已审核真人泰语短剧对白（自备 JSONL）", "local",
            license="按自有授权", has_speaker=True, role="expressive", expressive=True, quality=100),
+    Source("drama_vi", "vi", "已审核真人越南语短剧对白（自备 JSONL）", "local",
+           license="按自有授权",
+           note="越南语唯一的可信表现力来源：没有已核实的开源真人情感/表演语料。"
+                "填写 speaker_verified=true；英文/中文同人参考可标 reference_only=true",
+           has_speaker=True, role="expressive", preferred=True, expressive=True, quality=100),
+    Source("drama_id", "id", "已审核真人印尼语短剧对白（自备 JSONL）", "local",
+           license="按自有授权",
+           note="印尼语唯一的可信表现力来源：没有已核实的开源真人情感/表演语料。"
+                "台词混英文时转写会判成 en，本源默认放行 (id, en)",
+           has_speaker=True, role="expressive", preferred=True, expressive=True, quality=100),
     Source("replay_en", "en", "英文多说话人回放（自备已审核 JSONL，如 VCTK）", "local",
            license="按原数据授权", has_speaker=True, role="antiforget", quality=100),
     # ---- 泰语 ----
@@ -178,6 +194,63 @@ SOURCES: list[Source] = [
         "hf_dataset", "welyjesch/tagalog_tts", "", "train",
         "未知", "仅 audio 列，加工自动转写；商用前先核实许可",
         has_speaker=False, qc="none", needs_transcribe=True, quality=30,
+    ),
+    # ---- 越南语 ----
+    Source(
+        "gigaspeech2_vi", "vi", "Gigaspeech 2 越南语（YouTube/播客自然口语）",
+        "hf_dataset", "speechcolab/gigaspeech2", "vi", "train",
+        "Apache-2.0",
+        "许可最干净（Apache-2.0，无 SA/NC 红线），是 vi 的自然口语首选锚点。"
+        "⚠️ 规模与字段形态本轮未核实：先 --max-samples 20 试跑，确认 audio 列存在且"
+        "时长落在 3-30s；若是 path+start+end 的长音频切片形态，下载器会整段读入而非"
+        "按时间戳切，本源即不可用（见 docs/vi_id_support.md）。"
+        "gated:auto，需 .env 配 HF_TOKEN 并在数据集页面同意条款。无 speaker ID，不配 ref",
+        has_speaker=False, qc="none", role="anchor", preferred=True, quality=70,
+    ),
+    Source(
+        "fleurs_vi", "vi", "FLEURS 越南语（干净朗读，发音锚点）",
+        "hf_dataset", "google/fleurs", "vi_vn", "train",
+        "CC-BY-4.0",
+        "config 名按 FLEURS 的 {lang}_{country} 模式推得，首次先 --max-samples 50 确认；"
+        "小时数未核实。朗读发音补充；无可靠说话人身份，不配 ref",
+        has_speaker=False, qc="none", accept_langs=("vi",), quality=60,
+    ),
+    Source(
+        "cv22_vi", "vi", "Common Voice 22 越南语（众包朗读，发音锚点）",
+        "hf_dataset", "fsicoli/common_voice_22_0", "vi", "train",
+        "CC0",
+        "官方已撤架，此为社区镜像（无需同意条款）；该 locale 的 validated 小时数未核实，"
+        "先 --max-samples 试跑。众包噪音大，自动 Whisper 校验；朗读语料有权威文本，"
+        "语种不符就是错行，因此不吃 code-switch 放行",
+        has_speaker=True, qc="whisper", accept_langs=("vi",), quality=30,
+    ),
+    # ---- 印尼语 ----
+    Source(
+        "gigaspeech2_id", "id", "Gigaspeech 2 印尼语（YouTube/播客自然口语）",
+        "hf_dataset", "speechcolab/gigaspeech2", "id", "train",
+        "Apache-2.0",
+        "许可最干净（Apache-2.0，无 SA/NC 红线），是 id 的自然口语首选锚点。"
+        "⚠️ 规模与字段形态本轮未核实：先 --max-samples 20 试跑，确认 audio 列存在且"
+        "时长落在 3-30s；若是 path+start+end 的长音频切片形态，本源即不可用。"
+        "gated:auto，需 HF_TOKEN 并在页面同意条款。无 speaker ID，不配 ref",
+        has_speaker=False, qc="none", role="anchor", preferred=True, quality=70,
+    ),
+    Source(
+        "fleurs_id", "id", "FLEURS 印尼语（干净朗读，发音锚点）",
+        "hf_dataset", "google/fleurs", "id_id", "train",
+        "CC-BY-4.0",
+        "config 名按 FLEURS 的 {lang}_{country} 模式推得，首次先 --max-samples 50 确认；"
+        "小时数未核实。朗读发音补充；无可靠说话人身份，不配 ref",
+        has_speaker=False, qc="none", accept_langs=("id",), quality=60,
+    ),
+    Source(
+        "cv22_id", "id", "Common Voice 22 印尼语（众包朗读，发音锚点）",
+        "hf_dataset", "fsicoli/common_voice_22_0", "id", "train",
+        "CC0",
+        "官方已撤架，此为社区镜像（无需同意条款）；该 locale 的 validated 小时数未核实，"
+        "先 --max-samples 试跑。众包噪音大，自动 Whisper 校验；朗读语料有权威文本，"
+        "语种不符就是错行，因此不吃 id 默认的 (id, en) 放行",
+        has_speaker=True, qc="whisper", accept_langs=("id",), quality=30,
     ),
     # ---- 中文（混合防遗忘，建议占比 10-20%） ----
     Source(

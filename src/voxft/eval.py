@@ -16,13 +16,22 @@ from .paths import CHECKPOINT_DIR
 
 SAMPLE_BY_LANG = {
     "th": infer.SAMPLE_TEXTS["泰语"], "tl": infer.SAMPLE_TEXTS["Tagalog"],
+    "vi": infer.SAMPLE_TEXTS["越南语"], "id": infer.SAMPLE_TEXTS["印尼语"],
     "zh": infer.SAMPLE_TEXTS["中文"], "en": "Are you okay? I was worried about you.",
 }
 
+# Taglish 句内英文多，强制单一语言解码会给出失真的转写；vi/id 和 th 一样是 Whisper
+# 标准语种，强制解码让 CER 在不同 checkpoint 之间可比。
+AUTO_DETECT_LANGS = frozenset({"tl"})
+
+# 按空格切词有意义的语种才算 WER。vi 正字法以音节为单位空格分隔，它的 WER 是音节级
+# 错误率，与 tl/en/id 的词级不同量纲，别横向比。
+WER_LANGS = frozenset({"tl", "en", "vi", "id"})
+
 
 def _transcribe(model, wav_path: str, lang: str) -> str:
-    # Taglish 可被识别为英语；不强制单一语言解码。
-    segs, _ = model.transcribe(wav_path, language=None if lang == "tl" else lang,
+    segs, _ = model.transcribe(wav_path,
+                               language=None if lang in AUTO_DETECT_LANGS else lang,
                                vad_filter=True)
     return " ".join(s.text.strip() for s in segs)
 
@@ -100,7 +109,7 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                 "cer": round(_error_rate(h, r), 4),
                 "wer": round(_error_rate(_norm(hyp, True).split(),
                                           _norm(case["text"], True).split()), 4)
-                       if case["lang"] in ("tl", "en") else None,
+                       if case["lang"] in WER_LANGS else None,
                 "suspected_truncation": _is_truncated(hyp, case["text"]),
                 **_prosody(wav_path), "wav": wav_path, "gen_sec": gen_sec,
                 "human_review": {"naturalness_1_5": None, "emotion_fit_1_5": None,
@@ -110,7 +119,8 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
     report = {
         "target": target, "base": infer._resolve_base(base), "label": label,
         "cfg_value": cfg_value, "inference_timesteps": inference_timesteps,
-        "retry_badcase": False, "asr_model": "large-v3", "asr_tl_language": "auto",
+        "retry_badcase": False, "asr_model": "large-v3",
+        "asr_auto_detect_langs": sorted(AUTO_DETECT_LANGS),
         "mean_similarity": round(sum(i["similarity"] for i in items) / len(items), 4),
         "mean_cer": round(sum(i["cer"] for i in items) / len(items), 4),
         "suspected_truncation_rate": round(sum(i["suspected_truncation"] for i in items) / len(items), 4),
