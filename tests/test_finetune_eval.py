@@ -42,6 +42,26 @@ def test_epoch_plan_and_preflight(tmp_path, monkeypatch):
     assert any("training_cfg_rate=0" in i for i in preflight(config, 2))
 
 
+def test_plan_records_langs_and_run_name(tmp_path, monkeypatch):
+    """联合 run 事后要能反查训了哪些语种；run 名也要带上，否则一堆 lora_0911 分不清。"""
+    monkeypatch.setattr(builder, "CONFIG_DIR", tmp_path / "configs")
+    monkeypatch.setattr(builder, "CHECKPOINT_DIR", tmp_path / "ckpt")
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"fake")
+    train = tmp_path / "train.jsonl"
+    rows = ([{"audio": str(wav), "text": "t", "lang": "th"}] * 2
+            + [{"audio": str(wav), "text": "t", "lang": lang} for lang in ("ms", "tl", "vi", "id")]
+            + [{"audio": str(wav), "text": "t"}])       # 没标 lang 的行归 unknown，不许吞掉
+    train.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    config = builder.build_yaml("joint", "", str(train), epochs=1)
+    plan = json.loads(config.with_suffix(".plan.json").read_text())
+    assert plan["langs"] == {"id": 1, "ms": 1, "th": 2, "tl": 1, "unknown": 1, "vi": 1}
+    assert plan["train_samples"] == 7
+    name = builder.default_run_name("lora", str(train))
+    assert name.startswith("lora_joint6_") and "/" not in name and name not in ("", ".", "..")
+    assert builder.default_run_name("lora").startswith("lora_")   # 没给清单时退回时间戳
+
+
 def test_lora_load_config_and_ab_toggles(tmp_path, monkeypatch):
     lora = tmp_path / "adapter"
     lora.mkdir()
@@ -101,24 +121,29 @@ def test_eval_keeps_conditions_thai_marks_and_unique_reports(tmp_path, monkeypat
 
 def test_every_registry_lang_has_eval_channel():
     """加语种时必须同步 SAMPLE_BY_LANG，否则 eval 直接拒绝该语种的 case。"""
-    from voxft.data.registry import SOURCES
+    from voxft.data.registry import SOURCES, TARGET_LANGS
     missing = {s.lang for s in SOURCES} - set(evaluation.SAMPLE_BY_LANG)
     assert not missing, f"registry 里有语种没有验收通道: {missing}"
+    assert set(TARGET_LANGS) <= set(evaluation.SAMPLE_BY_LANG)
     assert evaluation.AUTO_DETECT_LANGS == {"tl"}
-    assert set(evaluation.WER_LANGS) == {"tl", "en", "vi", "id"}
+    # ms/id/tl/en 词间有空格 → 词级 WER；vi 是音节级；th 词间无空格只有 CER
+    assert set(evaluation.WER_LANGS) == {"tl", "en", "vi", "id", "ms"}
 
 
-def test_eval_computes_cer_and_wer_for_vi_and_id(tmp_path, monkeypatch):
-    """vi 正字法按音节空格分隔，WER 有值但是音节级口径；id 是词级。"""
+def test_eval_computes_cer_and_wer_for_vi_id_and_ms(tmp_path, monkeypatch):
+    """vi 正字法按音节空格分隔，WER 有值但是音节级口径；id/ms 是词级。"""
     from voxft.data import pipeline
     monkeypatch.setattr(evaluation, "CHECKPOINT_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
     monkeypatch.setattr(infer, "get_model", lambda *args: object())
     monkeypatch.setattr(infer, "_run", lambda model, kw: ("fake.wav", 0.1))
     monkeypatch.setattr(evaluation, "_prosody", lambda *a: {"f0_std_st": 1.0})
-    for lang, text in (("vi", "Tôi không biết"), ("id", "Saya tidak tahu")):
+    for lang, text in (("vi", "Tôi không biết"), ("id", "Saya tidak tahu"),
+                       ("ms", "Saya tidak tahu")):
         monkeypatch.setattr(evaluation, "_transcribe", lambda *a, text=text: text)
         report = evaluation.evaluate("base", lang, [{"text": text, "lang": lang}])
         item = report["items"][0]
         assert item["cer"] == 0 and item["wer"] == 0, f"{lang} 应算出 CER 与 WER"
         assert report["asr_auto_detect_langs"] == ["tl"]
+        assert report["by_lang"][lang]["cases"] == 1
+        assert report["by_lang"][lang]["mean_wer"] == 0

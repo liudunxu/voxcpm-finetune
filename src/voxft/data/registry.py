@@ -6,16 +6,20 @@ from dataclasses import dataclass
 
 PREFERRED_TAG = "【首选】"
 
+# 微调目标语种。zh / en 是防遗忘回放语种，不是目标，别加进来。
+# UI 文案与 eval 白名单一律引用这里，不要再手写一遍语种列表。
+TARGET_LANGS = ("th", "tl", "vi", "id", "ms")
+
 # Whisper 会把句内英文多的 code-switch 样本判成 en，只认目标语种会误杀最该保留的样本。
-# id 的日常口语与短剧台词混英文程度接近 Taglish；vi 的混英以词内借词为主，默认从严，
-# 实测 drop_lang 误杀再给该源单独加 accept_langs=("vi", "en")。
-CODE_SWITCH_ACCEPT = {"tl": ("tl", "en"), "id": ("id", "en")}
+# id 的日常口语与短剧台词混英文程度接近 Taglish，ms（Manglish）同理；vi 的混英以词内
+# 借词为主，默认从严，实测 drop_lang 误杀再给该源单独加 accept_langs=("vi", "en")。
+CODE_SWITCH_ACCEPT = {"tl": ("tl", "en"), "id": ("id", "en"), "ms": ("ms", "en")}
 
 
 @dataclass(frozen=True)
 class Source:
     id: str
-    lang: str  # th / tl / vi / id / zh / en
+    lang: str  # th / tl / vi / id / ms / zh / en
     label: str
     kind: str  # hf_dataset | openslr | local
     repo: str = ""
@@ -56,9 +60,9 @@ class Source:
     def languages(self) -> tuple[str, ...]:
         """Whisper 转写/质检时允许的语种。
 
-        tl / id 默认放行 en：短剧台词与自然口语都是 code-switch，句内英文词多的样本
-        Whisper 常判成 en，只认目标语种会把最该保留的样本全部误杀。vi 不在此列，
-        实测误杀再按源加 accept_langs。
+        tl / id / ms 默认放行 en：短剧台词与自然口语都是 code-switch（Taglish、Manglish），
+        句内英文词多的样本 Whisper 常判成 en，只认目标语种会把最该保留的样本全部误杀。
+        vi 不在此列，实测误杀再按源加 accept_langs。
         """
         if self.accept_langs:
             return self.accept_langs
@@ -92,6 +96,12 @@ SOURCES: list[Source] = [
            license="按自有授权",
            note="印尼语唯一的可信表现力来源：没有已核实的开源真人情感/表演语料。"
                 "台词混英文时转写会判成 en，本源默认放行 (id, en)",
+           has_speaker=True, role="expressive", preferred=True, expressive=True, quality=100),
+    Source("drama_ms", "ms", "已审核真人马来语短剧对白（自备 JSONL）", "local",
+           license="按自有授权",
+           note="马来语唯一的可信表现力来源：没有已核实的开源真人情感/表演语料。"
+                "台词混英文（Manglish）时转写会判成 en，本源默认放行 (ms, en)。"
+                "填写 speaker_verified=true；英文/中文同人参考可标 reference_only=true",
            has_speaker=True, role="expressive", preferred=True, expressive=True, quality=100),
     Source("replay_en", "en", "英文多说话人回放（自备已审核 JSONL，如 VCTK）", "local",
            license="按原数据授权", has_speaker=True, role="antiforget", quality=100),
@@ -251,6 +261,30 @@ SOURCES: list[Source] = [
         "先 --max-samples 试跑。众包噪音大，自动 Whisper 校验；朗读语料有权威文本，"
         "语种不符就是错行，因此不吃 id 默认的 (id, en) 放行",
         has_speaker=True, qc="whisper", accept_langs=("id",), quality=30,
+    ),
+    # ---- 马来语 ----
+    Source(
+        "yodas2_ms", "ms", "YODAS2-Sidon 马来语（YouTube 自发口语，Sidon 降噪，24kHz）",
+        "hf_dataset", "sarulab-speech/yodas2_sidon", "ms000", "train",
+        "CC-BY-3.0",
+        "ms 的自然口语首选：与已在用的 yodas_th 同一上游家族（YODAS2 + Sidon 降噪），"
+        "许可干净（CC-BY-3.0，无 SA/NC 红线），config ms000 已由 parquet API 核实存在。"
+        "⚠️ 仓库是 WebDataset .tar.gz 分片（flac + 可选 metadata.json），**规模与字段形态"
+        "未核实**，先 --max-samples 20 试跑确认 audio 列存在且时长落 3-30s；若转换 parquet "
+        "只有元数据、音频留在 .tar 里，本源即不可用。试跑后还要把 metadata.json 里的 "
+        "YouTube video ID 映射到 session_col，否则同一视频的切片会跨 train/val 泄漏。"
+        "YouTube 抓取，speaker 是视频级近似身份，不作 ref 依据。详见 docs/ms_support.md",
+        has_speaker=False, qc="none", role="anchor", preferred=True, quality=80,
+    ),
+    Source(
+        "fleurs_ms", "ms", "FLEURS 马来语（干净朗读，发音锚点）",
+        "hf_dataset", "google/fleurs", "ms_my", "train",
+        "CC-BY-4.0",
+        "config 名是 `ms_my`——结尾的 my 是**国家码马来西亚**，不是缅甸语，别认错。"
+        "config 已由 HF parquet API 核实存在（103 个 config 之一），小时数未核实，"
+        "首次先 --max-samples 50 确认。朗读发音补充；无可靠说话人身份，不配 ref。"
+        "有权威文本，语种不符就是错行，因此用 accept_langs 覆盖掉 ms 默认的 (ms, en) 放行",
+        has_speaker=False, qc="none", accept_langs=("ms",), quality=60,
     ),
     # ---- 中文（混合防遗忘，建议占比 10-20%） ----
     Source(

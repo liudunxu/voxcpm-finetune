@@ -6,7 +6,7 @@ import time
 import gradio as gr
 
 from ..paths import DATA_PROCESSED, CHECKPOINT_DIR, env, load_dotenv
-from ..data.registry import sources_by_quality
+from ..data.registry import TARGET_LANGS, sources_by_quality
 from ..data import download, ingest, pipeline
 from ..train import launcher, yaml_builder
 from ..lora.merge import merge_lora
@@ -174,7 +174,7 @@ def do_mix(target_ds, target_w, zh_ds, zh_w, out_name, recipe=""):
             if zh_ds:
                 parts.append((zh_ds, float(zh_w)))
         log(f"混合 {parts} → {out_name}")
-        res = pipeline.mix_manifests(parts, out_name)
+        res = pipeline.mix_manifests(parts, out_name, progress=log)
         log("混合完成:\n" + json.dumps(res, ensure_ascii=False, indent=2))
         return None
 
@@ -347,7 +347,7 @@ def do_build_yaml(ftype, ds_name, r, alpha, lr, num_iters, batch_size,
     def worker():
         try:
             ds = DATA_PROCESSED / ds_name
-            rn = run_name or yaml_builder.default_run_name(ftype)
+            rn = run_name or yaml_builder.default_run_name(ftype, str(ds / "train.jsonl"))
             base = launcher.resolve_base_path(
                 env("VOXCPM_BASE_PATH") or "openbmb/VoxCPM2", progress=log)
             overrides = {
@@ -534,7 +534,7 @@ def build_ui() -> gr.Blocks:
             gr.Markdown("---\n**加工**（16k → 裁静音 → 时长过滤 → 质检 → 表现力指标 → "
                         "已核验说话人响度对齐 → 按身份/会话切分 → 可信控制前缀 → 集合内 ref 配对；"
                         "各项按数据源自动配置，日志里可见）")
-            p_manifest = gr.Textbox("", label="远程原始 JSONL 路径（可空；drama_tl/th/vi/id、replay_en 在此导入）")
+            p_manifest = gr.Textbox("", label="远程原始 JSONL 路径（可空；drama_tl/th/vi/id/ms、replay_en 在此导入）")
             with gr.Row():
                 p_src = gr.Dropdown([s.id for s in _sorted_sources], label="原始数据源")
                 p_min = gr.Number(3.0, label="最短时长(s)")
@@ -552,29 +552,43 @@ def build_ui() -> gr.Blocks:
                 "`filswitch` 是新闻朗读，低比例补发音。中英回放：`aishell3` / `replay_en`。\n\n"
                 "越南语 / 印尼语：表现力只能靠自建 `drama_vi` / `drama_id`（无已核实的开源真人情感语料）；"
                 "公开源里 `gigaspeech2_vi/id` 许可最干净（Apache-2.0）但**字段形态未核实，先 "
-                "`--max-samples 20` 试跑**，`fleurs_*` / `cv22_*` 只当发音锚点。详见 `docs/vi_id_support.md`。")
-            gr.Markdown("---\n**跨语言混合**（按音频时长采样；建议目标语言 85% + 中文 10% + 英文 5%；"
-                        "训练重复上限 3×，验证集不重复；实际占比与曝光记录在 mix.json）")
+                "`--max-samples 20` 试跑**，`fleurs_*` / `cv22_*` 只当发音锚点。详见 `docs/vi_id_support.md`。\n\n"
+                "马来语：表现力同样只能自建 `drama_ms`；`yodas2_ms`（CC-BY-3.0，YouTube 自发口语）"
+                "是自然口语首选，`fleurs_ms` 的 config 名是 `ms_my`（结尾 my 是**马来西亚国家码**，"
+                "不是缅甸语）。两者形态未核实，先 `--max-samples 20` 试跑。"
+                "**Common Voice 22 与 gigaspeech2 都没有 ms**；`mesolitica/Malaysian-TTS` 是 "
+                "F5-TTS 合成的，禁用。详见 `docs/ms_support.md`。")
+            gr.Markdown("---\n**跨语言混合**（按音频时长采样；联合微调建议每个目标语种各 17% + "
+                        "中文 10% + 英文 5%；训练重复上限 3×，验证集不重复；"
+                        "实际占比、分语种「请求 vs 实际」对照与曝光记录在 mix.json 的 `language_shares`）")
             with gr.Row():
                 m_target = gr.Dropdown(_processed_datasets(), label="目标语言数据集")
                 m_tw = gr.Number(0.85, label="权重")
                 m_zh = gr.Dropdown(_processed_datasets(), label="中文数据集（可空）")
                 m_zw = gr.Number(0.15, label="权重")
-                m_name = gr.Textbox("mixed_th_zh", label="输出名称")
+                m_name = gr.Textbox("joint_v1", label="输出名称")
                 m_btn = gr.Button("混合", variant="primary")
-            m_recipe = gr.Textbox("", lines=5, label="多源时长配比（可空；填写后替代上方两源设置）",
-                                 placeholder="drama_tl=45\nnatural_tl=30\nfilswitch=10\naishell3=10\nreplay_en=5")
+            m_recipe = gr.Textbox("", lines=8,
+                                 label="多源时长配比（联合微调主路径；填写后替代上方两源设置）",
+                                 placeholder="thai_ser_v1=6\ndrama_th_v1=3\nyodas_th_v1=7\n"
+                                             "fleurs_th_v1=1\ndrama_tl_v1=9\nfilswitch_v1=5\n"
+                                             "fleurs_tl_v1=3\ngigaspeech2_vi_v1=15\nfleurs_vi_v1=1\n"
+                                             "cv22_vi_v1=1\ngigaspeech2_id_v1=15\nfleurs_id_v1=1\n"
+                                             "cv22_id_v1=1\nyodas2_ms_v1=15\nfleurs_ms_v1=2\n"
+                                             "aishell3_v2=10\nreplay_en_v2=5")
             m_out = gr.Textbox(label="混合日志", lines=6, interactive=False)
 
         with gr.Tab("素材导入") as tab_ingest:
-            gr.Markdown("**成片 → 切分 → 转写 → 追加**（Tagalog / 越南语 / 印尼语都没有已核实的"
-                        "可商用开源真人表演语料：Common Voice tl 官方 0 小时、YODAS 无 tl 子集、"
-                        "OpenSLR 无菲律宾语资源，vi/id 侧的情感语料本轮也未能核实到任何现货，"
-                        "短剧素材只能自备。目标源要按语种显式选（`drama_tl` / `drama_vi` / `drama_id`）。"
-                        "有对白轨就喂对白轨；成片混音轨靠试听淘汰 BGM 重的条目）")
+            gr.Markdown("**成片 → 切分 → 转写 → 追加**（Tagalog / 越南语 / 印尼语 / 马来语都没有"
+                        "已核实的可商用开源真人表演语料：Common Voice tl 官方 0 小时、"
+                        "Common Voice 22 与 gigaspeech2 都**没有 ms**、YODAS 无 tl 子集、"
+                        "OpenSLR 无菲律宾语资源，vi/id/ms 侧的情感语料也未能核实到任何现货，"
+                        "短剧素材只能自备。目标源要按语种显式选（`drama_tl` / `drama_vi` / "
+                        "`drama_id` / `drama_ms`）。有对白轨就喂对白轨；"
+                        "成片混音轨靠试听淘汰 BGM 重的条目）")
             with gr.Row():
-                ig_source = gr.Dropdown(_ingest_sources(), value="drama_tl",
-                                        label="目标数据源（自备语料）")
+                ig_source = gr.Dropdown(_ingest_sources(),
+                                        label="目标数据源（自备语料，按语种显式选）")
                 ig_vid = gr.Textbox("", label="素材 ID（空=文件名；同时作为 session 与 holdout 键）")
             ig_input = gr.Textbox("", lines=3,
                                   label="远程视频/音频路径（一行一个；mp4/mkv/wav/flac）",
@@ -597,7 +611,7 @@ def build_ui() -> gr.Blocks:
             ig_text = gr.Textbox("", lines=2, label="台词（转写结果，可直接改；必须是裸台词）")
             ig_meta = gr.Textbox(label="片段信息", lines=4, interactive=False)
             with gr.Row():
-                ig_spk = gr.Dropdown(_known_speakers("drama_tl"), label="说话人（可手填新 ID）",
+                ig_spk = gr.Dropdown([], label="说话人（可手填新 ID；选源后自动加载）",
                                      allow_custom_value=True)
                 ig_spk_ok = gr.Checkbox(False, label="已核实是本人")
             with gr.Row():
@@ -679,7 +693,7 @@ def build_ui() -> gr.Blocks:
             tab_train.select(lambda: (gr.update(choices=_config_files()),
                                       gr.update(choices=_processed_datasets())),
                              outputs=[cfg_path, ft_ds])
-            gr.Markdown("""---
+            gr.Markdown(f"""---
 **续训**：官方脚本自动从 `save_path` 的 `latest/` 断点恢复（权重+优化器+调度器）；
 重启后用同一配置重新启动即可，无需任何额外参数。SIGTERM/SIGINT 会自动保存。
 
@@ -691,8 +705,11 @@ def build_ui() -> gr.Blocks:
 3. 过拟合信号（立即回退到更早 checkpoint）：生成忽略输入文本、无论输什么都相似、
    生成停不下来（检查数据尾静音是否 >0.5s）
 4. 客观对比：`uv run python -m voxft.eval base <lora_dir> --lang th`
-   （`--lang` 支持 th/tl/vi/id/zh/en；vi 的 WER 是音节级口径，不与词级横向比。需 qc 组）——
+   （`--lang` 支持 {"/".join((*TARGET_LANGS, "zh", "en"))}；th 词间无空格只有 CER，
+   vi 的 WER 是音节级口径，都不与词级横向比。需 qc 组）——
    固定 case/ref/control/seed → ASR 内容误差与疑似漏尾诊断；
+   **联合模型必须看 report 的 `by_lang`**：逐语种与 `eval base` 的同一份 case 对比，
+   任一语种退化即算失败（归因与回退条件见 playbook 决策点 3）；
    自然度、情绪和音色由母语盲听验收，F0 起伏不是越高越好""")
 
         with gr.Tab("试听") as tab_listen:
@@ -700,7 +717,7 @@ def build_ui() -> gr.Blocks:
                 a_base = gr.Textbox(env("VOXCPM_BASE_PATH"),
                                     label="基座（空=默认 openbmb/VoxCPM2）")
                 a_lora = gr.Dropdown(_ckpt_choices(), value="（无 LoRA）", label="LoRA")
-            a_text = gr.Textbox(infer.SAMPLE_TEXTS["泰语"], label="合成文本")
+            a_text = gr.Textbox(infer.SAMPLE_TEXTS["th"], label="合成文本")
             gr.Examples(list(infer.SAMPLE_TEXTS.values()), a_text)
             with gr.Row():
                 a_ref = gr.Audio(label="参考音频（可选，零样本克隆）", type="filepath")

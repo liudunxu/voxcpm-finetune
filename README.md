@@ -1,8 +1,8 @@
 # voxft — VoxCPM 2 微调工作台
 
-基于 [VoxCPM 2](https://github.com/OpenBMB/VoxCPM) 的短剧配音微调工作台：中/英文参考音频克隆 → 泰语、Tagalog/Taglish、越南语、印尼语，结合中英文情绪/语气前缀。涵盖数据加工、混合、LoRA 训练、离线验收、merge 和 HF 同步。
+基于 [VoxCPM 2](https://github.com/OpenBMB/VoxCPM) 的短剧配音微调工作台：中/英文参考音频克隆 → 泰语、Tagalog/Taglish、越南语、印尼语、马来语，结合中英文情绪/语气前缀。**目标是五语种（th/tl/vi/id/ms）联合微调：一个 LoRA 同时提升这几种语言的配音质量，验收按语种分别做。** 涵盖数据加工、混合、LoRA 训练、离线验收、merge 和 HF 同步。
 
-开发约定见 [AGENTS.md](AGENTS.md)，通用流程见 [docs/finetune_playbook.md](docs/finetune_playbook.md)，越南语/印尼语的接入依据与语料核实状态见 [docs/vi_id_support.md](docs/vi_id_support.md)。本轮只调整微调数据、配置及离线评测，不调整翻译或生产配音链路。
+开发约定见 [AGENTS.md](AGENTS.md)，通用流程见 [docs/finetune_playbook.md](docs/finetune_playbook.md)，越南语/印尼语的接入依据与语料核实状态见 [docs/vi_id_support.md](docs/vi_id_support.md)，马来语见 [docs/ms_support.md](docs/ms_support.md)。本轮只调整微调数据、配置及离线评测，不调整翻译或生产配音链路。
 
 ## 环境与启动
 
@@ -57,17 +57,17 @@ FilSwitch 的转换 parquet 可能只是小体积元数据：下载器会继续�
 
 ### 首轮配比（实验起点，不是已验证最优值）
 
-按**过滤后训练音频时长**计算，先分别训练各语种 LoRA，确认有效后再考虑联合多语种。
+按**过滤后训练音频时长**计算。**联合微调是目标**：五个目标语种各占 17 分、中文回放 10、英文回放 5（回放全局共享，不按语种各配一份）；语种内部再按下表的角色比例拆。下表是「单语种」视角的比例，联合权重的具体写法见 [playbook §2.1.1](docs/finetune_playbook.md)。
 
-| 数据角色 | TH | TL | VI | ID |
-|---|---:|---:|---:|---:|
-| 真人短剧/即兴表演 | 45%（THAI-SER impro + 自有对白） | 45%（自有真人对白） | **0%**（待自建 `drama_vi`） | **0%**（待自建 `drama_id`） |
-| 自然口语 | 35%（审核后的 YODAS） | 30%（自有自然 TL/Taglish） | 75%（`gigaspeech2_vi`） | 75%（`gigaspeech2_id`） |
-| 发音补充 | 5% | 10%（FilSwitch 等） | 10%（`fleurs_vi` + `cv22_vi`） | 10%（`fleurs_id` + `cv22_id`） |
-| 中文回放 | 10% | 10% | 10% | 10% |
-| 英文回放 | 5% | 5% | 5% | 5% |
+| 数据角色 | TH | TL | VI | ID | MS |
+|---|---:|---:|---:|---:|---:|
+| 真人短剧/即兴表演 | 45%（THAI-SER impro + 自有对白） | 45%（自有真人对白） | **0%**（待自建 `drama_vi`） | **0%**（待自建 `drama_id`） | **0%**（待自建 `drama_ms`） |
+| 自然口语 | 35%（审核后的 YODAS） | 30%（自有自然 TL/Taglish） | 75%（`gigaspeech2_vi`） | 75%（`gigaspeech2_id`） | 76%（`yodas2_ms`） |
+| 发音补充 | 5% | 10%（FilSwitch 等） | 10%（`fleurs_vi` + `cv22_vi`） | 10%（`fleurs_id` + `cv22_id`） | 9%（`fleurs_ms`） |
+| 中文回放 | 10% | 10% | 10% | 10% | 10% |
+| 英文回放 | 5% | 5% | 5% | 5% | 5% |
 
-**VI/ID 的表演档为 0 是事实，不是待填的空格**：本轮没有核实到任何可商用的开源真人情感/表演语料，不伪造、也不用 TTS 合成补量。因此这两语种首轮的验收目标**必须降级**——只能声称发音准确度、口语韵律、克隆能力不退化、指令跟随不劣化，**不能声称情绪表现力有改善或去念稿感达成**。表演档的上限要等自建素材到位后开第二轮，届时回到 TH/TL 的形态。执行顺序建议 TH → TL → ID → VI（id 基座基线最好、正字法纯 ASCII、许可最干净）。逐项依据见 [docs/vi_id_support.md](docs/vi_id_support.md)。
+**VI/ID/MS 的表演档为 0 是事实，不是待填的空格**：本轮没有核实到任何可商用的开源真人情感/表演语料，不伪造、也不用 TTS 合成补量（`mesolitica/Malaysian-TTS` 看着对口，实为 F5-TTS 合成，禁用）。因此这三语种首轮的验收目标**必须降级**——只能声称发音准确度、口语韵律、克隆能力不退化、指令跟随不劣化，**不能声称情绪表现力有改善或去念稿感达成**。表演档的上限要等自建素材到位后开第二轮，届时回到 TH/TL 的形态。**数据准备顺序建议 TH → TL → ID → VI → MS**（这是准备顺序不是训练顺序，联合模型一次训全部；id 基座基线最好、正字法纯 ASCII、许可最干净，ms 数据最薄放最后）。ms 值得特别投入：基座 WER 1.75% 是五语种里**唯一输给竞品**的（Fish S2-Pro 1.41%），提升空间最大；但 `gigaspeech2` 与 Common Voice 22 都**没有 ms**，自然口语只剩 `yodas2_ms` 一个候选，且 ms/id 高度互通、**盲听必须由马来西亚母语者做**。逐项依据见 [docs/vi_id_support.md](docs/vi_id_support.md) 与 [docs/ms_support.md](docs/ms_support.md)。
 
 TL 先补 5–10h 干净真人对白做试验，覆盖多名女声、男声和年龄段；重点补质疑、克制愤怒、担心、讽刺、哭腔、带笑说话与自然停顿，避免某种情绪只来自某一名演员。每条必须是完整、单人、可听清的 3–30s 语流，不把孤立词或无真实连续时间关系的句子拼成长音频。VI/ID 的自建录制直接复用 [docs/corpus_sourcing.md](docs/corpus_sourcing.md) §5 的方案（一次录制同时产出目标语料 + 跨语言同人 ref + 固定评测集）。
 
@@ -180,7 +180,7 @@ uv run pytest
 
 建议每个目标语言先固定 80–100 条：覆盖中/英文 ref、无前缀/有前缀、女主/其他女声/男声、普通口语/强情绪/Taglish/长短句，并加中英文回放回归。保留用户反馈里的难词及漏尾句，但先让母语者确认台词与预期读法；翻译改写不是本轮训练标签自动修复项。
 
-报告保存逐条条件、CER、适用语言的 WER、疑似漏尾、音频路径与待填 `human_review`；多次运行不覆盖。`--lang` 支持 `th/tl/vi/id/zh/en`；只有 Taglish 走自动语种检测（`AUTO_DETECT_LANGS`），th/vi/id 强制指定解码语种让 CER 在不同 checkpoint 间可比。**vi 正字法按音节空格分隔，它的 WER 是音节级错误率**，不与 id/tl/en 的词级 WER 横向比。ASR 无法代替母语发音判定，泰语与越南语的声调组合符都保留，F0/能量仅描述，不是越高越好（越南语 6 声调，`f0_std_st` 同样不代表自然度）。
+报告保存逐条条件、CER、适用语言的 WER、疑似漏尾、音频路径与待填 `human_review`；多次运行不覆盖。`--lang` 支持 `th/tl/vi/id/ms/zh/en`；只有 Taglish 走自动语种检测（`AUTO_DETECT_LANGS`），th/vi/id/ms 强制指定解码语种让 CER 在不同 checkpoint 间可比。**vi 正字法按音节空格分隔，它的 WER 是音节级错误率**，不与 id/tl/ms/en 的词级 WER 横向比；**th 词间无空格，只有 CER**。`--texts-file` 的逐 case `lang` 可以混多语种，报告里的 **`by_lang`** 段给出分语种 CER/WER/漏尾——**联合 run 必须逐语种与 `eval base` 的同一份 case 对比，任一语种退化即算失败，不许用「平均变好」掩盖**。ASR 无法代替母语发音判定，泰语与越南语的声调组合符都保留，F0/能量仅描述，不是越高越好（越南语 6 声调，`f0_std_st` 同样不代表自然度）。
 
 验收由至少两名母语评审随机盲听同条件 A/B：自然度、情绪匹配、清晰度、克隆音色分别评分，标记真实截断/噪声/发音错。分 ref 语言、角色及情绪查看结果；目标是自然度/情绪改善且清晰度与音色不退化。自动报告不生成“通过”结论。
 

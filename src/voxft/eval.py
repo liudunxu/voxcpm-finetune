@@ -14,19 +14,15 @@ from uuid import uuid4
 from . import infer
 from .paths import CHECKPOINT_DIR
 
-SAMPLE_BY_LANG = {
-    "th": infer.SAMPLE_TEXTS["泰语"], "tl": infer.SAMPLE_TEXTS["Tagalog"],
-    "vi": infer.SAMPLE_TEXTS["越南语"], "id": infer.SAMPLE_TEXTS["印尼语"],
-    "zh": infer.SAMPLE_TEXTS["中文"], "en": "Are you okay? I was worried about you.",
-}
+SAMPLE_BY_LANG = infer.SAMPLE_TEXTS
 
-# Taglish 句内英文多，强制单一语言解码会给出失真的转写；vi/id 和 th 一样是 Whisper
+# Taglish 句内英文多，强制单一语言解码会给出失真的转写；th/vi/id/ms 都是 Whisper
 # 标准语种，强制解码让 CER 在不同 checkpoint 之间可比。
 AUTO_DETECT_LANGS = frozenset({"tl"})
 
 # 按空格切词有意义的语种才算 WER。vi 正字法以音节为单位空格分隔，它的 WER 是音节级
-# 错误率，与 tl/en/id 的词级不同量纲，别横向比。
-WER_LANGS = frozenset({"tl", "en", "vi", "id"})
+# 错误率，与 tl/en/id/ms 的词级不同量纲，别横向比；th 词间根本没有空格，只有 CER。
+WER_LANGS = frozenset({"tl", "en", "vi", "id", "ms"})
 
 
 def _transcribe(model, wav_path: str, lang: str) -> str:
@@ -62,10 +58,10 @@ def _is_truncated(hyp: str, ref: str, tail: int = 8) -> bool:
                        SequenceMatcher(None, h[-tail:], r[-tail:]).ratio() < 0.5)
 
 
-def _prosody(wav_path: str) -> dict:
+def _prosody(wav_path: str, text: str) -> dict:
     from .data.pipeline import audio_metrics, load_wav_mono
     wav, sr = load_wav_mono(wav_path)
-    return audio_metrics(wav, sr, "")
+    return audio_metrics(wav, sr, text)
 
 
 def evaluate(target: str, lang: str, texts: list[str | dict],
@@ -111,11 +107,22 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                                           _norm(case["text"], True).split()), 4)
                        if case["lang"] in WER_LANGS else None,
                 "suspected_truncation": _is_truncated(hyp, case["text"]),
-                **_prosody(wav_path), "wav": wav_path, "gen_sec": gen_sec,
+                **_prosody(wav_path, case["text"]), "wav": wav_path, "gen_sec": gen_sec,
                 "human_review": {"naturalness_1_5": None, "emotion_fit_1_5": None,
                                  "speaker_similarity_1_5": None, "intelligibility_1_5": None,
                                  "cutoff": None, "noise": None, "notes": ""},
             })
+    by_lang = {}
+    for lang in sorted({i["lang"] for i in items}):
+        g = [i for i in items if i["lang"] == lang]
+        wers = [i["wer"] for i in g if i["wer"] is not None]
+        by_lang[lang] = {
+            "cases": len(g),
+            "mean_cer": round(sum(i["cer"] for i in g) / len(g), 4),
+            "mean_similarity": round(sum(i["similarity"] for i in g) / len(g), 4),
+            "suspected_truncation_rate": round(sum(i["suspected_truncation"] for i in g) / len(g), 4),
+            **({"mean_wer": round(sum(wers) / len(wers), 4)} if wers else {}),
+        }
     report = {
         "target": target, "base": infer._resolve_base(base), "label": label,
         "cfg_value": cfg_value, "inference_timesteps": inference_timesteps,
@@ -125,7 +132,9 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
         "mean_cer": round(sum(i["cer"] for i in items) / len(items), 4),
         "suspected_truncation_rate": round(sum(i["suspected_truncation"] for i in items) / len(items), 4),
         "mean_f0_std": round(sum(i["f0_std_st"] for i in items) / len(items), 2),
-        "note": "ASR/漏尾均为诊断；F0 不作通过门限。按语言、ref 语言、角色、情绪分组做母语盲听。",
+        "by_lang": by_lang,
+        "note": "ASR/漏尾均为诊断；F0 不作通过门限。按语言、ref 语言、角色、情绪分组做母语盲听。"
+                "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词/秒），不横向比。",
         "items": items,
     }
     out_dir = CHECKPOINT_DIR / "eval"
@@ -141,6 +150,10 @@ def print_compare(reports: list[dict]) -> None:
     for r in reports:
         print(f"{r['target']:<44} {r['mean_cer']:>8} "
               f"{r['suspected_truncation_rate']:>8} {r['mean_f0_std']:>9}")
+        if len(r.get("by_lang", {})) > 1:
+            for lang, s in r["by_lang"].items():
+                print(f"  {lang:<42} {s['mean_cer']:>8} "
+                      f"{s['suspected_truncation_rate']:>8}")
     print("\n不能凭以上指标自动通过；请做母语盲听，检查情绪、音色、自然度和真实截断。")
 
 

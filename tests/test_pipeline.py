@@ -157,6 +157,30 @@ def test_malformed_holdout_file_raises(tmp_path):
     assert _load_holdout(pin) == ("ep01", "ep02")
 
 
+def test_split_gives_every_language_a_val_quota():
+    """联合清单里小语种按全局 val_ratio 只能摊到几条，评测没有统计意义；配额必须按语种算。"""
+    from collections import Counter
+    from voxft.data.pipeline import split_records
+
+    def rows(lang, n):
+        return [{"audio": f"{lang}_{i}.wav", "origin_audio": f"{lang}_{i}.wav",
+                 "lang": lang, "session": f"{lang}{i}",
+                 "speaker_verified": False, "duration": 4.0} for i in range(n)]
+
+    _train, val = split_records(rows("th", 5000) + rows("ms", 200), Options(val_ratio=0.02))
+    got = Counter(r["lang"] for r in val)
+    # 全局口径只会给 ms 约 4 条（104 × 200/5200）；按语种配额后 ms 拿到 val_min 保底
+    assert got["ms"] == 16, f"ms 应拿到保底 16 条，实际 {got['ms']}"
+    assert got["th"] == 100, f"th 仍按 val_ratio 拿 100 条，实际 {got['th']}"
+
+
+def test_unregistered_source_lang_is_unknown_not_chinese():
+    """未登记的自备源不能静默标成中文：联合微调下那会污染分语种统计与跨语言 ref 配对。"""
+    from voxft.data.pipeline import _source_lang
+    assert _source_lang("drama_ms") == "ms"
+    assert _source_lang("没登记进 registry 的源") == "unknown"
+
+
 def _make_source(tmp_path, name, n_spk=2, per_spk=6, dur=4.0):
     src = DATA_RAW / name
     audio = src / "audio"
@@ -351,13 +375,15 @@ def test_vi_id_sources_split_by_role():
 
 
 def test_control_prefix_rejects_target_language():
-    """控制前缀只写中英文；印尼语与英文同为 ASCII 拉丁字母，守卫挡不住，靠标注规范。"""
+    """控制前缀只写中英文；印尼语/马来语与英文同为 ASCII 拉丁字母，守卫挡不住，靠标注规范。"""
     from voxft.data.pipeline import _assert_control_lang
     assert _assert_control_lang("（愤怒地）") == "愤怒地"
     assert _assert_control_lang("sad, slow") == "sad, slow"
     for bad in ("โกรธ", "giận dữ", "bực bội"):
         with pytest.raises(ValueError, match="只能使用中英文"):
             _assert_control_lang(bad)
+    # 已知的洞：id/ms 的控制描述与英文无法区分，守卫放行，只能靠素材导入页的标注纪律
+    assert _assert_control_lang("marah, perlahan") == "marah, perlahan"
 
 
 def test_preferred_source_per_lang_and_role():
@@ -368,6 +394,7 @@ def test_preferred_source_per_lang_and_role():
                          ("tl", "expressive"), ("tl", "anchor"),
                          ("vi", "expressive"), ("vi", "anchor"),
                          ("id", "expressive"), ("id", "anchor"),
+                         ("ms", "expressive"), ("ms", "anchor"),
                          ("zh", "antiforget")}
     slots = [(s.lang, s.role) for s in SOURCES if s.preferred]
     assert len(slots) == len(set(slots)), "同一槽位出现多个首选"
@@ -392,6 +419,25 @@ def test_sources_are_sorted_by_quality():
         "drama_vi", "gigaspeech2_vi", "fleurs_vi", "cv22_vi"]
     assert [s.id for s in grouped["id"]] == [
         "drama_id", "gigaspeech2_id", "fleurs_id", "cv22_id"]
+    assert [s.id for s in grouped["ms"]] == [
+        "drama_ms", "yodas2_ms", "fleurs_ms"]
+
+
+def test_ms_sources_split_by_role():
+    """ms 的公开源全是朗读/网页口语，走 VAD 首尾裁切与低控制比例；表演档只有自建。"""
+    from voxft.data.pipeline import options_for
+    acted = options_for("drama_ms")
+    assert not acted.edge_vad and acted.edge_trim_ratio == 0.02   # 保留换气
+    assert acted.control_ratio == 0.5
+    # Manglish 句内英文多，只认 ms 会误杀最该保留的 code-switch 样本
+    assert acted.accept_langs == ("ms", "en")
+    for sid in ("yodas2_ms", "fleurs_ms"):
+        anchor = options_for(sid)
+        assert anchor.edge_vad and anchor.edge_trim_ratio == 0.06, sid
+        assert anchor.control_ratio == 0.25 and anchor.whisper_lang is None, sid
+        assert anchor.asr_min_logprob is None, sid    # 有原文可比相似度，不用置信度挡
+    # 朗读源有权威文本，语种不符就是错行，不吃 code-switch 放行
+    assert options_for("fleurs_ms").accept_langs == ("ms",)
 
 
 def test_yodas_th_session_from_utt_id():
@@ -551,6 +597,27 @@ def test_mix_duration_exposure_and_leak_detection():
         mix_manifests([("short", 1)], "leaked")
 
 
+def test_mix_reports_language_shares_and_warns_on_shortfall():
+    """联合配比的唯一核对口径是分语种时长占比；吃不满要告警，且缺口不重分配给别的语种。"""
+    from voxft.data.pipeline import _write_jsonl
+    for name, lang, n, dur in (("small", "th", 10, 3), ("big", "ms", 100, 9)):
+        rows = [{"audio": f"/{name}/{i}.wav", "origin_audio": f"/{name}/{i}.wav",
+                 "duration": dur, "text": "t", "lang": lang} for i in range(n)]
+        _write_jsonl(rows, DATA_PROCESSED / name / "train.jsonl")
+        _write_jsonl([{**rows[0], "audio": f"/{name}/val.wav",
+                       "origin_audio": f"/{name}/val.wav"}],
+                     DATA_PROCESSED / name / "val.jsonl")
+    notes = []
+    mix_manifests([("small", 0.5), ("big", 0.5)], "lang_mix", progress=notes.append)
+    shares = json.loads((DATA_PROCESSED / "lang_mix" / "mix.json").read_text())["language_shares"]
+    assert shares["th"]["requested"] == 0.5 and shares["ms"]["requested"] == 0.5
+    # small 只有 30s，3× 重复也才 90s，吃不满 465s 的请求；缺口没有被 big 顶掉，
+    # 而是如实反映在实际占比上，并由 progress 报出来
+    assert shares["th"]["actual"] < 0.2 < shares["ms"]["actual"]
+    assert shares["th"]["hours"] == 0.025
+    assert any("th" in n and "占比未达请求值" in n for n in notes), notes
+
+
 def test_curated_import_cross_language_refs_and_safe_reprocessing():
     from voxft.data.pipeline import _write_jsonl
     raw = _make_source(None, "drama_tl", n_spk=2, per_spk=21)
@@ -572,6 +639,19 @@ def test_curated_import_cross_language_refs_and_safe_reprocessing():
     assert {r["audio"] for r in first}.isdisjoint(r["audio"] for r in second)
     for path, wav in before.items():
         assert np.array_equal(sf.read(path)[0], wav)
+
+
+def test_cross_language_ref_falls_back_to_other_target_lang():
+    """联合微调才有的信号：没有中英回放时，同一个人的其他目标语种录音也能当 ref。"""
+    import random
+    from voxft.data.pipeline import pair_references
+    recs = [{"audio": f"{lang}_{i}.wav", "origin_audio": f"{lang}_{i}.wav", "lang": lang,
+             "speaker": "ns:ana", "speaker_verified": True, "duration": 5.0}
+            for lang in ("th", "ms") for i in range(3)]
+    out = pair_references(recs, Options(ref_audio_ratio=1.0), random.Random(0))
+    paired = [r for r in out if r.get("ref_audio")]
+    assert len(paired) == len(recs), "用例前提：每条都该配上 ref"
+    assert all(r["ref_lang"] != r["lang"] for r in paired), "应回退到其他目标语种，不是同语种"
 
 
 def test_process_keeps_rejected_and_unprocessed_raw_rows(monkeypatch):

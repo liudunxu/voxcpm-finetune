@@ -6,7 +6,7 @@ import os
 import random
 import re
 import tempfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -33,9 +33,10 @@ class Options:
     ref_min_dur: float = 3.0         # ref 片段时长约束，对齐线上 5-10s 的参考音频
     ref_max_dur: float = 10.0
     val_ratio: float = 0.02
-    val_max: int = 200               # 按组切分的软目标，不拆说话人来满足上限
+    val_max: int = 200               # 每语种按组切分的软目标，不拆说话人来满足上限
+    val_min: int = 16                # 每语种保底验证条数；小语种否则评测无统计意义
     utmos_min: float | None = None       # 如 3.5；None = 不做 UTMOS 过滤
-    whisper_lang: str | None = None      # "th"/"tl"/"vi"/"id"/"zh"；None = 不做转写校验
+    whisper_lang: str | None = None      # "th"/"tl"/"vi"/"id"/"ms"/"zh"；None = 不做转写校验
     accept_langs: tuple[str, ...] = ()   # 允许的检测语种（留空=只认 whisper_lang）
     whisper_min_sim: float = 0.55
     # 转写文本即训练文本的源（needs_transcribe）没有原文可比相似度，
@@ -303,8 +304,8 @@ _RATE_PHRASES = {"slow": {"zh": ["语速慢"], "en": ["slow paced"]},
 _VOL_PHRASES = {"quiet": {"zh": ["轻声", "音量小"], "en": ["soft voice", "quiet"]},
                 "loud": {"zh": ["音量大"], "en": ["loud"]}}
 
-# 泰文区 + 越南语专属字符（ơ ư đ 与带声调元音）可可靠识别；印尼语是纯 ASCII 拉丁
-# 字母，与英文无法区分，只能靠标注规范约束，别指望这条守卫。
+# 泰文区 + 越南语专属字符（ơ ư đ 与带声调元音）可可靠识别；印尼语与马来语都是纯 ASCII
+# 拉丁字母，与英文无法区分，只能靠标注规范约束，别指望这条守卫。
 _NON_CONTROL_LANG = re.compile(
     r"[\u0e00-\u0e7f\u0102\u0103\u0110\u0111\u01a0\u01a1\u01af\u01b0\u1ea0-\u1ef9]")
 
@@ -594,7 +595,7 @@ def _source_lang(source_id: str) -> str:
     try:
         return get_source(source_id).lang
     except KeyError:
-        return "zh"
+        return "unknown"  # 未登记的自备源别猜成中文，那会污染分语种统计与 ref 配对
 
 
 def _load_holdout(manifest: Path) -> tuple[str, ...]:
@@ -652,26 +653,42 @@ def split_records(records: list[dict], opts: Options) -> tuple[list[dict], list[
             raise ValueError("holdout 钉住了会话，但 val_ratio=0 或独立分组不足；"
                              "钉住的数据不能进训练集，请提高 val_ratio 或补充独立素材")
         return records, []
-    target = min(opts.val_max, max(1, round(sum(not r.get("reference_only") for r in records) * opts.val_ratio)))
+
+    def group_lang(group):
+        """组的主要语种；reference_only 行（中/英文同人参考）不参与归属。"""
+        counts = Counter(r.get("lang") or "" for r in group if not r.get("reference_only"))
+        return max(sorted(counts), key=counts.get) if counts else ""
+
+    # 配额按语种独立：联合清单里小语种否则只分到两三条验证样本，评测没有统计意义。
+    # n // 5 是 20% 硬上限，别让 val_min 把极小清单吃空。
+    per_lang = Counter(r.get("lang") or "" for r in records if not r.get("reference_only"))
+    quota = {lang: min(opts.val_max,
+                       max(1, min(opts.val_min, n // 5), round(n * opts.val_ratio)))
+             for lang, n in per_lang.items()}
     val = [r for g in pinned for r in g]
     train = []
-    val_targets = sum(not r.get("reference_only") for r in val)
-    remaining = sum(any(not r.get("reference_only") for r in g) for g in rest)
+    filled = Counter()
+    for g in pinned:
+        filled[group_lang(g)] += sum(not r.get("reference_only") for r in g)
+    remaining = Counter(group_lang(g) for g in rest
+                        if any(not r.get("reference_only") for r in g))
     for group in rest:
+        lang = group_lang(group)
         n = sum(not r.get("reference_only") for r in group)
-        if val_targets < target and n and remaining > 1:
+        if n and filled[lang] < quota.get(lang, 0) and remaining[lang] > 1:
             val.extend(group)
-            val_targets += n
+            filled[lang] += n
         else:
             train.extend(group)
-        remaining -= bool(n)
+        if n:
+            remaining[lang] -= 1
     if not train and pinned:
         raise ValueError("holdout 把所有分组都钉进验证集了；请减少钉住的素材或补充新素材")
     return train, val
 
 
 def pair_references(records: list[dict], opts: Options, rng: random.Random) -> list[dict]:
-    """仅在本 split 内按已验证身份配对；有同人中/英文候选时优先跨语言。"""
+    """仅在本 split 内按已验证身份配对；跨语言候选优先中/英，其次其他语种。"""
     by_spk = defaultdict(list)
     targets = [r for r in records if not r.get("reference_only")]
     for r in records:
@@ -690,8 +707,9 @@ def pair_references(records: list[dict], opts: Options, rng: random.Random) -> l
     # ponytail: 每人候选线性扫描；单人万级语料成为瓶颈时再按语言建索引。
     for rec in selected:
         pool = [r for r in by_spk[rec["speaker"]] if r["origin_audio"] != rec["origin_audio"]]
-        cross = [r for r in pool if r.get("lang") in ("zh", "en") and r.get("lang") != rec.get("lang")]
-        ref = rng.choice(cross or pool)
+        other = [r for r in pool if r.get("lang") != rec.get("lang")]
+        replay = [r for r in other if r.get("lang") in ("zh", "en")]
+        ref = rng.choice(replay or other or pool)
         rec.update(ref_audio=ref["audio"], ref_duration=ref["duration"],
                    ref_lang=ref.get("lang", ""), ref_speaker=ref["speaker"],
                    ref_origin_audio=ref["origin_audio"])
@@ -700,15 +718,19 @@ def pair_references(records: list[dict], opts: Options, rng: random.Random) -> l
 
 def dataset_summary(records: list[dict]) -> dict:
     """实际样本曝光统计；声学指标仅作描述，不声称自然度已达标。"""
-    from collections import Counter
     exposures = Counter(r.get("origin_audio", r["audio"]) for r in records)
     ref_exposures = Counter(r.get("ref_origin_audio", r["ref_audio"])
                             for r in records if r.get("ref_audio"))
+    lang_seconds = defaultdict(float)
+    for r in records:
+        lang_seconds[r.get("lang", "unknown")] += r["duration"]
     return {
         "rows": len(records), "seconds": round(sum(r["duration"] for r in records), 4),
         "hours": round(sum(r["duration"] for r in records) / 3600, 4),
         "speakers": len({r["speaker"] for r in records if r.get("speaker_verified") is True}),
         "languages": dict(Counter(r.get("lang", "unknown") for r in records)),
+        # 配比口径是「按有效音频时长」，按条数看不出各语种实际占比
+        "language_hours": {k: round(v / 3600, 4) for k, v in sorted(lang_seconds.items())},
         "emotions": dict(Counter(r.get("emotion") or "unlabeled" for r in records)),
         "with_control": sum(bool(r.get("control")) for r in records),
         "with_ref_audio": sum(bool(r.get("ref_audio")) for r in records),
@@ -961,9 +983,8 @@ def process_dataset(source_id: str, out_name: str | None = None,
 
 
 def mix_manifests(parts: list[tuple[str, float]], out_name: str,
-                  seed: int = 42, max_repeat: float = 3.0) -> dict:
+                  seed: int = 42, max_repeat: float = 3.0, progress=None) -> dict:
     """按有效音频时长采样；每条原始目标音频全局最多 3×，验证集不重复采样。"""
-    from collections import Counter
     if not parts or any(not math.isfinite(w) or w <= 0 for _, w in parts):
         raise ValueError("parts 不能为空，权重须为有限正数")
     if len({n for n, _ in parts}) != len(parts) or out_name in {n for n, _ in parts}:
@@ -978,6 +999,7 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
     out = DATA_PROCESSED / out_name
     summary, mixes, details = {}, {}, {}
     exposures = Counter()
+    requested_share: Counter = Counter()
     for split in ("train", "val"):
         rows_by_part = []
         for name, _w in parts:
@@ -991,6 +1013,17 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
                     raise ValueError("混合需要有效 duration，请先重新加工旧数据集")
                 rec["duration"] = float(rec["duration"])
         seconds = sum(float(r["duration"]) for rows in rows_by_part for r in rows)
+        if split == "train":
+            # 请求占比 = Σ(part 权重 × part 内该语种的时长占比)；口径是时长不是条数
+            for (_name, w), rows in zip(parts, rows_by_part):
+                part = sum(r["duration"] for r in rows)
+                if not part:
+                    continue
+                per_lang = defaultdict(float)
+                for r in rows:
+                    per_lang[r.get("lang", "unknown")] += r["duration"]
+                for lang, secs in per_lang.items():
+                    requested_share[lang] += w / total_w * secs / part
         mixed: list[dict] = []
         val_seen = set()
         for (name, w), rows in zip(parts, rows_by_part):
@@ -1043,10 +1076,25 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
     for key, detail in details.items():
         if key.endswith("/train"):
             detail["actual_duration_share"] = round(detail["seconds"] / actual_seconds, 4)
+    train_summary = dataset_summary(mixes["train"])
+    total_hours = train_summary["hours"]
+    language_shares = {
+        lang: {"requested": round(requested_share.get(lang, 0.0), 4),
+               "actual": round(h / total_hours, 4) if total_hours else 0.0, "hours": h}
+        for lang, h in train_summary["language_hours"].items()}
+    if progress:
+        short = [f"{lang}: 实际 {s['actual']:.1%} < 请求 {s['requested']:.1%}（{s['hours']}h）"
+                 for lang, s in language_shares.items()
+                 if s["requested"] and s["actual"] < 0.9 * s["requested"]]
+        if short:
+            progress("⚠️ 语种时长占比未达请求值：\n  " + "\n  ".join(short) +
+                     "\n缺口不重分配给其他语种（大语种会吃掉小语种），也不靠 3× 重复强凑；"
+                     "要么补该语种数据，要么在结论里写明实际占比")
     (out / "mix.json").write_text(
         json.dumps({"parts": parts, "basis": "duration", "max_repeat": max_repeat,
                     "counts": summary, "datasets": details,
-                    "train": dataset_summary(mixes["train"]),
+                    "language_shares": language_shares,
+                    "train": train_summary,
                     "val": dataset_summary(mixes["val"])},
                    ensure_ascii=False, indent=2), encoding="utf-8")
     return {"output": str(out), **summary}
@@ -1079,7 +1127,8 @@ if __name__ == "__main__":
         if not args.out:
             ap.error("--mix 需要 --out")
         parts = [(part.rsplit("=", 1)[0], float(part.rsplit("=", 1)[1])) for part in args.mix]
-        print(json.dumps(mix_manifests(parts, args.out), ensure_ascii=False, indent=2))
+        print(json.dumps(mix_manifests(parts, args.out, progress=print),
+                         ensure_ascii=False, indent=2))
         raise SystemExit(0)
     o = options_for(args.source, utmos_min=args.utmos_min,
                     whisper_lang=args.whisper_lang,

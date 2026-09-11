@@ -34,6 +34,16 @@ LORA_PRESET = {"learning_rate": 1e-4, "r": 64, "alpha": 64, "dropout": 0.05}
 FULL_PRESET = {"learning_rate": 1e-5}  # 约为 LoRA 的 1/10，防灾难性遗忘
 
 
+def manifest_langs(train_manifest: str) -> dict[str, int]:
+    """清单里各语种的条数；未标 lang 的行归到 unknown（联合微调时它会直接暴露出来）。"""
+    langs: dict[str, int] = {}
+    for line in Path(train_manifest).read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            lang = json.loads(line).get("lang") or "unknown"
+            langs[lang] = langs.get(lang, 0) + 1
+    return langs
+
+
 def steps_for_epochs(train_manifest: str, epochs: float, batch_size: int = 2,
                      grad_accum_steps: int = 8, gpus: int = 1) -> int:
     if not (0 < epochs <= 3) or any(not isinstance(n, int) or n < 1
@@ -110,7 +120,8 @@ def build_yaml(run_name: str, pretrained_path: str, train_manifest: str,
             raise ValueError(f"{key} 必须为正整数")
     if not isinstance(gpus, int) or gpus < 1 or not math.isfinite(cfg["learning_rate"]) or cfg["learning_rate"] <= 0:
         raise ValueError("GPU 数必须为正整数，学习率必须为有限正数")
-    train_samples = sum(bool(line.strip()) for line in Path(train_manifest).read_text(encoding="utf-8").splitlines())
+    langs = manifest_langs(train_manifest)
+    train_samples = sum(langs.values())
     if not train_samples:
         raise ValueError("训练清单为空")
 
@@ -121,13 +132,17 @@ def build_yaml(run_name: str, pretrained_path: str, train_manifest: str,
     path.with_suffix(".plan.json").write_text(json.dumps(
         {"gpus": gpus, "epochs": epochs, "num_iters": cfg["num_iters"],
          "effective_batch": cfg["batch_size"] * cfg["grad_accum_steps"] * gpus,
-         "train_manifest": train_manifest, "train_samples": train_samples},
+         "train_manifest": train_manifest, "train_samples": train_samples,
+         "langs": dict(sorted(langs.items()))},
         ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
-def default_run_name(finetune_type: str) -> str:
-    return f"{finetune_type}_{time.strftime('%m%d_%H%M%S')}"
+def default_run_name(finetune_type: str, train_manifest: str = "") -> str:
+    """带上语种，联合 run 才分得清训了什么；≥3 个语种用 jointN，免得 run 名过长。"""
+    langs = sorted(manifest_langs(train_manifest)) if train_manifest else []
+    tag = f"joint{len(langs)}" if len(langs) > 2 else "-".join(langs)
+    return f"{finetune_type}_{tag + '_' if tag else ''}{time.strftime('%m%d_%H%M%S')}"
 
 
 if __name__ == "__main__":
@@ -140,5 +155,5 @@ if __name__ == "__main__":
     ap.add_argument("--epochs", type=float, default=1.0)
     ap.add_argument("--gpus", type=int, default=1)
     args = ap.parse_args()
-    print(build_yaml(args.run or default_run_name("lora"), args.base, args.train,
+    print(build_yaml(args.run or default_run_name("lora", args.train), args.base, args.train,
                      args.val, epochs=args.epochs, gpus=args.gpus))

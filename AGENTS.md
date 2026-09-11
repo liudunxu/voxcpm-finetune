@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## 项目简介
-VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语高质量语料的下载与加工、跨语言（中文→目标语言）混合微调、LoRA/全量训练管理、wandb 监控、LoRA merge、HuggingFace 同步。Gradio 页面端口 **6006**。
+VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/马来语高质量语料的下载与加工、跨语言（中文→目标语言）混合微调、LoRA/全量训练管理、wandb 监控、LoRA merge、HuggingFace 同步。**目标是五语种（th/tl/vi/id/ms）联合微调：一个 LoRA 同时提升这几种语言的配音质量，但验收必须分语种做**。Gradio 页面端口 **6006**。
 
 ## 环境
 - Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检 + PyAV 视频解码）。
@@ -38,7 +38,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 ## 标准工作流
 1. 数据集 Tab：下载或导入已审核 JSONL → 16k / 裁静音 / 3–30s / 质检 / 声学描述 → 按身份、会话、原音频隔离 train/val → 已验证说话人整体增益 → 可信控制前缀 → split 内 ref 配对
 2. 素材导入 Tab（自备成片）：喂视频/音轨 → 自动切分转写 → 逐条试听淘汰 BGM 重的、标说话人与情绪 → 追加进原始清单 → 可选自动加工；钉一集进 `holdout.json` 当固定验证集
-3. 混合：首轮目标语言 85% + 中文 10% + 英文 5%（实验起点），**按有效音频时长**采样；原始目标音频最多 3×（含嵌套混合），ref 复用另统计，验证集不重复，实际占比/曝光/联合覆盖写进 mix.json
+3. 混合：**联合口径为每个目标语种各 17 分 + 中文 10 + 英文 5**（回放全局共享，不按语种各配一份；实验起点），**按有效音频时长**采样；原始目标音频最多 3×（含嵌套混合），ref 复用另统计，验证集不重复，实际占比/曝光/联合覆盖写进 mix.json，**各语种「请求 vs 实际」占比写进 `language_shares`**——某语种吃不满会经 progress 告警，缺口不重分配给其他语种
 4. 训练 Tab：填表单 → 生成 YAML → 启动；wandb 桥接自动转发指标
 5. 试听 Tab：加载 checkpoint 试听；模型管理 Tab：merge LoRA / 上传 HF
 
@@ -58,7 +58,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - **微调方式首选 LoRA**：全量微调更易损害参考音频克隆泛化（生产核心能力）；r=32 说话人适配 / r=64 语言风格适配（本项目默认 64/64/dropout 0.05），`enable_dit: true` 必开
 - **数据必须保留克隆能力**：30–50% 样本带已验证同说话人 `ref_audio`（默认目标 0.5，其中 ref+control 目标 0.3）；缺少可靠身份不强凑。跨语言同人 ref 以 `reference_only=true` 行导入，与目标共用真实身份；中英文回放不是跨语言同人 ref 的替代品
 - **试听/推理默认参数**：`cfg_value=2.0`、`inference_timesteps=20`（生产基线 10，本项目默认 20 换更高音质）、`retry_badcase=True`（max_times=3、ratio_threshold=6.0）；音频坏例重试时降 CFG 至 1.2–1.6 并加步数
-- 跨语言（中文/英文→Tagalog/泰语/越南语/印尼语）：目标语言为主 + 中英文回放；先分别验证各语种 LoRA（顺序 TH → TL → ID → VI），再考虑联合模型。vi/id 首轮表演档为 0，只验发音与口语韵律，不声称情绪改善
+- 跨语言（中文/英文→Tagalog/泰语/越南语/印尼语/马来语）：**联合模型是目标，分语种验收是前提**（原「先分别训各语种 LoRA，不要一上来做联合模型」已作废）。基座无语种槽位，联合在训练侧就是普通多源混合，不改 submodule 也不改超参。归因靠四条硬规则：① 训练前先用同一份多语种 case 跑 `eval base` 拿分语种基线；② 看报告 `by_lang`，**任一语种相对基座退化即整轮不通过**，不许用「平均变好」掩盖；③ 至少给 TH 留一个分语种 LoRA 作对照，用来区分「联合不如单语」与「该语种数据不够」；④ 某语种退化或盲听判差 → 该语种退回独立 LoRA，其余继续联合。配比：每个目标语种各 17 分 + 中文 10 + 英文 5（全局共享，不按语种各配一份），**等权而非按数据量分配**，缺口不重分配给其他语种。数据准备顺序 TH → TL → ID → VI → MS（是准备顺序不是训练顺序）。vi/id/ms 首轮表演档为 0，只验发音与口语韵律，不声称情绪改善
 
 ## 踩坑与约定（已修复问题的沉淀，勿回退）
 - **Gradio 流式**：按钮必须直接绑定生成器函数；用 `lambda` 包一层会把生成器对象本身渲染进文本框
@@ -71,9 +71,10 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - **推理**：`load_denoiser=False`（去噪器依赖 modelscope，试听不需要）
 - **Whisper 权重**：large-v3 约 3GB，国内直连 huggingface.co 常在 SSL 握手就超时。加载带 3 次重试并打印 endpoint；失败时报错里给了预下载命令。可用 `VOXFT_WHISPER_MODEL` / `VOXFT_WHISPER_MODEL_LARGE` 指向本地目录
 - **万级转写必须能断点续跑**：每 300 条及退出时原子保存完整原清单（包括坏例、尚未处理的行），重跑跳过已转写行。WhisperModel.transcribe 不接受 `batched`；ndarray 输入先转 16k。推理异常必须中止，不可当语料坏例吞掉。`--max-items` 试跑不回写原清单
-- **数据源首选**：泰语 `thai_ser` 仅 impro / 审核后 `yodas_th`；Tagalog 自有真人 `drama_tl`；`filipino_emotion` 仅待审候选。`filswitch` 是新闻朗读，仅低比例补 Taglish 发音。越南语/印尼语表现力只有自建 `drama_vi` / `drama_id`，公开锚点首选 `gigaspeech2_vi/id`（Apache-2.0，但**字段形态未核实，先 `--max-samples 20` 试跑**），`fleurs_*` / `cv22_*` 只当发音补充。中英文回放 `aishell3` / 自备 `replay_en`。不能把朗读数据当去念稿感主力
+- **数据源首选**：泰语 `thai_ser` 仅 impro / 审核后 `yodas_th`；Tagalog 自有真人 `drama_tl`；`filipino_emotion` 仅待审候选。`filswitch` 是新闻朗读，仅低比例补 Taglish 发音。越南语/印尼语表现力只有自建 `drama_vi` / `drama_id`，公开锚点首选 `gigaspeech2_vi/id`（Apache-2.0，但**字段形态未核实，先 `--max-samples 20` 试跑**），`fleurs_*` / `cv22_*` 只当发音补充。马来语表现力同样只有自建 `drama_ms`，自然口语首选 `yodas2_ms`（`sarulab-speech/yodas2_sidon` config `ms000`，CC-BY-3.0，与 `yodas_th` 同上游家族；**gigaspeech2 与 Common Voice 22 都没有 ms**），`fleurs_ms`（config `ms_my`）只当发音补充。中英文回放 `aishell3` / 自备 `replay_en`。不能把朗读数据当去念稿感主力
 - **FilSwitch 下载**：转换 parquet 可以只有元数据，音频在原仓库的独立 FLAC 文件。`bytes=None` 不等于无音频；共享 `_load_audio` 支持内嵌 bytes、HF URL/路径和已解码数组，外链通过 hf_hub_download 保留原 revision、镜像、认证和缓存。不要把音频地址套到 `refs/convert/parquet` 分支；读取失败必须记录原因，不能静默跳过整包
-- **code-switch 语种不能只认目标语种**：Tagalog 短剧台词是 Taglish、印尼语日常口语混英文，句内英文词多的样本 Whisper 会判成 en，只认目标语种会把最该保留的 code-switch 样本全部误杀。`Source.languages()` 查 `CODE_SWITCH_ACCEPT`，对 tl / id 默认放行 `en`；**vi 默认从严**（混英以词内借词为主），实测 `drop_lang` 误杀再给该源加 `accept_langs=("vi","en")`，别提前放开。有权威文本的朗读源（`fleurs_id` / `cv22_id`）用 `accept_langs` **覆盖掉**默认放行——语种不符意味着错行，不是 code-switch
+- **code-switch 语种不能只认目标语种**：Tagalog 短剧台词是 Taglish、印尼语日常口语混英文、马来语是 Manglish，句内英文词多的样本 Whisper 会判成 en，只认目标语种会把最该保留的 code-switch 样本全部误杀。`Source.languages()` 查 `CODE_SWITCH_ACCEPT`，对 tl / id / **ms** 默认放行 `en`；**vi 默认从严**（混英以词内借词为主），实测 `drop_lang` 误杀再给该源加 `accept_langs=("vi","en")`，别提前放开。有权威文本的朗读源（`fleurs_id` / `cv22_id` / `fleurs_ms`）用 `accept_langs` **覆盖掉**默认放行——语种不符意味着错行，不是 code-switch
+- **ms 与 id 高度互通，语种过滤挡不住两者互串**：马来语与印尼语是同一语言的两种标准化变体，Whisper 的语种检测和 YODAS 上游标签都会把印尼语内容判成 ms（反之亦然），所以 `drop_lang` 对 id/ms 互串**完全无效**。`yodas2_ms` 试跑时必须抽样听，确认拿到的是马来西亚口音；**ms 的盲听必须由马来西亚母语者做，不能拿印尼语听感代替**。收益是 id 语料对 ms 有正迁移，这是把两者放进同一个联合 LoRA 的主要理由；风险是口音与词汇差异被抹平
 - **`yodas_th` 会话**：`utt_id.rsplit("-", 3)[0]` 保留可能含 `-` 的完整视频 ID。speaker_id 为视频级近似身份，不作 ref 依据；上游逐条峰值归一，不据此标音量。无原始连续时间关系就不拼接
 - **数据身份**：MFCC 聚类仅供审计，不能证明同人，更不能调低阈值强凑 ref。身份未知默认不配 ref。同一演员跨源使用统一 speaker_namespace/ID；先隔离 train/val，再在集合内配 ref，混合与训练前再次检查泄漏
 - **`filipino_speech`**：过滤 `machine` 与 `num_words<4`，只保留完整句；不再拼接孤立词或随机抖动停顿来伪造对白。行过滤缺列或无效数值时不放行
@@ -95,6 +96,8 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - **低资源语种的调研结论必须核实到页面/API 原文**：本轮就出现过一篇编造的竞品论文（"JaiTTS arXiv 2604.27607，1万小时泰语，CER 1.94%"——arXiv API 查该 ID 与全文搜索均返回 0 条），以及把无许可的 `yapdo-convo` 说成 CC-BY-4.0。一条编造的"有现成大规模语料"足以让人跳过真正该做的自建工作
 - **泰语转写可换 `typhoon-ai/typhoon-whisper-large-v3`**（SCB-10X，MIT，arXiv 2601.13044，约 11000h 泰语微调，自带泰语数字/重复标记归一化，Gigaspeech2/TVSpeech/FLEURS 泰语 SOTA）。**但不是即插即用**：`library_name: transformers`，不是 faster-whisper 的 CTranslate2 格式，要么 `ct2-transformers-converter` 转格式要么单开转写路径；模型卡在 MIT 之外另有一层 OpenTyphoon T&C 需商用前阅读；且**只有泰语**，对 TL 无帮助。优先级低于把数据搞到手
 - **越南语/印尼语接入结论**（详见 `docs/vi_id_support.md`，每条都带 submodule 内的 `文件:行号`）：基座官方 30 语种**已含 vi/id** 且有实测分数（内部 30 语种基准 id WER 1.36% / vi 1.56%，**优于 tl 的 2.63%**），代码里无语言列表/language token/lang_id，tokenizer `byte_fallback=True` 对 vi/id 实测 **0 UNK** → **submodule 零改动**，别试图加语种信号，基座没有对应槽位。两者都**没有已核实的真人表演/情感语料**，处境同 Tagalog，首轮表演档为 **0%** 且验收只能声称发音/口语韵律/克隆不退化，**不能声称情绪表现力改善**。基座文本归一化是 zh/en 二分（`text_normalize.py:172`，非中文一律走英语规则），所以推理侧必须保持 `normalize=False`，**台词里的数字/货币念法是数据侧责任**，评测 case 保留阿拉伯数字时 CER/WER 会失真、只作盲听。vi 是 6 声调语言：`f0_std_st` 同样不代表自然度，**以 `ngã`/`nặng` 调收尾的句子句尾嘎裂声能量低、有被 RMS 裁掉的风险（未实测，验收重点听）**，`rate` 是音节/秒，**WER 是音节级**不与词级横向比。控制前缀守卫拦得住越南语专属字符，**拦不住印尼语**（纯 ASCII 与英文无法区分），只能靠标注纪律。许可上 vi/id 本轮全是 Apache-2.0 / CC-BY / CC0，**无 SA 红线，权重可对外分发**（后续核实进 SA/NC/ND 源则红线恢复）
+- **马来语接入结论**（详见 `docs/ms_support.md`，每条都带 submodule 内的 `文件:行号`）：基座官方 30 语种**已含 ms**（`README.md:57`），内部基准 **ms WER 1.75%**（`README.md:546`）——**是五个目标语种里唯一输给竞品的**（同表 Fish S2-Pro 1.41%；id/vi/tl 都是基座赢），所以 ms 提升空间最大、最值得投入。但 **MLS 那两张 24 语种 WER/SIM 表都没有 ms**（`README.md:455-516`），克隆能力基线**没有官方数字可引用**，只能自己 A/B 实测。ms 是纯 ASCII 拉丁正字法，tokenizer 实测 **0.394 tok/char、0 UNK、0% byte-fallback**（id 0.373、vi 0.850、th 2.205），是五语种里文本侧最轻的 → **submodule 零改动**。ms 词间有空格，**`WER_LANGS` 含 ms**（与 id/tl/en 同量纲可横比），不像 th 只有 CER、vi 是音节级。**命名陷阱：FLEURS 的马来语 config 是 `ms_my`，结尾 `my` 是国家码马来西亚，不是缅甸语**（Burmese 的 ISO 码才是 `my`，基座也支持但我本轮一度认错）。已核实排除：`mesolitica/Malaysian-TTS` 是 **F5-TTS 合成**（数据卡原文「Malaysian Synthetic TTS dataset」，同 LAION Dramabox 的坑，禁用）；`espnet/floras` 是 **3TB 长音频基准**不可切分；`fsicoli/common_voice_22_0` 与 `speechcolab/gigaspeech2` 都**没有 ms**（别再照 th/vi/id 的模式去找 `cv22_ms`/`gigaspeech2_ms`）；`disco-eth/WorldSpeech` 与 `MERaLiON/sea_audiobench_*` 是 **NC/NC-ND**。`mesolitica`（Malaysia-AI）其余大批语料规模很大但**全线无许可声明**，拿到书面授权前一律不得使用（无声明 ≠ 开放，默认全权保留）。许可上本轮 ms 源是 CC-BY-3.0 + CC-BY-4.0 + 自有授权，**无 SA 红线**，但 CC-BY-3.0 要求署名
+- **联合微调的四个可观测点**（缺一个就无法归因，别删）：① `dataset_summary` 的 `language_hours`——配比口径是**按有效音频时长**，按条数的 `languages` Counter 看不出占比；② `mix.json` 的 `language_shares`（各语种 `requested`/`actual`/`hours`），某语种实际低于请求值 90% 时经 `progress` 回调告警，**缺口不自动重分配**给其他语种（那正是大语种吃掉小语种的机制），也不靠 3× 重复强凑；③ `split_records` 的 **val 按语种配额**（`Options.val_min=16`，`n//5` 是 20% 硬上限），全局 `val_ratio` 会让小语种只摊到几条验证样本、评测无统计意义；④ eval 报告的 **`by_lang`** 分语种 CER/WER/漏尾，联合 run 必须逐语种与 `eval base` 的同一份 case 对比。另：`pair_references` 的跨语言 ref 池是**三级优先**（中/英回放 → 其他目标语种 → 同语种），联合数据才有的信号；`.plan.json` 记 `langs`，run 名默认带语种标记（≥3 语种用 `jointN`）；`_source_lang` 对未登记源返回 **`unknown` 而不是猜 `zh`**
 - **网络受限时不得凭记忆写语料结论**：vi/id 接入那轮 HF API 全部被限流，处置是**只注册可由本仓库既有事实复现的源**（th/tl 已在用的仓库与 config 命名模式、`corpus_sourcing.md` 已核实过的 gigaspeech2 覆盖 th/id/vi），把 VIVOS / MagicHub / Nexdata / YODAS2-vi-id 等候选全部写进 `docs/vi_id_support.md §3` 的待核实清单并附远程核实命令，规模与许可一律标「未核实」不写数字。宁可留空也不要填一个看起来像结论的编造值
 
 ## Submodule 升级
