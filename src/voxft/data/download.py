@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import socket
 import tarfile
 import time
 import urllib.request
@@ -15,6 +16,11 @@ from ..paths import DATA_RAW, env, load_dotenv
 from .registry import SOURCES, Source, get_source, row_passes
 
 _CJK = re.compile(r"[\u4e00-\u9fff]")
+
+# 流式读经 fsspec/httpx，连接卡死时没有任何超时：实测 fleurs 流式取首行永久挂起，
+# 进程零字节读入、无输出、无网络连接。setdefaulttimeout 是单次 recv 级别的，慢速但
+# 仍在传输的下载不受影响，只有真卡死才抛。
+_STREAM_SOCKET_TIMEOUT = 120
 
 _TEXT_COLS = ("sentence", "text", "transcript", "transcription", "raw_transcription")
 _SPK_COLS = ("client_id", "speaker_id", "speaker", "speaker_name")
@@ -375,28 +381,37 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
     audio_dir.mkdir(parents=True, exist_ok=True)
     manifest = dest / "manifest.jsonl"
     n = 0
-    with manifest.open("w", encoding="utf-8") as f:
-        for row in ds:
-            if max_samples is not None and n >= max_samples:
-                break
-            a_col, t_col, s_col = _detect_cols(row, source)
-            if a_col is None or (t_col is None and not source.needs_transcribe):
-                continue
-            if not row_passes(source, row.get):
-                continue
-            text = _clean_text(row[t_col]) if t_col else ""
-            if t_col and not text and not source.needs_transcribe:
-                continue
-            array, sr = _load_audio(row[a_col], source, token)
-            _write_record(f, audio_dir, n, array, sr, text,
-                          str(row[s_col]) if s_col else None,
-                          _emotion(source, row.get(source.emotion_col))
-                          if source.emotion_col else "",
-                          source.session_of(row.get(source.session_col))
-                          if source.session_col else "", _metadata(source, row.get))
-            n += 1
-            if progress and n % 100 == 0:
-                progress(f"{source.id}: 已下载 {n} 条")
+    prev_timeout = socket.setdefaulttimeout(_STREAM_SOCKET_TIMEOUT)
+    try:
+        with manifest.open("w", encoding="utf-8") as f:
+            for row in ds:
+                if max_samples is not None and n >= max_samples:
+                    break
+                a_col, t_col, s_col = _detect_cols(row, source)
+                if a_col is None or (t_col is None and not source.needs_transcribe):
+                    continue
+                if not row_passes(source, row.get):
+                    continue
+                text = _clean_text(row[t_col]) if t_col else ""
+                if t_col and not text and not source.needs_transcribe:
+                    continue
+                array, sr = _load_audio(row[a_col], source, token)
+                _write_record(f, audio_dir, n, array, sr, text,
+                              str(row[s_col]) if s_col else None,
+                              _emotion(source, row.get(source.emotion_col))
+                              if source.emotion_col else "",
+                              source.session_of(row.get(source.session_col))
+                              if source.session_col else "", _metadata(source, row.get))
+                n += 1
+                if progress and n % 100 == 0:
+                    progress(f"{source.id}: 已下载 {n} 条")
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"{source.id}: 流式下载卡死（{_STREAM_SOCKET_TIMEOUT}s 未收到数据，已写入 {n} 条）。"
+            "多为代理/镜像到该 repo 直链不通；parquet 路径可用时优先走它，"
+            "或换 HF_ENDPOINT 后重试") from exc
+    finally:
+        socket.setdefaulttimeout(prev_timeout)
     return n
 
 

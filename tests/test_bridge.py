@@ -40,3 +40,14 @@ def test_bridge_incremental(tmp_path, stub_wandb):
     w.add_scalar("loss/diff", 0.1, 5)
     w.close()
     assert sync_once(tmp_path, "test_run", state) == 1
+
+
+def test_start_bridge_reports_via_progress_not_print(monkeypatch, capsys):
+    """库函数不许 print：UI 的 stdout 可能是断开的 pty，Errno 5 会把已成功的启动报成失败。"""
+    from voxft.train import tb_wandb_bridge
+
+    monkeypatch.setenv("WANDB_API_KEY", "")
+    seen = []
+    assert tb_wandb_bridge.start_bridge("/nonexistent", "run", progress=seen.append) is None
+    assert seen and "WANDB_API_KEY" in seen[0]
+    assert capsys.readouterr().out == ""

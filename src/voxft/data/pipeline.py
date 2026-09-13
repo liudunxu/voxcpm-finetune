@@ -211,8 +211,13 @@ def audio_metrics(wav: np.ndarray, sr: int, text: str) -> dict:
         if voiced.any() else 0.0
     f0_std = 0.0
     try:
+        # 一帧要装得下两个 fmin 周期，否则 yin 检不准（48k 推理音频会告警并给出失真值）。
+        # 16k 下算出来仍是 1024/256，与既有产物一致。
+        frame = 1024
+        while frame < 2 * sr / 60:
+            frame *= 2
         f0 = librosa.yin(wav, fmin=60, fmax=400, sr=sr,
-                         frame_length=1024, hop_length=256)
+                         frame_length=frame, hop_length=frame // 4)
         f0 = f0[np.isfinite(f0) & (f0 > 60) & (f0 < 400)]
         if f0.size > 5:
             st = 12.0 * np.log2(f0 / float(np.median(f0)))
@@ -887,7 +892,7 @@ def process_dataset(source_id: str, out_name: str | None = None,
     samples = _decoded_clips(rows, stats, opts.edge_trim_ratio, opts.edge_vad)
     for i, clip in enumerate(samples):
         if progress and i % 50 == 0:
-            progress(f"加工 {source_id}: 已产出 {i} 条样本")
+            progress(f"加工 {source_id}: 已扫描 {i} 条，保留 {len(kept)} 条")
         dur = len(clip.wav) / TARGET_SR
         lo, hi = (opts.ref_min_dur, opts.ref_max_dur) if clip.metadata.get("reference_only") else (opts.min_dur, opts.max_dur)
         if not (lo <= dur <= hi):
@@ -1118,7 +1123,6 @@ if __name__ == "__main__":
     ap.add_argument("--asr-max-no-speech", type=float, default=None,
                     help="转写即文本的源：时长加权 no_speech_prob 高于此值判为非人声并丢弃"
                          "（默认 0.6）")
-    ap.add_argument("--min-snr-db", type=float, default=None)
     ap.add_argument("--ref-audio-ratio", type=float, default=None)
     ap.add_argument("--ref-control-ratio", type=float, default=None)
     ap.add_argument("--val-ratio", type=float, default=None)
@@ -1135,7 +1139,7 @@ if __name__ == "__main__":
                     control_ratio=args.control_ratio,
                     asr_min_logprob=args.asr_min_logprob,
                     asr_max_no_speech=args.asr_max_no_speech,
-                    min_snr_db=args.min_snr_db, ref_audio_ratio=args.ref_audio_ratio,
+                    ref_audio_ratio=args.ref_audio_ratio,
                     ref_control_ratio=args.ref_control_ratio, val_ratio=args.val_ratio)
     print(json.dumps(process_dataset(args.source, args.out, o, args.max_items,
                                      progress=print, manifest_path=args.manifest),

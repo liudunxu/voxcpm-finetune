@@ -155,5 +155,8 @@ if __name__ == "__main__":
     ap.add_argument("--epochs", type=float, default=1.0)
     ap.add_argument("--gpus", type=int, default=1)
     args = ap.parse_args()
-    print(build_yaml(args.run or default_run_name("lora", args.train), args.base, args.train,
+    from .launcher import resolve_base_path
+    base = resolve_base_path(args.base or env("VOXCPM_BASE_PATH") or "openbmb/VoxCPM2",
+                             progress=print)
+    print(build_yaml(args.run or default_run_name("lora", args.train), base, args.train,
                      args.val, epochs=args.epochs, gpus=args.gpus))

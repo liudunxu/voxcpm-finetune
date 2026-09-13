@@ -300,6 +300,21 @@ def test_metrics_flag_flat_vs_varied():
         audio_metrics(flat, sr, "abc")["f0_std_st"]
 
 
+def test_metrics_f0_frame_scales_with_sample_rate():
+    """eval 传进来的是 48k 合成音频，帧长必须随 sr 放大，否则 yin 检不准还会告警。"""
+    import warnings
+
+    sr = 48000
+    t = np.arange(int(2.0 * sr)) / sr
+    varied = (0.3 * np.sin(2 * np.pi * (200 + 60 * np.sin(2 * np.pi * 1.5 * t))
+                           * t)).astype(np.float32)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        std = audio_metrics(varied, sr, "abc")["f0_std_st"]
+    assert not any("less than two periods" in str(w.message) for w in caught)
+    assert std > audio_metrics(_tone(200, 2.0, sr), sr, "abc")["f0_std_st"]
+
+
 def test_mix_caps_repetition():
     """小语料被 tile 十几倍会直接训过拟合，重复必须封顶。"""
     _make_source(None, "t_big", n_spk=2, per_spk=20)

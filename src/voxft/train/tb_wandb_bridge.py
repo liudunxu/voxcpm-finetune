@@ -74,10 +74,12 @@ def sync_once(tb_dir: str | Path, run_name: str, state: dict) -> int:
 
 
 def start_bridge(tb_dir: str | Path, run_name: str, interval: float = 30.0,
-                 stop_event: threading.Event | None = None) -> threading.Thread | None:
+                 stop_event: threading.Event | None = None, progress=None
+                 ) -> threading.Thread | None:
     """后台线程周期同步，直到 stop_event 被置位或 tb_dir 消失。"""
     if not env("WANDB_API_KEY"):
-        print("[wandb] 未配置 WANDB_API_KEY，跳过监控桥接")
+        if progress:
+            progress("[wandb] 未配置 WANDB_API_KEY，跳过监控桥接")
         return None
     stop_event = stop_event or threading.Event()
 
@@ -88,7 +90,8 @@ def start_bridge(tb_dir: str | Path, run_name: str, interval: float = 30.0,
                 try:
                     sync_once(tb_dir, run_name, state)
                 except Exception as exc:
-                    print(f"[wandb] 桥接异常: {exc}")
+                    if progress:
+                        progress(f"[wandb] 桥接异常: {exc}")
             stop_event.wait(interval)
 
     t = threading.Thread(target=loop, daemon=True)

@@ -161,3 +161,23 @@ def test_path_only_parquet_writes_audio_and_logs_bad_rows(tmp_path, monkeypatch)
     with pytest.raises(OSError, match="audio download unavailable"):
         dl._download_parquet(source, [("bad.parquet", "main")],
                              tmp_path / "network_failure", None, "", log.append)
+
+
+def test_stream_stall_raises_instead_of_hanging(tmp_path, monkeypatch):
+    """流式回退卡死要变成可诊断异常，且退出后恢复 socket 超时（UI 进程有长连接）。"""
+    import socket
+
+    from voxft.data import download as dl
+    from voxft.data.registry import get_source
+
+    class Stalled:
+        def __iter__(self):
+            # 迭代期间超时必须已生效，否则卡死仍然无声无息
+            assert socket.getdefaulttimeout() == dl._STREAM_SOCKET_TIMEOUT
+            raise TimeoutError("recv timed out")
+
+    monkeypatch.setattr("datasets.load_dataset", lambda *a, **k: Stalled())
+    before = socket.getdefaulttimeout()
+    with pytest.raises(RuntimeError, match="流式下载卡死"):
+        dl._download_stream(get_source("filswitch"), tmp_path / "out", 5)
+    assert socket.getdefaulttimeout() == before

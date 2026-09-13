@@ -83,9 +83,9 @@ if __name__ == "__main__":
     ap.add_argument("--lora-dir", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--base", default=None,
-                    help="基座目录；默认取 VOXCPM_BASE_PATH（本地目录时）")
+                    help="基座目录或 HF 仓库 ID；默认取 VOXCPM_BASE_PATH，否则 openbmb/VoxCPM2")
     args = ap.parse_args()
-    base = args.base or env("VOXCPM_BASE_PATH")
-    if not base or not Path(base).is_dir():
-        raise SystemExit("需要本地基座目录：先下载 openbmb/VoxCPM2 或设置 VOXCPM_BASE_PATH")
+    from ..train.launcher import resolve_base_path
+    base = resolve_base_path(args.base or env("VOXCPM_BASE_PATH") or "openbmb/VoxCPM2",
+                             progress=print)
     merge_lora(base, args.lora_dir, args.out, progress=print)

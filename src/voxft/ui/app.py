@@ -400,7 +400,7 @@ def do_start(config_path, gpus):
             if any(not i.startswith("警告") for i in issues):
                 yield f"**预检未通过，未启动：**\n{note}", ""
                 return
-        log = launcher.start_local(config_path, int(gpus))
+        log = launcher.start_local(config_path, int(gpus), progress=tlog)
         msg = f"已启动，日志实时刷新（进程退出后自动停止）: {log}"
         tlog(f"训练已启动: {config_path}（gpus={gpus}），日志 {log}")
         # 训练进程加载模型/数据需要时间，日志会稍后才出现

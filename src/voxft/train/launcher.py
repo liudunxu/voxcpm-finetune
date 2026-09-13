@@ -224,7 +224,7 @@ def preflight(config_path: str | Path, gpus: int | None = None) -> list[str]:
 _PROC: subprocess.Popen | None = None
 
 
-def start_local(config_path: str | Path, gpus: int = 1) -> Path:
+def start_local(config_path: str | Path, gpus: int = 1, progress=None) -> Path:
     """在本机（需有 GPU）以后台子进程启动训练，日志写入 run 目录下 train.log。"""
     global _PROC
     if _PROC is not None and _PROC.poll() is None:
@@ -246,7 +246,7 @@ def start_local(config_path: str | Path, gpus: int = 1) -> Path:
         env={**os.environ, "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},
     )
     from .tb_wandb_bridge import start_bridge
-    start_bridge(cfg.get("tensorboard", ""), Path(config_path).stem)
+    start_bridge(cfg.get("tensorboard", ""), Path(config_path).stem, progress=progress)
     return log_path
 
 
