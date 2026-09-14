@@ -425,7 +425,7 @@ def test_sources_are_sorted_by_quality():
         assert [s.quality for s in sources] == sorted(
             (s.quality for s in sources), reverse=True)
     assert [s.id for s in grouped["th"]] == [
-        "drama_th", "thai_ser", "yodas_th", "porjai_th", "fleurs_th",
+        "drama_th", "thai_ser", "yodas_th", "gigaspeech2_th", "porjai_th", "fleurs_th",
         "thai20k", "cv22_th"]
     assert [s.id for s in grouped["tl"]] == [
         "drama_tl", "fleurs_tl", "filipino_speech", "filswitch",
@@ -695,3 +695,15 @@ def test_process_keeps_rejected_and_unprocessed_raw_rows(monkeypatch):
     assert saved[1]["text"] == "" and "transcribe_error" in saved[1]
     assert saved[2]["text"] == saved[3]["text"] == ""
     assert [r["audio"] for r in saved] == [r["audio"] for r in rows]
+
+
+def test_rate_counts_characters_for_scripts_without_word_spaces():
+    """泰文没有词间空格；按"有没有空格"判单位时，一个偶发空格会把整句算成 2 词，
+    实测 rate 掉到 0.32/秒（真实约 6 字/秒）。"""
+    from voxft.data.pipeline import audio_metrics
+    sr = 16000
+    wav = np.zeros(sr * 6, dtype=np.float32)  # 6 秒
+    thai = "เวอร์จินกรุ๊ปของเซอร์ริชาร์ด แบรนสันได้เสนอราคาสำหรับธนาคาร"
+    assert audio_metrics(wav, sr, thai)["rate"] > 5.0
+    # 拉丁正字法仍按词算，别被上面的改动带跑
+    assert audio_metrics(wav, sr, "one two three four five six")["rate"] == 1.0

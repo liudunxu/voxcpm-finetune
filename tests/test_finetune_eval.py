@@ -147,3 +147,93 @@ def test_eval_computes_cer_and_wer_for_vi_id_and_ms(tmp_path, monkeypatch):
         assert report["asr_auto_detect_langs"] == ["tl"]
         assert report["by_lang"][lang]["cases"] == 1
         assert report["by_lang"][lang]["mean_wer"] == 0
+
+
+def test_gpu_command_uses_absolute_interpreter():
+    """命令常被复制到远程非交互 SSH 里 nohup 执行，那里没有激活的 venv；
+    裸 python/torchrun 会静默失败成一行 command not found。"""
+    import sys
+    from pathlib import Path
+    from voxft.train.launcher import gpu_command
+    cmd = gpu_command("configs/x.yaml", 1)
+    assert sys.executable in cmd
+    assert " python " not in cmd.replace(sys.executable, "")
+    multi = gpu_command("configs/x.yaml", 2)
+    assert str(Path(sys.executable).with_name("torchrun")) in multi
+
+
+def _fake_report(path, label, nats):
+    import json
+    items = [{"case_id": c, "seed": s, "lang": l, "text": f"text {c}", "wav": f"/w/{c}_{s}.wav",
+              "human_review": {"naturalness_1_5": None, "cutoff": None, "notes": ""}}
+             for c, s, l in nats]
+    path.write_text(json.dumps({"target": label, "label": label, "items": items},
+                               ensure_ascii=False), encoding="utf-8")
+
+
+def test_blind_review_pairs_writes_back_to_the_right_report(tmp_path, monkeypatch):
+    """盲听的全部价值在于回写时能正确反解甲/乙 → A/B；映射错了汇总就是反的。"""
+    from voxft import eval as ev
+    monkeypatch.setattr(ev, "EVAL_DIR", tmp_path)
+    cases = [("c1", 42, "vi"), ("c2", 42, "th")]
+    _fake_report(tmp_path / "a.json", "base", cases)
+    _fake_report(tmp_path / "b.json", "lora", cases)
+
+    session = ev.review_session("a.json", "b.json", seed=7)
+    assert len(session) == 2
+    for p in session:
+        assert {p["who_1"], p["who_2"]} == {"a", "b"}          # 甲乙必来自不同报告
+        assert p["wav_1"].endswith(".wav") and p["wav_2"].endswith(".wav")
+    # 甲乙顺序必须真的随机，否则评分者能靠位置猜出哪个是 checkpoint
+    orders = {(p["case_id"], p["who_1"]) for s in (0, 1, 2, 3, 4)
+              for p in ev.review_session("a.json", "b.json", seed=s)}
+    assert len({w for _, w in orders}) == 2
+
+    # 按 who_1/who_2 反解打分：给「甲」打 5 分、「乙」打 2 分
+    ratings = {ev.review_key(p): {"s1": {"naturalness_1_5": 5, "cutoff": True},
+                                  "s2": {"naturalness_1_5": 2, "notes": "数字念错"}}
+               for p in session}
+    out = ev.save_reviews("a.json", "b.json", session, ratings)
+    assert out["rated"] == 2
+
+    import json
+    docs = {n: json.loads((tmp_path / f"{n}.json").read_text(encoding="utf-8"))
+            for n in ("a", "b")}
+    for p in session:
+        for slot in ("1", "2"):
+            who = p[f"who_{slot}"]
+            it = next(i for i in docs[who]["items"]
+                      if i["case_id"] == p["case_id"] and i["seed"] == p["seed"])
+            want = 5 if slot == "1" else 2
+            assert it["human_review"]["naturalness_1_5"] == want, (who, slot)
+            assert it["human_review"]["paired_report"] == ("b.json" if who == "a" else "a.json")
+
+    # 甲=5 乙=2 且甲乙各来自一份报告，所以每个语种的 A/B 均值必然一个是 5 一个是 2
+    assert set(out["by_lang"]) == {"vi", "th"}
+    for v in out["by_lang"].values():
+        assert {v["mean_naturalness_a"], v["mean_naturalness_b"]} == {2.0, 5.0}
+    assert sum(v["win"] + v["tie"] + v["loss"] for v in out["by_lang"].values()) == 2
+
+
+def test_review_session_rejects_mismatched_reports(tmp_path, monkeypatch):
+    from voxft import eval as ev
+    monkeypatch.setattr(ev, "EVAL_DIR", tmp_path)
+    _fake_report(tmp_path / "a.json", "base", [("c1", 42, "vi")])
+    _fake_report(tmp_path / "b.json", "lora", [("cX", 99, "vi")])
+    import pytest
+    with pytest.raises(ValueError, match="配不出任何"):
+        ev.review_session("a.json", "b.json")
+
+
+def test_regressed_splits_red_line_from_noise():
+    """每语种只有十几条样本，一个字符就能让均值动 0.002-0.003；
+    阈值太紧会让红线每轮都触发，等于没有红线。"""
+    from voxft.train.runlog import _regressed
+    base = {"by_lang": {"vi": {"mean_cer": 0.07}, "ms": {"mean_cer": 0.085},
+                        "th": {"mean_cer": 0.03}, "tl": {"mean_cer": 0.12}}}
+    ck = {"label": "ckpt", "by_lang": {"vi": {"mean_cer": 0.53}, "ms": {"mean_cer": 0.0854},
+                                       "th": {"mean_cer": 0.02}, "tl": {"mean_cer": 0.12}}}
+    out = _regressed([base, ck])["ckpt"]
+    assert out["red"] == ["vi 0.0700→0.5300"]
+    assert out["noise"] == ["ms 0.0850→0.0854"]   # th 改善、tl 持平，都不该出现
+    assert _regressed([base]) == {}

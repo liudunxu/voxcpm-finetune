@@ -54,6 +54,17 @@ tags: [voxcpm, tts, fine-tune, lora]
 由 voxft 工作台训练/合并产出。加载方式见仓库内说明（LoRA 目录含
 lora_weights.safetensors + lora_config.json；merged 目录为完整模型）。
 
+> **上传前必须核对训练数据许可**（公开仓库不可逆）：
+> - 含 **CC-BY-SA** 源（`thai_ser` / `porjai_th`）训练的权重**一律禁止对外分发**，
+>   只能走 API 交付合成音频——见 AGENTS.md「泰语源有 CC-BY-SA 红线」。
+> - 含 **CC-BY** 源（FLEURS = CC-BY-4.0、YODAS2 = CC-BY-3.0）必须在下方补署名。
+> - `license: apache-2.0` 只描述基座权重（VoxCPM2 本身是 Apache-2.0），
+>   不代表训练数据许可；NC/ND 源同样禁止分发（微调即演绎）。
+
+## 训练数据来源与署名
+
+（上传前填写：源 id、许可、规模；CC-BY 需给出上游数据集名与链接）
+
 ## 训练配置
 
 ```yaml

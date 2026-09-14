@@ -1,0 +1,28 @@
+{"case_id": "th_prod_1", "lang": "th", "text": "ฉันไม่คิดว่าเธอจะกลับมาอีก.", "ref_audio": "prod_ref_fil.wav", "seed": 101, "note": "OmniVoice 生产真实 case（results/voxcpm_quality_cases.json case0/case1 之一）"}
+{"case_id": "th_prod_2", "lang": "th", "text": "อย่าเพิ่งไปไหน อยู่คุยกับฉันก่อนได้ไหม.", "ref_audio": "prod_ref_fil.wav", "seed": 102, "note": "短剧对白 cue，句末句号"}
+{"case_id": "th_digit", "lang": "th", "text": "เที่ยวบิน 926 จะออกในอีก 10 นาที.", "ref_audio": "prod_ref_fil.wav", "seed": 103, "note": "线上 th 走 generic TN（原样透传），阿拉伯数字直接进模型；CER 会失真，主要听数字念法"}
+{"case_id": "tl_prod_1", "lang": "tl", "text": "Hindi ko inaasahan na babalik ka pa.", "ref_audio": "prod_ref_fil.wav", "seed": 201, "note": "OmniVoice 生产真实 case，输出实测 2.395s"}
+{"case_id": "tl_taglish", "lang": "tl", "text": "Sorry, late ako dahil sa traffic sa EDSA.", "ref_audio": "prod_ref_fil.wav", "seed": 202, "note": "Taglish 句内英文词，线上已知痛点（英文词念错）"}
+{"case_id": "tl_clitic", "lang": "tl", "text": "Hindi ko alam kung bakit ako pumunta rito.", "ref_audio": "prod_ref_fil.wav", "seed": 203, "note": "线上 fil TN 会把 ’di→hindi 展开后再送模型，所以这里用展开形态"}
+{"case_id": "vi_prod_1", "lang": "vi", "text": "Tôi không ngờ anh lại quay về.", "ref_audio": "prod_ref_fil.wav", "seed": 301, "note": "短剧对白 cue"}
+{"case_id": "vi_tone_tail", "lang": "vi", "text": "Cô ấy đã đến muộn.", "ref_audio": "prod_ref_fil.wav", "seed": 302, "note": "句尾 nặng 调（muộn）嘎裂声能量低，是 RMS/VAD 裁尾与生成截断的高风险形态"}
+{"case_id": "vi_digit", "lang": "vi", "text": "Chuyến bay 926 sẽ khởi hành sau 10 phút nữa.", "ref_audio": "prod_ref_fil.wav", "seed": 303, "note": "线上 vi 走 generic TN，数字原样透传"}
+{"case_id": "id_prod_1", "lang": "id", "text": "Aku tidak menyangka kamu akan kembali.", "ref_audio": "prod_ref_fil.wav", "seed": 401, "note": "短剧对白 cue"}
+{"case_id": "id_loan", "lang": "id", "text": "Aku sudah booking tiket untuk besok pagi.", "ref_audio": "prod_ref_fil.wav", "seed": 402, "note": "印尼语日常口语混英文借词（booking），Whisper 常判成 en"}
+{"case_id": "id_digit", "lang": "id", "text": "Rapatnya dipindah ke jam 3 sore.", "ref_audio": "prod_ref_fil.wav", "seed": 403, "note": "数字原样透传"}
+{"case_id": "ms_prod_1", "lang": "ms", "text": "Saya tak sangka awak akan kembali.", "ref_audio": "prod_ref_fil.wav", "seed": 501, "note": "awak 是马来语特征词（印尼语用 kamu），用于区分 ms/id"}
+{"case_id": "ms_manglish", "lang": "ms", "text": "Saya dah booking tiket untuk esok pagi.", "ref_audio": "prod_ref_fil.wav", "seed": 502, "note": "Manglish：dah（sudah 口语）+ 英文借词"}
+{"case_id": "ms_marker", "lang": "ms", "text": "Masalah ialah kita tiada masa lagi.", "ref_audio": "prod_ref_fil.wav", "seed": 503, "note": "ialah 是马来语正字法特征词（印尼语是 adalah）"}
+{"case_id": "zh_antiforget", "lang": "zh", "text": "你还好吗？我刚才一直在担心你。", "ref_audio": "prod_ref_fil.wav", "seed": 601, "note": "中文防遗忘回放是否生效"}
+{"case_id": "en_antiforget", "lang": "en", "text": "Are you okay? I was worried about you.", "ref_audio": "prod_ref_fil.wav", "seed": 602, "note": "英文回放是否生效；也是 Taglish/Manglish 英文词的能力基线"}
+{"case_id": "vi_digit_2", "lang": "vi", "text": "Giá vé là 250.000 đồng.", "ref_audio": "prod_ref_fil.wav", "seed": 304, "note": "越南语货币，千分位用点号；线上 generic TN 原样透传"}
+{"case_id": "vi_digit_3", "lang": "vi", "text": "Anh ấy sinh năm 1995.", "ref_audio": "prod_ref_fil.wav", "seed": 305, "note": "年份"}
+{"case_id": "vi_time", "lang": "vi", "text": "Chuyến tàu khởi hành lúc 7 giờ 30 phút sáng.", "ref_audio": "prod_ref_fil.wav", "seed": 306, "note": "时间表达"}
+{"case_id": "th_digit_2", "lang": "th", "text": "ราคาตั๋ว 1,200 บาท.", "ref_audio": "prod_ref_fil.wav", "seed": 104, "note": "泰语货币，千分位逗号"}
+{"case_id": "id_digit_2", "lang": "id", "text": "Harganya 250 ribu rupiah.", "ref_audio": "prod_ref_fil.wav", "seed": 404, "note": "印尼语数量表达"}
+{"case_id": "ms_digit_2", "lang": "ms", "text": "Harganya RM1,200 ringgit.", "ref_audio": "prod_ref_fil.wav", "seed": 504, "note": "马来语货币前缀 RM"}
+{"case_id": "tl_digit", "lang": "tl", "text": "Bayad ko ay 1,500 pesos.", "ref_audio": "prod_ref_fil.wav", "seed": 204, "note": "线上 fil 走 filipino TN（会verbalize数字），此处保留数字形态作对照"}
+{"case_id": "tl_digit_prod", "lang": "tl", "text": "Bayad ko ay isang libo't limang daan pesos.", "ref_audio": "prod_ref_fil.wav", "seed": 205, "note": "线上 fil 的真实形态：TN 已把数字 verbalize，模型收到的是数字词而非阿拉伯数字"}
+{"case_id": "tl_digit_2", "lang": "tl", "text": "May 30 minuto na lang bago magsimula ang pelikula.", "ref_audio": "prod_ref_fil.wav", "seed": 206, "note": "数量词"}
+{"case_id": "ms_digit_3", "lang": "ms", "text": "Kereta itu berharga RM45,000.", "ref_audio": "prod_ref_fil.wav", "seed": 505, "note": "马来语货币 RM，基座会念成印尼盾 Rp"}
+{"case_id": "id_digit_3", "lang": "id", "text": "Penerbangan GA 876 berangkat pukul 06.15.", "ref_audio": "prod_ref_fil.wav", "seed": 405, "note": "航班号 + 时间，线上 id 走 generic TN 原样透传"}

@@ -23,6 +23,9 @@ TARGET_SR = 16000
 # 表演语料的抽气声是表演的一部分，必须调低（见 options_for）。再高会啃掉词首清辅音。
 _EDGE_TRIM_RATIO = 0.06
 
+# 泰文（U+0E00-0E7F）与缅文（U+1000-109F）正字法不用空格分词，语速只能按字符算。
+_NO_WORD_SPACE = re.compile(r"[\u0e00-\u0e7f\u1000-\u109f]")
+
 
 @dataclass
 class Options:
@@ -224,7 +227,10 @@ def audio_metrics(wav: np.ndarray, sr: int, text: str) -> dict:
             f0_std = float(np.std(st))
     except Exception:
         pass
-    units = len(text.split()) if " " in text.strip() else len(text)
+    # 泰文/缅文正字法没有词间空格，一个偶发空格就能把整句切成两"词"，
+    # 实测泰语 rate 会掉到 0.32/秒（真实约 6 字/秒）。按文字系统判，不按有没有空格判。
+    tokens = text.split()
+    units = len(text) if _NO_WORD_SPACE.search(text) or not tokens else len(tokens)
     return {
         "f0_std_st": round(f0_std, 2),
         "energy_std_db": round(energy_std, 2),
@@ -1114,6 +1120,11 @@ if __name__ == "__main__":
     ap.add_argument("--out", default=None)
     ap.add_argument("--manifest", default=None, help="已审核原始 JSONL；相对音频路径按此文件所在目录解析")
     ap.add_argument("--max-items", type=int, default=None)
+    ap.add_argument("--min-dur", type=float, default=None,
+                    help="时长下限秒，默认 3.0。process_dataset 有 3<=min_dur<=max_dur<=30 "
+                         "的硬守卫（官方建议区间），只能在区间内收窄，不能用来放进更短的样本")
+    ap.add_argument("--max-dur", type=float, default=None,
+                    help="时长上限秒，默认 30.0；调小可得到长度更集中的子集（如 8.0 偏短句）")
     ap.add_argument("--utmos-min", type=float, default=None)
     ap.add_argument("--whisper-lang", default=None)
     ap.add_argument("--control-ratio", type=float, default=None)
@@ -1134,7 +1145,8 @@ if __name__ == "__main__":
         print(json.dumps(mix_manifests(parts, args.out, progress=print),
                          ensure_ascii=False, indent=2))
         raise SystemExit(0)
-    o = options_for(args.source, utmos_min=args.utmos_min,
+    o = options_for(args.source, min_dur=args.min_dur, max_dur=args.max_dur,
+                    utmos_min=args.utmos_min,
                     whisper_lang=args.whisper_lang,
                     control_ratio=args.control_ratio,
                     asr_min_logprob=args.asr_min_logprob,

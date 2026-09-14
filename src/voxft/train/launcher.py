@@ -19,10 +19,14 @@ def gpu_command(config_path: str | Path, gpus: int = 1,
     if not isinstance(gpus, int) or gpus < 1:
         raise ValueError("GPU 数必须为正整数")
     script_args = f"{shlex.quote(str(TRAIN_SCRIPT))} --config_path {shlex.quote(str(Path(config_path).resolve()))}"
+    # 用 sys.executable 而不是裸 python/torchrun：这条命令常被复制到远程非交互 SSH 里
+    # nohup 执行，那里没有激活的 venv，裸 python 会静默失败成一行 command not found。
+    py = shlex.quote(sys.executable)
     if gpus > 1:
-        cmd = f"torchrun --nproc_per_node={gpus} {script_args}"
+        torchrun = shlex.quote(str(Path(sys.executable).with_name("torchrun")))
+        cmd = f"{torchrun} --nproc_per_node={gpus} {script_args}"
     else:
-        cmd = f"python {script_args}"
+        cmd = f"{py} {script_args}"
     cmd = f"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True {cmd}"
     if cuda_devices:
         cmd = f"CUDA_VISIBLE_DEVICES={shlex.quote(cuda_devices)} {cmd}"

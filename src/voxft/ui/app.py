@@ -12,6 +12,7 @@ from ..train import launcher, yaml_builder
 from ..lora.merge import merge_lora
 from ..hub.sync import upload_folder
 from ..log import file_tail, get_log
+from ..eval import list_reports, review_key, review_session, save_reviews
 from .. import infer
 
 PORT = int(env("VOXFT_UI_PORT", "6006"))
@@ -504,6 +505,108 @@ def _ckpt_choices() -> list[str]:
     return out
 
 
+# ------------------------------------------------------- 盲听评估（人工反馈是最终判据）
+
+_RV_SCALE = [1, 2, 3, 4, 5]
+# 控件顺序固定：甲自然度/甲可懂度/甲截断/甲噪音，乙同四项，最后一条共用备注
+
+
+def _rv_restore(ratings: dict, pair: dict | None) -> list:
+    """把已填评分还原到控件；换条目时清空，免得把上一条的分带过去。"""
+    e = (ratings or {}).get(review_key(pair)) if pair else None
+    out = []
+    for s in ((e or {}).get("s1") or {}, (e or {}).get("s2") or {}):
+        out += [s.get("naturalness_1_5"), s.get("intelligibility_1_5"),
+                bool(s.get("cutoff")), bool(s.get("noise"))]
+    out.append((e or {}).get("notes", ""))
+    return out
+
+
+def _rv_collect(n1, i1, c1, x1, n2, i2, c2, x2, notes) -> dict:
+    def one(n, i, c, x):
+        d = {"cutoff": bool(c), "noise": bool(x)}
+        if n:
+            d["naturalness_1_5"] = int(n)
+        if i:
+            d["intelligibility_1_5"] = int(i)
+        if notes:
+            d["notes"] = str(notes)
+        return d
+    return {"s1": one(n1, i1, c1, x1), "s2": one(n2, i2, c2, x2)}
+
+
+def _rv_head(pair: dict | None, pos: int, total: int) -> str:
+    if not pair:
+        return "（会话为空）"
+    return (f"**{pos + 1} / {total}** ｜ `{pair['case_id']}` ｜ 语种 **{pair['lang']}**"
+            f" ｜ seed {pair['seed']}\n\n台词：{pair['text']}\n\n"
+            "甲/乙顺序已随机。**别去对照报告文件名**，否则盲听就失效了。")
+
+
+def _rv_show(session, ratings, pos) -> list:
+    pair = session[pos] if session and 0 <= pos < len(session) else None
+    return [session, ratings, pos, _rv_head(pair, pos, len(session or [])),
+            pair["wav_1"] if pair else None, pair["wav_2"] if pair else None,
+            *_rv_restore(ratings, pair)]
+
+
+def do_review_load(a, b, seed):
+    if not a or not b or a == b:
+        return _rv_show([], {}, 0)
+    try:
+        session = review_session(a, b, int(seed or 0))
+    except Exception as exc:
+        return [[], {}, 0, f"载入失败：{exc}", None, None, *_rv_restore({}, None)]
+    return _rv_show(session, {}, 0)
+
+
+def _review_nav(session, ratings, pos, delta, *ctrl):
+    session = session or []
+    if not session:
+        return _rv_show([], ratings or {}, 0)
+    ratings = dict(ratings or {})
+    if 0 <= int(pos) < len(session):
+        ratings[review_key(session[int(pos)])] = _rv_collect(*ctrl)
+    return _rv_show(session, ratings,
+                  max(0, min(len(session) - 1, int(pos) + delta)))
+
+
+def do_review_prev(session, ratings, pos, *ctrl):
+    return _review_nav(session, ratings, pos, -1, *ctrl)
+
+
+def do_review_next(session, ratings, pos, *ctrl):
+    return _review_nav(session, ratings, pos, +1, *ctrl)
+
+
+def do_review_save(a, b, session, ratings, pos, *ctrl):
+    if not session:
+        return "（会话为空，请先载入）"
+    # 导航按钮才落盘；这里先并入当前条目，否则最后一条的评分会丢
+    ratings = dict(ratings or {})
+    if 0 <= int(pos or 0) < len(session):
+        ratings[review_key(session[int(pos)])] = _rv_collect(*ctrl)
+    try:
+        s = save_reviews(a, b, session, ratings)
+    except Exception as exc:
+        return f"写回失败：{exc}"
+    lines = [f"已写回 **{s['rated']}/{s['pairs']}** 对评分 → "
+             f"`{s['written'][0]}`、`{s['written'][1]}` 的 `human_review` 字段", "",
+             "| 语种 | 自然度 A | 自然度 B | B 胜 | 平 | B 负 | 未评 |",
+             "|---|---|---|---|---|---|---|"]
+    for lang, v in s["by_lang"].items():
+        lines.append(f"| {lang} | {v['mean_naturalness_a']} | {v['mean_naturalness_b']} "
+                     f"| {v['win']} | {v['tie']} | {v['loss']} | {v['unrated']} |")
+    lines += ["", "**判据**：任一语种 `B 负 > B 胜` 即算该语种退化，与离线 "
+              "`by_lang` 的「任一语种退化即整轮不通过」同口径；"
+              "指标与盲听冲突时**以盲听为准**，并把结论写进下一轮的 case 集。"]
+    return "\n".join(lines)
+
+
+def _report_choices() -> list[str]:
+    return list_reports()
+
+
 def build_ui() -> gr.Blocks:
     _sorted_sources = sources_by_quality()
     source_choices = [s.display() for s in _sorted_sources if s.kind != "local"]
@@ -752,6 +855,52 @@ def build_ui() -> gr.Blocks:
                          [a_text, a_lora, a_ref, a_ref_text, a_cfg, a_steps,
                           a_ctrl, a_seed, a_base],
                          [ab_base_out, ab_lora_out, ab_info])
+
+        with gr.Tab("盲听评估") as tab_review:
+            gr.Markdown("""**人工盲听是最终判据**，离线 CER/WER 只是诊断（ASR 误差不等于发音错误，
+疑似漏尾不等于真实截断，F0 不是越高越好）。
+
+用法：选两份**用同一 case 集、同一组 seed** 跑出来的报告（A 一般填 `base_*`，B 填 checkpoint），
+载入后逐条听甲/乙打分 →「汇总并写回」把评分落进两份报告的 `human_review`，并给出分语种胜负。
+**任一语种 B 负 > B 胜 即算退化，整轮不通过**，与离线 `by_lang` 同口径；两者冲突时以盲听为准。""")
+            with gr.Row():
+                rv_a = gr.Dropdown(_report_choices(), label="报告 A（基座）")
+                rv_b = gr.Dropdown(_report_choices(), label="报告 B（checkpoint）")
+                rv_seed = gr.Number(0, label="盲化种子（换一批甲乙顺序）", precision=0)
+                rv_load = gr.Button("载入盲听会话", variant="primary")
+            rv_session = gr.State([])
+            rv_ratings = gr.State({})
+            rv_pos = gr.State(0)
+            rv_head = gr.Markdown("（未载入）")
+            with gr.Row():
+                rv_w1 = gr.Audio(label="甲", type="filepath")
+                rv_w2 = gr.Audio(label="乙", type="filepath")
+            with gr.Row():
+                rv_n1 = gr.Radio(_RV_SCALE, label="甲·自然度 1-5")
+                rv_i1 = gr.Radio(_RV_SCALE, label="甲·可懂度 1-5")
+                rv_c1 = gr.Checkbox(label="甲·有截断/漏尾")
+                rv_x1 = gr.Checkbox(label="甲·有噪音/金属声")
+            with gr.Row():
+                rv_n2 = gr.Radio(_RV_SCALE, label="乙·自然度 1-5")
+                rv_i2 = gr.Radio(_RV_SCALE, label="乙·可懂度 1-5")
+                rv_c2 = gr.Checkbox(label="乙·有截断/漏尾")
+                rv_x2 = gr.Checkbox(label="乙·有噪音/金属声")
+            rv_note = gr.Textbox("", label="备注（写清哪一处念错/不自然，下一轮据此补 case）")
+            rv_ctrl = [rv_n1, rv_i1, rv_c1, rv_x1, rv_n2, rv_i2, rv_c2, rv_x2, rv_note]
+            rv_out = [rv_session, rv_ratings, rv_pos, rv_head, rv_w1, rv_w2, *rv_ctrl]
+            with gr.Row():
+                rv_prev = gr.Button("← 上一条")
+                rv_next = gr.Button("保存并下一条 →", variant="primary")
+            rv_save = gr.Button("汇总并写回报告", variant="primary")
+            rv_summary = gr.Markdown()
+            rv_load.click(do_review_load, [rv_a, rv_b, rv_seed], rv_out)
+            rv_prev.click(do_review_prev, [rv_session, rv_ratings, rv_pos, *rv_ctrl], rv_out)
+            rv_next.click(do_review_next, [rv_session, rv_ratings, rv_pos, *rv_ctrl], rv_out)
+            rv_save.click(do_review_save,
+                          [rv_a, rv_b, rv_session, rv_ratings, rv_pos, *rv_ctrl], rv_summary)
+            tab_review.select(lambda: (gr.update(choices=_report_choices()),
+                                       gr.update(choices=_report_choices())),
+                              outputs=[rv_a, rv_b])
 
         with gr.Tab("模型管理") as tab_mgmt:
             gr.Markdown("**Merge LoRA** → 导出完整模型目录")

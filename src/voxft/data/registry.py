@@ -21,7 +21,7 @@ class Source:
     id: str
     lang: str  # th / tl / vi / id / ms / zh / en
     label: str
-    kind: str  # hf_dataset | openslr | local
+    kind: str  # hf_dataset | hf_tar | openslr | local
     repo: str = ""
     config: str = ""
     split: str = "train"
@@ -34,6 +34,7 @@ class Source:
     # ---- 列映射（留空则按通用规则探测）----
     audio_cols: tuple[str, ...] = ()    # 候选音频列，按顺序取第一个存在的
     text_cols: tuple[str, ...] = ()
+    sentence_case: bool = False         # 上游转写整库全大写 → 下载时转句首大写（gigaspeech2）
     speaker_cols: tuple[str, ...] = ()
     emotion_col: str = ""               # 情绪标签列 → 写入 manifest 的 emotion 字段
     session_col: str = ""               # 同一次录音的分组列，用于训练/验证隔离
@@ -142,6 +143,19 @@ SOURCES: list[Source] = [
         has_speaker=False, qc="none", quality=70,
     ),
     Source(
+        "gigaspeech2_th", "th", "Gigaspeech 2 泰语（YouTube/播客自然口语，短句为主）",
+        "hf_tar", "speechcolab/gigaspeech2", "th", "dev",
+        "Apache-2.0",
+        "许可最干净（Apache-2.0，无 SA/NC 红线）。**已核实形态**：仓库布局是 "
+        "`data/th/<split>.tar.gz`（每条一个 wav）+ 同名 `.tsv`（`id\\t全大写文本`），"
+        "`refs/convert/parquet` 分支不存在（parquet 索引 API 却返回 200 与一串解析不了的 URL），"
+        "所以走 `kind=hf_tar`。dev 分片 966MB≈8.4h，train 单片 6.6GB×193 片——用 dev 就够。"
+        "**短句为主**正补 FLEURS 的缺口：线上配音 cue 是 1-3s，FLEURS th 的 p50 是 11.3s、"
+        "3-8s 只占 17%。tsv 全大写，`sentence_case` 转句首大写对齐线上文本形态。"
+        "gated:auto，需 .env 配 HF_TOKEN 并在数据集页面同意条款。无 speaker ID，不配 ref",
+        has_speaker=False, qc="none", role="anchor", sentence_case=True, quality=75,
+    ),
+    Source(
         "fleurs_th", "th", "FLEURS 泰语（~12h，干净朗读，发音锚点）",
         "hf_dataset", "google/fleurs", "th_th", "train",
         "CC-BY-4.0", "朗读发音补充；无可靠说话人身份，不配 ref",
@@ -208,14 +222,18 @@ SOURCES: list[Source] = [
     # ---- 越南语 ----
     Source(
         "gigaspeech2_vi", "vi", "Gigaspeech 2 越南语（YouTube/播客自然口语）",
-        "hf_dataset", "speechcolab/gigaspeech2", "vi", "train",
+        "hf_tar", "speechcolab/gigaspeech2", "vi", "dev",
         "Apache-2.0",
         "许可最干净（Apache-2.0，无 SA/NC 红线），是 vi 的自然口语首选锚点。"
-        "⚠️ 规模与字段形态本轮未核实：先 --max-samples 20 试跑，确认 audio 列存在且"
-        "时长落在 3-30s；若是 path+start+end 的长音频切片形态，下载器会整段读入而非"
-        "按时间戳切，本源即不可用（见 docs/vi_id_support.md）。"
-        "gated:auto，需 .env 配 HF_TOKEN 并在数据集页面同意条款。无 speaker ID，不配 ref",
-        has_speaker=False, qc="none", role="anchor", preferred=True, quality=70,
+        "**已核实形态**（早先「未核实、可能是长音频+时间戳」的担心不成立）："
+        "`data/vi/<split>.tar.gz` 里每条一个 wav（实测 3.7-13.8s），`dev.tsv` 是 `id\\t全大写文本`，"
+        "不是 path+start+end 的长音频切片，所以可按条直接取用。"
+        "`refs/convert/parquet` 分支不存在（parquet 索引 API 却返回 200），走 `kind=hf_tar`。"
+        "dev 分片 1018MB≈8.8h，train 单片 3.4GB×240 片——用 dev 就够。"
+        "tsv 全大写，`sentence_case` 转句首大写对齐线上文本形态。"
+        "gated:auto，需 HF_TOKEN 并在数据集页面同意条款。无 speaker ID，不配 ref",
+        has_speaker=False, qc="none", role="anchor", preferred=True,
+        sentence_case=True, quality=80,
     ),
     Source(
         "fleurs_vi", "vi", "FLEURS 越南语（干净朗读，发音锚点）",
@@ -237,13 +255,16 @@ SOURCES: list[Source] = [
     # ---- 印尼语 ----
     Source(
         "gigaspeech2_id", "id", "Gigaspeech 2 印尼语（YouTube/播客自然口语）",
-        "hf_dataset", "speechcolab/gigaspeech2", "id", "train",
+        "hf_tar", "speechcolab/gigaspeech2", "id", "dev",
         "Apache-2.0",
         "许可最干净（Apache-2.0，无 SA/NC 红线），是 id 的自然口语首选锚点。"
-        "⚠️ 规模与字段形态本轮未核实：先 --max-samples 20 试跑，确认 audio 列存在且"
-        "时长落在 3-30s；若是 path+start+end 的长音频切片形态，本源即不可用。"
-        "gated:auto，需 HF_TOKEN 并在页面同意条款。无 speaker ID，不配 ref",
-        has_speaker=False, qc="none", role="anchor", preferred=True, quality=70,
+        "**已核实形态**：与 gigaspeech2_vi 同仓库同布局（`data/id/<split>.tar.gz` 每条一个 wav "
+        "+ 同名 tsv 全大写文本），不是长音频切片；`refs/convert/parquet` 分支不存在，走 `kind=hf_tar`。"
+        "dev 分片 944MB≈8.2h，train 单片 1.7GB×592 片——用 dev 就够。"
+        "tsv 全大写，`sentence_case` 转句首大写。gated:auto，需 HF_TOKEN 并在页面同意条款。"
+        "无 speaker ID，不配 ref。⚠️ 日常口语混英文，加工按 id 默认放行 (id, en)",
+        has_speaker=False, qc="none", role="anchor", preferred=True,
+        sentence_case=True, quality=80,
     ),
     Source(
         "fleurs_id", "id", "FLEURS 印尼语（干净朗读，发音锚点）",
@@ -297,6 +318,14 @@ SOURCES: list[Source] = [
         "fleurs_zh", "zh", "FLEURS 普通话（~10h，干净朗读）",
         "hf_dataset", "google/fleurs", "cmn_hans_cn", "train",
         "CC-BY-4.0", "少量高质补充",
+        has_speaker=False, qc="none", role="antiforget", quality=80,
+    ),
+    Source(
+        "fleurs_en", "en", "FLEURS 美式英语（干净朗读）",
+        "hf_dataset", "google/fleurs", "en_us", "train",
+        "CC-BY-4.0",
+        "英文回放占联合配比 5 分。除了防遗忘，它直接服务 Taglish/Manglish：tl 与 ms 的"
+        "台词句内混英文词，线上有「英文词被念错」类反馈，英文朗读是唯一许可干净的补法",
         has_speaker=False, qc="none", role="antiforget", quality=80,
     ),
 ]

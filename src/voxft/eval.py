@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import unicodedata
+from collections import defaultdict
 from difflib import SequenceMatcher
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +17,7 @@ from . import infer
 from .paths import CHECKPOINT_DIR
 
 SAMPLE_BY_LANG = infer.SAMPLE_TEXTS
+EVAL_DIR = CHECKPOINT_DIR / "eval"
 
 # Taglish 句内英文多，强制单一语言解码会给出失真的转写；th/vi/id/ms 都是 Whisper
 # 标准语种，强制解码让 CER 在不同 checkpoint 之间可比。
@@ -137,12 +140,109 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                 "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词/秒），不横向比。",
         "items": items,
     }
-    out_dir = CHECKPOINT_DIR / "eval"
+    out_dir = EVAL_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{label}_{uuid4().hex}.json"
     report["report_path"] = str(out)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
+
+
+# 与 evaluate() 写进 item 的 human_review 字段名保持一致
+_REVIEW_FIELDS = ("intelligibility_1_5", "naturalness_1_5", "speaker_similarity_1_5",
+                  "emotion_fit_1_5", "cutoff", "noise", "notes")
+
+
+def list_reports() -> list[str]:
+    return sorted(p.name for p in EVAL_DIR.glob("*.json")) if EVAL_DIR.exists() else []
+
+
+def review_key(pair: dict) -> str:
+    return f"{pair['case_id']}|{pair['seed']}"
+
+
+def _mean(xs: list[float]):
+    return round(sum(xs) / len(xs), 3) if xs else None
+
+
+def review_session(report_a: str, report_b: str, seed: int = 0) -> list[dict]:
+    """按 (case_id, seed) 把两份报告配成盲听条目，甲/乙顺序随机。
+
+    who_1/who_2 只在服务端用于回写，页面不显示——评分者一旦知道哪条是 base，
+    就会朝"微调应该更好"的方向偏，盲听也就失去意义。
+    """
+    a = json.loads((EVAL_DIR / report_a).read_text(encoding="utf-8"))
+    b = json.loads((EVAL_DIR / report_b).read_text(encoding="utf-8"))
+    idx = {(i["case_id"], i["seed"]): i for i in b["items"]}
+    rng = random.Random(seed)
+    out = []
+    for ia in a["items"]:
+        ib = idx.get((ia["case_id"], ia["seed"]))
+        if ib is None:
+            continue
+        swap = rng.random() < 0.5
+        first, second = (ib, ia) if swap else (ia, ib)
+        out.append({"case_id": ia["case_id"], "seed": ia["seed"], "lang": ia["lang"],
+                    "text": ia["text"], "wav_1": first["wav"], "wav_2": second["wav"],
+                    "who_1": "b" if swap else "a", "who_2": "a" if swap else "b"})
+    if not out:
+        raise ValueError(f"{report_a} 与 {report_b} 配不出任何 (case_id, seed)；"
+                         "两份报告必须用同一份 case 集与同一组 seed 跑出来")
+    return out
+
+
+def save_reviews(report_a: str, report_b: str, session: list[dict],
+                 ratings: dict | None) -> dict:
+    """把人工评分写回两份报告的 human_review，返回分语种 A/B 汇总。
+
+    ratings: {review_key(pair): {"s1": {...}, "s2": {...}}}，字段名取 _REVIEW_FIELDS。
+    汇总的 win/tie/loss 以自然度比较 B 相对 A（B 一般是 checkpoint）。
+    """
+    docs = {who: json.loads((EVAL_DIR / name).read_text(encoding="utf-8"))
+            for who, name in (("a", report_a), ("b", report_b))}
+    index = {who: {(i["case_id"], i["seed"]): i for i in d["items"]}
+             for who, d in docs.items()}
+    nat_by_lang: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"a": [], "b": []})
+    verdict: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"win": 0, "tie": 0, "loss": 0, "unrated": 0})
+    rated = 0
+    for pair in session:
+        entry = (ratings or {}).get(review_key(pair)) or {}
+        nat: dict[str, float | None] = {}
+        for slot in ("1", "2"):
+            r = entry.get(f"s{slot}") or {}
+            who = pair[f"who_{slot}"]
+            item = index[who].get((pair["case_id"], pair["seed"]))
+            if item is None:
+                continue
+            hr = item.setdefault("human_review", {})
+            for f in _REVIEW_FIELDS:
+                if f in r:
+                    hr[f] = r[f]
+            hr["paired_report"] = report_b if who == "a" else report_a
+            v = r.get("naturalness_1_5")
+            nat[who] = float(v) if isinstance(v, (int, float)) and v > 0 else None
+        lang = pair["lang"]
+        for who in ("a", "b"):
+            if nat.get(who) is not None:
+                nat_by_lang[lang][who].append(nat[who])
+        if nat.get("a") is not None and nat.get("b") is not None:
+            rated += 1
+            d = nat["b"] - nat["a"]
+            verdict[lang]["win" if d > 0 else "loss" if d < 0 else "tie"] += 1
+        else:
+            verdict[lang]["unrated"] += 1
+    for who, name in (("a", report_a), ("b", report_b)):
+        p = EVAL_DIR / name
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(docs[who], ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        tmp.replace(p)
+    return {"pairs": len(session), "rated": rated,
+            "by_lang": {k: {"mean_naturalness_a": _mean(v["a"]),
+                            "mean_naturalness_b": _mean(v["b"]), **verdict[k]}
+                        for k, v in sorted(nat_by_lang.items())},
+            "written": [report_a, report_b]}
 
 
 def print_compare(reports: list[dict]) -> None:

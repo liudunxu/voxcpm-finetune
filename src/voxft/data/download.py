@@ -22,7 +22,10 @@ _CJK = re.compile(r"[\u4e00-\u9fff]")
 # 仍在传输的下载不受影响，只有真卡死才抛。
 _STREAM_SOCKET_TIMEOUT = 120
 
-_TEXT_COLS = ("sentence", "text", "transcript", "transcription", "raw_transcription")
+# raw_transcription 排在 transcription 之前：FLEURS 的 transcription 是全小写、去标点的
+# 归一变体，而线上送进模型的是保留大小写与标点的原始台词。标点承载停顿与句末收束信号，
+# 训成无标点文本会让"生成停不下来"少一半可用线索。
+_TEXT_COLS = ("sentence", "text", "transcript", "raw_transcription", "transcription")
 _SPK_COLS = ("client_id", "speaker_id", "speaker", "speaker_name")
 _MISSING = {"", "none", "nan", "null"}
 
@@ -435,6 +438,89 @@ def _download_hf(source: Source, dest: Path, max_samples: int | None,
     return _download_stream(source, dest, max_samples, progress)
 
 
+def _sentence_case(text: str) -> str:
+    """全大写转写 → 句首大写。
+
+    gigaspeech2 的 tsv 是全大写，而线上送进模型的是句首大写的原始台词。越南语/印尼语的
+    大小写不参与语法，str.lower() 对变音符号是安全的；代价是句内英文专有名词会被小写，
+    没有真实大小写恢复器之前先接受这个损失。
+    """
+    t = text.strip()
+    return t[:1].upper() + t[1:].lower() if t else t
+
+
+def _download_hf_tar(source: Source, dest: Path, max_samples: int | None,
+                     token: str, progress=None) -> int:
+    """WebDataset 布局：`data/<config>/<split>.tar.gz`（每条一个 wav）+ 同名 `.tsv`（id\\t文本）。
+
+    gigaspeech2 就是这个形态。它的 `refs/convert/parquet` 分支根本不存在，但 parquet 索引
+    API 照样返回 200 和一串 URL，`_resolve_parquet_ref` 解析后下载必 404——所以只能按仓库内
+    真实路径取。dev/test 分片约 1GB/语种（8-9h），train 单片 3.4-6.6GB，优先用 dev。
+    """
+    import tarfile
+    from functools import partial
+
+    from huggingface_hub import hf_hub_download
+
+    from ..log import LogBar
+
+    log = progress or print
+    audio_dir = dest / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    prefix = f"data/{source.config}/{source.split}"
+    kw = dict(repo_id=source.repo, repo_type="dataset", token=token or None)
+    tsv = hf_hub_download(filename=f"{prefix}.tsv", **kw)
+    texts: dict[str, str] = {}
+    with open(tsv, encoding="utf-8") as fh:
+        for line in fh:
+            uid, _, text = line.rstrip("\n").partition("\t")
+            if uid and text.strip():
+                texts[uid] = text
+    if not texts:
+        raise RuntimeError(f"{source.id}: {prefix}.tsv 没解析出任何 id<TAB>文本")
+    log(f"{source.id}: TSV 转写 {len(texts)} 条；开始取 {prefix}.tar.gz（整片下载，"
+        "约 1GB，进度条不细分到条目）")
+    bar = partial(LogBar, log=progress) if progress else None
+    tar_path = hf_hub_download(filename=f"{prefix}.tar.gz",
+                               **({"tqdm_class": bar} if bar else {}), **kw)
+
+    n = no_text = bad = 0
+    with (dest / "manifest.jsonl").open("w", encoding="utf-8") as out, \
+            tarfile.open(tar_path, "r:*") as tf:
+        for member in tf:
+            if max_samples is not None and n >= max_samples:
+                break
+            if not member.isfile() or not member.name.endswith(".wav"):
+                continue
+            uid = Path(member.name).stem          # dev/22/22-52.wav → 22-52
+            text = _clean_text(texts.get(uid))
+            if not text:
+                no_text += 1
+                continue
+            handle = tf.extractfile(member)
+            if handle is None:
+                bad += 1
+                continue
+            try:
+                wav, sr = _load_audio(handle.read(), source, token)
+            except (sf.LibsndfileError, ValueError, TypeError) as exc:
+                bad += 1
+                if bad <= 3:
+                    log(f"{source.id}: {member.name} 音频读取失败：{type(exc).__name__}: {exc}")
+                continue
+            if source.sentence_case:
+                text = _sentence_case(text)
+            # tar 内路径的第二级就是 YouTube 视频 ID，用它做会话隔离，
+            # 否则同一视频的切片会跨 train/val 泄漏
+            _write_record(out, audio_dir, n, wav, sr, text, None, "",
+                          session=uid.split("-")[0], metadata=_metadata(source, {}.get))
+            n += 1
+            if progress and (n == 1 or n % 200 == 0):
+                progress(f"{source.id}: 已写入 {n} 条")
+    log(f"{source.id}: tar 遍历结束（写入 {n} 条，无转写 {no_text} 条，音频读取失败 {bad} 条）")
+    return n
+
+
 def _download_aishell3(source: Source, dest: Path, max_samples: int | None,
                        progress=None) -> int:
     tgz = dest / "data_aishell3.tgz"
@@ -512,6 +598,8 @@ def download_source(source_id: str, max_samples: int | None = None,
                          f"或放到 {dest}/manifest.jsonl；此入口不下载或生成录音")
     if source.kind == "openslr":
         n = _download_aishell3(source, dest, max_samples, progress)
+    elif source.kind == "hf_tar":
+        n = _download_hf_tar(source, dest, max_samples, env("HF_TOKEN"), progress)
     else:
         n = _download_hf(source, dest, max_samples, progress)
     if n == 0:

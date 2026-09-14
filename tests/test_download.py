@@ -181,3 +181,70 @@ def test_stream_stall_raises_instead_of_hanging(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="流式下载卡死"):
         dl._download_stream(get_source("filswitch"), tmp_path / "out", 5)
     assert socket.getdefaulttimeout() == before
+
+
+def test_fleurs_prefers_verbatim_over_normalized_text():
+    """线上送进模型的是带标点与大小写的原始台词；FLEURS 的 transcription 是全小写去标点
+    的归一变体，选错会让训练文本与推理文本形态不一致（标点还承载句末收束信号）。"""
+    from voxft.data.download import _detect_cols
+    from voxft.data.registry import get_source
+    row = {"audio": {"array": [0.0]}, "transcription": "walang punctuation dito",
+           "raw_transcription": "Walang punctuation dito."}
+    assert _detect_cols(row, get_source("fleurs_tl"))[1] == "raw_transcription"
+
+
+def test_sentence_case_keeps_vietnamese_diacritics():
+    """gigaspeech2 的 tsv 整库全大写；.lower() 必须保住越南语变音符号，
+    否则声调信息就没了（vi 是 6 声调语言）。"""
+    from voxft.data.download import _sentence_case
+    assert _sentence_case("TRONG MỘT THẾ GIỚI LUÔN THAY ĐỔI") == "Trong một thế giới luôn thay đổi"
+    assert _sentence_case("  GIÁ VÉ LÀ 250.000 ĐỒNG ") == "Giá vé là 250.000 đồng"
+    assert _sentence_case("") == ""
+
+
+def test_hf_tar_reads_webdataset_and_isolates_sessions(tmp_path, monkeypatch):
+    """gigaspeech2 布局：tar 内每条一个 wav + 同名 tsv 给 id\\t文本。
+    会话必须取 YouTube 视频 ID，否则同一视频的切片会跨 train/val 泄漏。"""
+    import io
+    import tarfile
+
+    import numpy as np
+    import soundfile as sf
+    from voxft.data import download as dl
+    from voxft.data.registry import get_source
+
+    src = get_source("gigaspeech2_vi")
+    assert src.kind == "hf_tar" and src.sentence_case is True
+
+    tsv = tmp_path / "dev.tsv"
+    tsv.write_text("7-1\tXIN CHÀO ANH\n7-2\tGIÁ VÉ LÀ 250.000 ĐỒNG\n9-1\tTẠM BIỆT\n",
+                   encoding="utf-8")
+    tar = tmp_path / "dev.tar.gz"
+
+    def _wav(seconds):
+        buf = io.BytesIO()
+        sf.write(buf, np.zeros(int(16000 * seconds), dtype=np.float32), 16000, format="WAV")
+        return buf.getvalue()
+
+    with tarfile.open(tar, "w:gz") as tf:
+        for name, payload in (("dev/7/7-1.wav", _wav(0.4)), ("dev/7/7-2.wav", _wav(0.5)),
+                              ("dev/9/9-1.wav", _wav(0.3)), ("dev/7/7-9.wav", _wav(0.3)),
+                              ("dev/", b"")):
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+
+    paths = {f"data/vi/dev.tsv": str(tsv), f"data/vi/dev.tar.gz": str(tar)}
+    monkeypatch.setattr("huggingface_hub.hf_hub_download",
+                        lambda filename=None, **kw: paths[filename])
+    n = dl._download_hf_tar(src, tmp_path / "out", None, "tok", progress=lambda m: None)
+    assert n == 3                      # 7-9 没有转写，必须跳过而不是写成空文本
+    rows = [__import__("json").loads(l)
+            for l in (tmp_path / "out" / "manifest.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["text"] for r in rows] == ["Xin chào anh", "Giá vé là 250.000 đồng", "Tạm biệt"]
+    assert [r["session"] for r in rows] == ["7", "7", "9"]
+    assert all(r["lang"] == "vi" and r["speaker_verified"] is False for r in rows)
+
+    # max_samples 要在写满即止，不能把整片 tar 遍历完
+    n2 = dl._download_hf_tar(src, tmp_path / "out2", 2, "tok", progress=None)
+    assert n2 == 2
