@@ -72,12 +72,16 @@ def _report(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _regressed(evals: list[dict], noise: float = 0.005) -> dict[str, dict[str, list[str]]]:
+def _regressed(evals: list[dict], noise: float = 0.05) -> dict[str, dict[str, list[str]]]:
     """以第一份报告为基线，把 CER 变差的语种分成「红线」与「噪声级」两档。
 
-    每语种只有十几条样本，单个字符的差异就能让均值动 0.002-0.003；若用极小阈值，
-    几乎每轮都会被判"退化"，红线就失去意义。noise 默认 0.005 ≈ 整个语种子集里
-    多错 2-3 个字符，低于它的照实列出但不触发红线。
+    默认门槛 0.05 是实测出来的，不是拍的：同一份配比（`fleurs_ms=17`，其余不变）跑两轮，
+    ms 的 CER 是 0.0630 与 0.1053，**纯 run 间方差就有 0.042**（混合用共享 RNG，改任一权重
+    都会挪动后续所有部分的抽样，再叠加训练非确定性）。门槛低于这个数必然天天误报，
+    红线喊多了就等于没有红线。
+
+    ⚠️ 正确的修法是提统计功效（每语种 30+ case、5 seed），不是继续调这个门槛；
+    在功效提上来之前，红线只能当"值得去看一眼"的提示，不能当自动否决。
     """
     if len(evals) < 2:
         return {}

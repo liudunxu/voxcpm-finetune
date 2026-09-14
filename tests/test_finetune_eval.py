@@ -252,3 +252,21 @@ def test_runlog_puts_newest_record_first(tmp_path, monkeypatch):
     assert text.index("## run_b") < text.index("## run_a")
     assert text.count("# 微调运行记录") == 1        # 表头不能被重复写进去
     assert "第一轮" in text and "第二轮" in text      # 旧记录不能丢
+
+
+def test_blind_regression_needs_a_margin_not_a_single_loss():
+    """实测 id 拿到 0胜/14平/1负、zh 拿到 0胜/2平/1负，按「负 > 胜」两条都算退化，
+    但那只是一两条听感波动。红线喊多了就等于没有红线。"""
+    from voxft import eval as ev
+    monkey = ev.BLIND_LOSS_MARGIN, ev.BLIND_MIN_LOSSES
+    assert monkey == (2, 3)
+
+    def verdict(win, tie, loss):
+        return (loss - win >= ev.BLIND_LOSS_MARGIN and loss >= ev.BLIND_MIN_LOSSES)
+
+    assert verdict(0, 14, 1) is False      # id：单条差异，不算
+    assert verdict(0, 2, 1) is False       # zh：样本更少，更不算
+    assert verdict(2, 11, 2) is False      # ms：胜负持平
+    assert verdict(0, 12, 3) is True       # 3 负 0 胜，差值 3 >= 2，算
+    assert verdict(1, 10, 4) is True       # 4 负 1 胜，差值 3 >= 2，算
+    assert verdict(0, 10, 2) is False      # 差值够但负不足 3 条

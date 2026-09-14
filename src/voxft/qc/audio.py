@@ -5,6 +5,16 @@
   metallic_resonance  api.py:5362-5442（_narrowband_resonance_metrics + 判定）
   floor_separation_db api.py:1254-1272（_frame_floor_separation_db），门限 18.0dB
                       来自 api_contract.py:15-17 REFERENCE_FLOOR_SEPARATION_MIN_DB
+  speech_ratio        api.py:1843-1895（_waveform_loudness_profile 的 gate）
+
+⚠️ **metallic_resonance 在本项目的用法下没有区分力，只能当参考值、不能当门禁**（实测校正）：
+拿 84 条 48kHz 原始模型输出对照人工盲听，自动检出 4 条（base 1 / checkpoint 3），
+**人工对这 4 条全部判 noise=False、自然度 5/5**；反过来人工唯一标了 noise=True 的那条
+score 只有 0.0694，远低于门限，**漏报**。4 误报 1 漏报 0 命中。
+原因是那套阈值（peak_ratio≥0.20、连续≥5帧、占比均值≥0.28）是在 OmniVoice
+**后处理过**的音频上标定的——它上线前有 peak ceiling 0.94、level match、可选 noise gate，
+频谱形态与这里的裸输出不同；4 条误报的 score 全挤在 0.29-0.33，刚好压线，也说明门限
+对这个分布太松。**没有人工标注量之前不要重新标定，也不要拿它否决任何一轮微调。**
 
 刻意**没有**移植的：
   duration_off_reference —— 在 OmniVoice 里是死代码，5 个调用点全部传 ref_duration=None

@@ -592,14 +592,18 @@ def do_review_save(a, b, session, ratings, pos, *ctrl):
         return f"写回失败：{exc}"
     lines = [f"已写回 **{s['rated']}/{s['pairs']}** 对评分 → "
              f"`{s['written'][0]}`、`{s['written'][1]}` 的 `human_review` 字段", "",
-             "| 语种 | 自然度 A | 自然度 B | B 胜 | 平 | B 负 | 未评 |",
-             "|---|---|---|---|---|---|---|"]
+             "| 语种 | 自然度 A | 自然度 B | B 胜 | 平 | B 负 | 未评 | 退化 |",
+             "|---|---|---|---|---|---|---|---|"]
     for lang, v in s["by_lang"].items():
         lines.append(f"| {lang} | {v['mean_naturalness_a']} | {v['mean_naturalness_b']} "
-                     f"| {v['win']} | {v['tie']} | {v['loss']} | {v['unrated']} |")
-    lines += ["", "**判据**：任一语种 `B 负 > B 胜` 即算该语种退化，与离线 "
-              "`by_lang` 的「任一语种退化即整轮不通过」同口径；"
-              "指标与盲听冲突时**以盲听为准**，并把结论写进下一轮的 case 集。"]
+                     f"| {v['win']} | {v['tie']} | {v['loss']} | {v['unrated']} "
+                     f"| {'**是**' if v['regressed'] else '否'} |")
+    lines += ["", "**退化判据**：`B 负 − B 胜 ≥ 2` 且 `B 负 ≥ 3`。不是简单的「负 > 胜」——"
+              "实测 id 拿到 0胜/14平/1负、zh 拿到 0胜/2平/1负，按「负 > 胜」两条都算退化，"
+              "但那只是一两条听感的偶然波动，红线喊多了就等于没有红线。",
+              f"本轮触发退化的语种：**{'、'.join(s['regressed']) if s['regressed'] else '无'}**",
+              "", "与离线 `by_lang` 同口径；两轨冲突时**以盲听为准**，"
+              "并把盲听发现的失败形态落成 `eval_cases/` 里的新 case，让下一轮能自动复现。"]
     return "\n".join(lines)
 
 

@@ -206,7 +206,10 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                 "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词级），不横向比。"
                 "suspected_truncation=少读/漏尾，over_read=多读/跑飞（>1.4× 参考长度）。"
                 "mean_cer_non_numeric 剔除了含阿拉伯数字的 case——那一类的 CER 会被 Whisper "
-                "自身的数字归一化污染，只能靠盲听。metallic/low_snr 阈值移植自 OmniVoice 生产口径。"
+                "自身的数字归一化污染，只能靠盲听。metallic/low_snr 阈值移植自 OmniVoice 生产口径，"
+                "但 metallic 那套是在 OmniVoice **后处理过**的音频上标定的（peak ceiling/level match），"
+                "用在裸模型输出上实测 4 误报 / 1 漏报 / 0 命中——人工对 4 条检出全判 noise=False、"
+                "自然度 5/5，**所以 metallic 只作参考值，不作通过门限**。"
                 "speaker_sim 是 MFCC 余弦（低可信档），只用于同一 ref 下 base 与 checkpoint 的相对比较。",
         "items": items,
     }
@@ -261,12 +264,21 @@ def review_session(report_a: str, report_b: str, seed: int = 0) -> list[dict]:
     return out
 
 
+BLIND_LOSS_MARGIN = 2     # 负 要比 胜 多这么多条才算退化
+BLIND_MIN_LOSSES = 3      # 且负本身至少这么多条，否则单条差异就会否决整轮
+
+
 def save_reviews(report_a: str, report_b: str, session: list[dict],
                  ratings: dict | None) -> dict:
     """把人工评分写回两份报告的 human_review，返回分语种 A/B 汇总。
 
     ratings: {review_key(pair): {"s1": {...}, "s2": {...}}}，字段名取 _REVIEW_FIELDS。
     汇总的 win/tie/loss 以自然度比较 B 相对 A（B 一般是 checkpoint）。
+
+    退化判据不是简单的「负 > 胜」：实测 id 拿到 0胜/14平/1负、zh 拿到 0胜/2平/1负，
+    按「负 > 胜」两条都算退化，但那显然是一两条听感的偶然波动。所以要求
+    `负 - 胜 >= BLIND_LOSS_MARGIN` 且 `负 >= BLIND_MIN_LOSSES`，
+    在 12-18 条的量级上这个门槛刚好能挡住单条噪声、又不会放过成片的退化。
     """
     docs = {who: json.loads((EVAL_DIR / name).read_text(encoding="utf-8"))
             for who, name in (("a", report_a), ("b", report_b))}
@@ -308,10 +320,16 @@ def save_reviews(report_a: str, report_b: str, session: list[dict],
         tmp.write_text(json.dumps(docs[who], ensure_ascii=False, indent=2),
                        encoding="utf-8")
         tmp.replace(p)
-    return {"pairs": len(session), "rated": rated,
-            "by_lang": {k: {"mean_naturalness_a": _mean(v["a"]),
-                            "mean_naturalness_b": _mean(v["b"]), **verdict[k]}
-                        for k, v in sorted(nat_by_lang.items())},
+    by_lang = {}
+    for lang, v in sorted(nat_by_lang.items()):
+        d = verdict[lang]
+        regressed = (d["loss"] - d["win"] >= BLIND_LOSS_MARGIN
+                     and d["loss"] >= BLIND_MIN_LOSSES)
+        by_lang[lang] = {"mean_naturalness_a": _mean(v["a"]),
+                         "mean_naturalness_b": _mean(v["b"]), **d,
+                         "regressed": regressed}
+    return {"pairs": len(session), "rated": rated, "by_lang": by_lang,
+            "regressed": [k for k, v in by_lang.items() if v["regressed"]],
             "written": [report_a, report_b]}
 
 
