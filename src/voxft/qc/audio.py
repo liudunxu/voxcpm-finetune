@@ -23,9 +23,15 @@ score 只有 0.0694，远低于门限，**漏报**。4 误报 1 漏报 0 命中�
     绝对期望时长：A/B 比的是 checkpoint 与 base 的相对值，用 chars_per_sec 对照即可，
     省掉一次大移植。真要绝对门限再引入。
 
-speaker_sim 用 librosa MFCC 余弦，是 OmniVoice 自己的 mfcc_v1 回退档（api.py:3614-3642），
-它把这一档标为 reliability=low_mfcc_fallback。真正的说话人嵌入是 modelscope 的
-ERes2NetV2（iic/speech_eres2netv2_sv_zh-cn_16k-common），本项目不引 modelscope。
+speaker_sim 用 **WavLM X-vector 说话人嵌入**（`microsoft/wavlm-base-plus-sv`，VoxCeleb 上训的
+说话人验证模型）的余弦，经 transformers 加载——它已经是本项目依赖（官方训练脚本要用），
+所以不引 modelscope。可用 `VOXFT_SPK_EMB_MODEL` 换成本地目录或镜像仓库。
+早先这里用 librosa MFCC 余弦（OmniVoice 自己的 `mfcc_v1` 回退档，它标为
+`reliability=low_mfcc_fallback`），实测 84 条全部挤在 0.985-0.996、同 ref 跨 seed 的
+一致性也都在 0.99 以上，**动态范围小到无法当优化目标**，已替换。
+OmniVoice 生产用的是 modelscope ERes2NetV2（`iic/speech_eres2netv2_sv_zh-cn_16k-common`，
+门限 `VOXCPM_SPEAKER_MISMATCH_MIN_SIMILARITY=0.45`），**两者刻度不可直接互换**；
+要与生产的 speaker_mismatch 门限对齐才需要换成它。
 """
 from __future__ import annotations
 
@@ -110,31 +116,69 @@ def floor_separation_db(wav: np.ndarray, sr: int) -> float | None:
     return round(float(speech_db - floor_db), 2)
 
 
-def speaker_sim(a: np.ndarray, sr_a: int, b: np.ndarray, sr_b: int) -> float | None:
-    """MFCC 均值向量的余弦相似度（OmniVoice 的 mfcc_v1 回退档，reliability=low）。
+SPK_EMB_MODEL_DEFAULT = "microsoft/wavlm-base-plus-sv"
 
-    只能用于同一 ref 下 base 与 checkpoint 的**相对**比较，绝对值没有校准意义。
-    短于 0.5s 不给分。
+_SPK = None
+_SPK_ERR = ""
+
+
+def _spk_model():
+    """WavLM X-vector 说话人验证模型；加载失败只试一次并记住原因。
+
+    用 transformers 直接加载（本项目已依赖，官方训练脚本要用），所以不引 modelscope。
+    可用 VOXFT_SPK_EMB_MODEL 指向本地目录或镜像仓库，与 VOXFT_WHISPER_MODEL 同一套约定。
+
+    ⚠️ 必须用 **WavLMForXVector**：这个仓库是 WavLM 架构，用 Wav2Vec2ForXVector 加载会
+    打印一大片 `MISSING`（feature_projection / encoder.layer_norm / pos_conv_embed 等）
+    并把 encoder **随机初始化**——不报错、只是嵌入全是垃圾。
     """
+    global _SPK, _SPK_ERR
+    if _SPK is None and not _SPK_ERR:
+        try:
+            import torch
+            from transformers import AutoFeatureExtractor, WavLMForXVector
+
+            from ..paths import env
+            name = env("VOXFT_SPK_EMB_MODEL", SPK_EMB_MODEL_DEFAULT)
+            _SPK = (AutoFeatureExtractor.from_pretrained(name),
+                    WavLMForXVector.from_pretrained(name), torch, name)
+        except Exception as exc:                      # 离线/权重源变动都不该让整轮评测崩掉
+            _SPK_ERR = f"{type(exc).__name__}: {exc}"
+    return _SPK
+
+
+def speaker_embedding(wav: np.ndarray, sr: int) -> np.ndarray | None:
+    """L2 归一化的说话人嵌入。短于 0.5s 或模型不可用时返回 None。"""
+    m = _spk_model()
+    if m is None:
+        return None
+    proc, model, torch, _name = m
     import librosa
 
-    def feat(wav, sr):
-        w = np.asarray(wav, dtype=np.float32).reshape(-1)
-        if w.size / max(sr, 1) < 0.5:
-            return None
-        if sr != 16000:
-            w = librosa.resample(w, orig_sr=sr, target_sr=16000)
-        m = librosa.feature.mfcc(y=w, sr=16000, n_mfcc=20)
-        c = librosa.feature.spectral_centroid(y=w, sr=16000)[0]
-        z = librosa.feature.zero_crossing_rate(w)[0]
-        return np.concatenate([m.mean(axis=1), m.std(axis=1), [c.mean(), c.std(),
-                                                               z.mean(), z.std()]])
-
-    fa, fb = feat(a, sr_a), feat(b, sr_b)
-    if fa is None or fb is None:
+    w = np.asarray(wav, dtype=np.float32).reshape(-1)
+    if w.size / max(sr, 1) < 0.5:
         return None
-    denom = float(np.linalg.norm(fa) * np.linalg.norm(fb))
-    return round(float(np.dot(fa, fb) / denom), 4) if denom > 1e-12 else 0.0
+    if sr != 16000:
+        w = librosa.resample(w, orig_sr=sr, target_sr=16000)
+    w = w[:16000 * 30]          # 30s 足够定音色，也省显存
+    inputs = proc(w, sampling_rate=16000, return_tensors="pt")
+    with torch.no_grad():
+        emb = model(**inputs).embeddings[0].detach().cpu().numpy().astype(np.float64)
+    norm = float(np.linalg.norm(emb))
+    return emb / norm if norm > 1e-12 else None
+
+
+def speaker_sim(a: np.ndarray, sr_a: int, b: np.ndarray, sr_b: int) -> float | None:
+    """两段音频的说话人嵌入余弦（都已 L2 归一化，点积即余弦）。
+
+    早先这里用的是 librosa MFCC 余弦（OmniVoice 的 mfcc_v1 回退档），实测 84 条全部挤在
+    0.985-0.996、同 ref 跨 seed 的一致性也在 0.99 以上——**动态范围小到做不了优化目标**，
+    只能排除"明显损坏"。换成真说话人嵌入后才有分辨率。
+    """
+    ea, eb = speaker_embedding(a, sr_a), speaker_embedding(b, sr_b)
+    if ea is None or eb is None:
+        return None
+    return round(float(np.dot(ea, eb)), 4)
 
 
 def speech_ratio(wav: np.ndarray, sr: int) -> float | None:
@@ -168,6 +212,10 @@ def analyze(wav: np.ndarray, sr: int, ref_wav: np.ndarray | None = None,
     out["low_snr"] = None if sep is None else bool(sep < FLOOR_SEPARATION_MIN_DB)
     out["audio_sec"] = round(len(np.asarray(wav).reshape(-1)) / max(sr, 1), 3)
     out["speech_ratio"] = speech_ratio(wav, sr)
+    # 报出后端与失败原因：speaker_sim 是 None 时要能分清"没算"和"算出来是 0"
+    model = _spk_model()
+    out["speaker_sim_backend"] = model[3] if model else None
+    out["speaker_sim_error"] = _SPK_ERR or None
     out["speaker_sim"] = (speaker_sim(wav, sr, ref_wav, ref_sr)
-                          if ref_wav is not None else None)
+                          if ref_wav is not None and model else None)
     return out

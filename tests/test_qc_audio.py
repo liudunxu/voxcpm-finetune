@@ -40,12 +40,40 @@ def test_floor_separation_orders_clean_above_noisy():
     assert floor_separation_db(clean[:sr // 8], sr) is None
 
 
-def test_speaker_sim_is_only_relatively_meaningful():
+def test_speaker_sim_uses_embeddings_and_never_fakes_a_number(monkeypatch):
+    """MFCC 余弦实测全部饱和在 0.985-0.996，做不了优化目标，已换成 WavLM X-vector。
+    模型不可用时必须返回 None 并带原因——编一个数会让"没算"被当成"算出来很好"。"""
+    from voxft.qc import audio as qc
     sr = 16000
-    a, b = _tone(180, 2.0, sr), _tone(240, 2.0, sr)
-    assert speaker_sim(a, sr, a, sr) > 0.99
-    assert speaker_sim(a, sr, b, sr) < speaker_sim(a, sr, a, sr)
-    assert speaker_sim(a[:sr // 4], sr, a, sr) is None           # <0.5s 不给分
+    wav = np.zeros(sr, dtype=np.float32)
+
+    monkeypatch.setattr(qc, "_spk_model", lambda: None)
+    monkeypatch.setattr(qc, "_SPK_ERR", "OfflineMode: 连不上权重仓库")
+    out = qc.analyze(wav, sr, wav, sr)
+    assert out["speaker_sim"] is None
+    assert out["speaker_sim_backend"] is None
+    assert "连不上" in out["speaker_sim_error"]
+
+    # 有嵌入时：都已 L2 归一化，点积即余弦（正交=0，同向=1）
+    monkeypatch.setattr(qc, "speaker_embedding",
+                        lambda w, s: np.array([1.0, 0.0]) if w is wav else np.array([0.0, 1.0]))
+    other = np.zeros(sr, dtype=np.float32)
+    assert qc.speaker_sim(wav, sr, other, sr) == 0.0
+    monkeypatch.setattr(qc, "speaker_embedding", lambda w, s: np.array([1.0, 0.0]))
+    assert qc.speaker_sim(wav, sr, other, sr) == 1.0
+
+
+def test_speech_ratio_separates_padding_from_slow_speech():
+    """同样 2 秒音频：一段全程有声、一半是尾部静音，speech_ratio 必须能分开，
+    否则 chars_per_sec 变慢就分不清是模型说慢了还是多垫了静音。"""
+    sr = 16000
+    t = np.arange(sr * 2) / sr
+    voiced = (0.3 * np.sin(2 * np.pi * 200 * t)).astype(np.float32)
+    padded = np.concatenate([voiced[:sr], np.zeros(sr, dtype=np.float32)])
+    from voxft.qc.audio import speech_ratio
+    assert speech_ratio(voiced, sr) > 0.9
+    assert 0.35 < speech_ratio(padded, sr) < 0.65
+    assert speech_ratio(voiced[:sr // 8], sr) is None
 
 
 def test_numeric_flag_covers_verbalized_numbers():
@@ -66,20 +94,8 @@ def test_over_read_uses_the_production_threshold():
     assert _over_read("anything", "") is False
 
 
-@pytest.mark.parametrize("text,expected", [("Harganya Rp250.000.", True), ("Saya tak sangka.", False)])
+@pytest.mark.parametrize("text,expected",
+                         [("Harganya Rp250.000.", True), ("Saya tak sangka.", False)])
 def test_numeric_autodetect(text, expected):
     from voxft.eval import _is_numeric
     assert _is_numeric({"text": text}) is expected
-
-
-def test_speech_ratio_separates_padding_from_slow_speech():
-    """同样 2 秒音频：一段全程有声、一半是尾部静音，speech_ratio 必须能分开，
-    否则 chars_per_sec 变慢就分不清是模型说慢了还是多垫了静音。"""
-    sr = 16000
-    t = np.arange(sr * 2) / sr
-    voiced = (0.3 * np.sin(2 * np.pi * 200 * t)).astype(np.float32)
-    padded = np.concatenate([voiced[:sr], np.zeros(sr, dtype=np.float32)])
-    from voxft.qc.audio import speech_ratio
-    assert speech_ratio(voiced, sr) > 0.9
-    assert 0.35 < speech_ratio(padded, sr) < 0.65
-    assert speech_ratio(voiced[:sr // 8], sr) is None
