@@ -178,11 +178,16 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
 
 def append_record(run: str, eval_paths: list[str], verdict: str = "",
                   next_step: str = "", notes: str = "", noise: float = 0.005) -> Path:
+    """把新一轮记录插到表头之后、旧记录之前——最近一轮永远在最上面。"""
     record = build_record(run, eval_paths, verdict, next_step, notes, noise)
     RUNLOG.parent.mkdir(parents=True, exist_ok=True)
-    old = RUNLOG.read_text(encoding="utf-8") if RUNLOG.exists() else _HEADER
-    # 新记录插在表头之后、旧记录之前：最近一轮永远在最上面
-    RUNLOG.write_text(old.rstrip("\n") + "\n\n" + record, encoding="utf-8")
+    old = RUNLOG.read_text(encoding="utf-8") if RUNLOG.exists() else ""
+    if old.startswith("# 微调运行记录"):
+        head, sep, rest = old.partition("\n## ")
+        new = head.rstrip("\n") + "\n\n" + record.rstrip("\n") + "\n" + (sep + rest if sep else "")
+    else:
+        new = (old or _HEADER).rstrip("\n") + "\n\n" + record
+    RUNLOG.write_text(new, encoding="utf-8")
     return RUNLOG
 
 

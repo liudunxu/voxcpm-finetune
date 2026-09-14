@@ -237,3 +237,18 @@ def test_regressed_splits_red_line_from_noise():
     assert out["red"] == ["vi 0.0700→0.5300"]
     assert out["noise"] == ["ms 0.0850→0.0854"]   # th 改善、tl 持平，都不该出现
     assert _regressed([base]) == {}
+
+
+def test_runlog_puts_newest_record_first(tmp_path, monkeypatch):
+    """读运行记录和写周报都是从上往下读最新的；追加到末尾就得每次翻到底。"""
+    from voxft.train import runlog
+    monkeypatch.setattr(runlog, "RUNLOG", tmp_path / "runs.md")
+    monkeypatch.setattr(runlog, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(runlog, "CHECKPOINT_DIR", tmp_path)
+    runlog.append_record("run_a", [], verdict="第一轮")
+    runlog.append_record("run_b", [], verdict="第二轮")
+    text = (tmp_path / "runs.md").read_text(encoding="utf-8")
+    assert text.startswith("# 微调运行记录")
+    assert text.index("## run_b") < text.index("## run_a")
+    assert text.count("# 微调运行记录") == 1        # 表头不能被重复写进去
+    assert "第一轮" in text and "第二轮" in text      # 旧记录不能丢
