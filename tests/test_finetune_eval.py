@@ -102,7 +102,7 @@ def test_eval_keeps_conditions_thai_marks_and_unique_reports(tmp_path, monkeypat
     kwargs = []
     monkeypatch.setattr(infer, "_run", lambda model, kw: kwargs.append(kw) or ("fake.wav", 0.1))
     monkeypatch.setattr(evaluation, "_transcribe", lambda *a: "Hindi mo alam na buntis ka?")
-    monkeypatch.setattr(evaluation, "_prosody", lambda *a: {"f0_std_st": 1.0})
+    monkeypatch.setattr(evaluation, "_acoustics", lambda *a: {"f0_std_st": 1.0, "audio_sec": 1.0, "chars_per_sec": 5.0, "metallic": False, "low_snr": False, "speaker_sim": 0.9})
     assert evaluation._norm("ก่ ก") == "ก่ก"
     assert evaluation._error_rate("abc", "ac") == 0.5
     assert evaluation._error_rate("", "ab") == 1
@@ -137,7 +137,7 @@ def test_eval_computes_cer_and_wer_for_vi_id_and_ms(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
     monkeypatch.setattr(infer, "get_model", lambda *args: object())
     monkeypatch.setattr(infer, "_run", lambda model, kw: ("fake.wav", 0.1))
-    monkeypatch.setattr(evaluation, "_prosody", lambda *a: {"f0_std_st": 1.0})
+    monkeypatch.setattr(evaluation, "_acoustics", lambda *a: {"f0_std_st": 1.0, "audio_sec": 1.0, "chars_per_sec": 5.0, "metallic": False, "low_snr": False, "speaker_sim": 0.9})
     for lang, text in (("vi", "Tôi không biết"), ("id", "Saya tidak tahu"),
                        ("ms", "Saya tidak tahu")):
         monkeypatch.setattr(evaluation, "_transcribe", lambda *a, text=text: text)

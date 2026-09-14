@@ -22,7 +22,7 @@
 {"case_id": "id_digit_2", "lang": "id", "text": "Harganya 250 ribu rupiah.", "ref_audio": "prod_ref_fil.wav", "seed": 404, "note": "印尼语数量表达"}
 {"case_id": "ms_digit_2", "lang": "ms", "text": "Harganya RM1,200 ringgit.", "ref_audio": "prod_ref_fil.wav", "seed": 504, "note": "马来语货币前缀 RM"}
 {"case_id": "tl_digit", "lang": "tl", "text": "Bayad ko ay 1,500 pesos.", "ref_audio": "prod_ref_fil.wav", "seed": 204, "note": "线上 fil 走 filipino TN（会verbalize数字），此处保留数字形态作对照"}
-{"case_id": "tl_digit_prod", "lang": "tl", "text": "Bayad ko ay isang libo't limang daan pesos.", "ref_audio": "prod_ref_fil.wav", "seed": 205, "note": "线上 fil 的真实形态：TN 已把数字 verbalize，模型收到的是数字词而非阿拉伯数字"}
+{"case_id": "tl_digit_prod", "lang": "tl", "text": "Bayad ko ay isang libo't limang daan pesos.", "ref_audio": "prod_ref_fil.wav", "seed": 205, "note": "线上 fil 的真实形态：TN 已把数字 verbalize。文本里没有阿拉伯数字，但实测 base 与 r2 的输出都被 Whisper 转写成 \"1,500 pesos\"、CER 同为 0.588，属 ASR 归一化假象，故显式标 numeric=true 把它剔出 CER 汇总，只走盲听", "numeric": true}
 {"case_id": "tl_digit_2", "lang": "tl", "text": "May 30 minuto na lang bago magsimula ang pelikula.", "ref_audio": "prod_ref_fil.wav", "seed": 206, "note": "数量词"}
 {"case_id": "ms_digit_3", "lang": "ms", "text": "Kereta itu berharga RM45,000.", "ref_audio": "prod_ref_fil.wav", "seed": 505, "note": "马来语货币 RM，基座会念成印尼盾 Rp"}
 {"case_id": "id_digit_3", "lang": "id", "text": "Penerbangan GA 876 berangkat pukul 06.15.", "ref_audio": "prod_ref_fil.wav", "seed": 405, "note": "航班号 + 时间，线上 id 走 generic TN 原样透传"}

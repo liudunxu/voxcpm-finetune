@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import unicodedata
 from collections import defaultdict
 from difflib import SequenceMatcher
@@ -55,16 +56,44 @@ def _error_rate(hyp, ref) -> float:
 
 
 def _is_truncated(hyp: str, ref: str, tail: int = 8) -> bool:
-    """仅定位疑似漏尾；ASR、同义转写也可能触发，必须听音确认。"""
+    """仅定位疑似漏尾（= 少读）；ASR、同义转写也可能触发，必须听音确认。"""
     h, r = _norm(hyp), _norm(ref)
     return bool(r) and (len(h) < 0.6 * len(r) or
                        SequenceMatcher(None, h[-tail:], r[-tail:]).ratio() < 0.5)
 
 
-def _prosody(wav_path: str, text: str) -> dict:
+def _over_read(hyp: str, ref: str) -> bool:
+    """多读/跑飞：归一化文本比参考长出 40% 以上。门限取 OmniVoice 的 overread 判定
+    （api.py:6529-6536，长文本档就是 1.4×）。"""
+    h, r = _norm(hyp), _norm(ref)
+    return bool(r) and len(h) > 1.4 * len(r)
+
+
+def _is_numeric(case: dict) -> bool:
+    """数字类 case 要单独汇总：Whisper 自己会把口播数字词归一成阿拉伯数字或货币符号，
+    实测 "isang libo't limang daan pesos" 被转写成 "1,500 pesos"，CER 因此虚高到 0.588
+    而 base 与 checkpoint 完全相同——这一类的 CER 差异不能当作 TTS 质量差异。"""
+    if "numeric" in case:
+        return bool(case["numeric"])
+    return bool(re.search(r"\d", case.get("text") or ""))
+
+
+def _acoustics(wav_path: str, text: str, ref_path: str | None, ref_cache: dict) -> dict:
+    """韵律 + 质检指标；音频只解码一次，参考音频按路径缓存。"""
     from .data.pipeline import audio_metrics, load_wav_mono
+    from .qc import audio as qc
+
     wav, sr = load_wav_mono(wav_path)
-    return audio_metrics(wav, sr, text)
+    out = dict(audio_metrics(wav, sr, text))
+    ref = None
+    if ref_path:
+        if ref_path not in ref_cache:
+            ref_cache[ref_path] = load_wav_mono(ref_path)
+        ref = ref_cache[ref_path]
+    out.update(qc.analyze(wav, sr, ref[0] if ref else None, ref[1] if ref else None))
+    ref_chars = len(_norm(text))
+    out["chars_per_sec"] = round(ref_chars / out["audio_sec"], 3) if out["audio_sec"] else None
+    return out
 
 
 def evaluate(target: str, lang: str, texts: list[str | dict],
@@ -94,6 +123,7 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
     model = infer.get_model(base, lora)
     label = Path(target).parent.name + "_" + Path(target).name if lora else "base"
     items = []
+    ref_cache: dict = {}
     for case in cases:
         for requested_seed in seeds if seeds is not None else [int(case.get("seed", seed))]:
             kw = infer._gen_kwargs(case["text"], case.get("ref_audio"), None,
@@ -109,35 +139,75 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                 "wer": round(_error_rate(_norm(hyp, True).split(),
                                           _norm(case["text"], True).split()), 4)
                        if case["lang"] in WER_LANGS else None,
-                "suspected_truncation": _is_truncated(hyp, case["text"]),
-                **_prosody(wav_path, case["text"]), "wav": wav_path, "gen_sec": gen_sec,
+                "numeric": _is_numeric(case),
+                "suspected_truncation": _is_truncated(hyp, case["text"]),   # = 少读/漏尾
+                "over_read": _over_read(hyp, case["text"]),                  # = 多读/跑飞
+                "len_ratio": round(len(h) / len(r), 3) if r else None,
+                **_acoustics(wav_path, case["text"], case.get("ref_audio"), ref_cache),
+                "wav": wav_path, "gen_sec": gen_sec,
                 "human_review": {"naturalness_1_5": None, "emotion_fit_1_5": None,
                                  "speaker_similarity_1_5": None, "intelligibility_1_5": None,
                                  "cutoff": None, "noise": None, "notes": ""},
             })
-    by_lang = {}
-    for lang in sorted({i["lang"] for i in items}):
-        g = [i for i in items if i["lang"] == lang]
-        wers = [i["wer"] for i in g if i["wer"] is not None]
-        by_lang[lang] = {
+
+    def _agg(g: list[dict]) -> dict:
+        def mean(key, subset=None):
+            vals = [i[key] for i in (g if subset is None else subset) if i.get(key) is not None]
+            return round(sum(vals) / len(vals), 4) if vals else None
+
+        def rate(key):
+            vals = [i[key] for i in g if i.get(key) is not None]
+            return round(sum(bool(v) for v in vals) / len(vals), 4) if vals else None
+
+        out = {
             "cases": len(g),
-            "mean_cer": round(sum(i["cer"] for i in g) / len(g), 4),
-            "mean_similarity": round(sum(i["similarity"] for i in g) / len(g), 4),
-            "suspected_truncation_rate": round(sum(i["suspected_truncation"] for i in g) / len(g), 4),
-            **({"mean_wer": round(sum(wers) / len(wers), 4)} if wers else {}),
+            "mean_cer": mean("cer"),
+            "mean_similarity": mean("similarity"),
+            "suspected_truncation_rate": rate("suspected_truncation"),  # 少读 / 漏尾
+            "over_read_rate": rate("over_read"),                        # 多读 / 跑飞
+            "metallic_rate": rate("metallic"),
+            "low_snr_rate": rate("low_snr"),
+            "mean_speaker_sim": mean("speaker_sim"),
+            "mean_chars_per_sec": mean("chars_per_sec"),
+            "mean_speech_ratio": mean("speech_ratio"),
         }
+        plain = [i for i in g if not i["numeric"]]
+        if plain:
+            # 数字类单列：Whisper 会把口播数字词归一成阿拉伯数字或货币符号，
+            # 那一类的 CER 差异不代表 TTS 质量差异，混进总均值会把结论带偏
+            out["non_numeric_cases"] = len(plain)
+            out["mean_cer_non_numeric"] = mean("cer", plain)
+        wers = [i["wer"] for i in g if i["wer"] is not None]
+        if wers:
+            out["mean_wer"] = round(sum(wers) / len(wers), 4)
+        return out
+
+    by_lang = {lang: _agg([i for i in items if i["lang"] == lang])
+               for lang in sorted({i["lang"] for i in items})}
+    overall = _agg(items)
     report = {
         "target": target, "base": infer._resolve_base(base), "label": label,
         "cfg_value": cfg_value, "inference_timesteps": inference_timesteps,
         "retry_badcase": False, "asr_model": "large-v3",
         "asr_auto_detect_langs": sorted(AUTO_DETECT_LANGS),
-        "mean_similarity": round(sum(i["similarity"] for i in items) / len(items), 4),
-        "mean_cer": round(sum(i["cer"] for i in items) / len(items), 4),
-        "suspected_truncation_rate": round(sum(i["suspected_truncation"] for i in items) / len(items), 4),
+        "mean_similarity": overall["mean_similarity"],
+        "mean_cer": overall["mean_cer"],
+        "mean_cer_non_numeric": overall.get("mean_cer_non_numeric"),
+        "suspected_truncation_rate": overall["suspected_truncation_rate"],
+        "over_read_rate": overall["over_read_rate"],
+        "metallic_rate": overall["metallic_rate"],
+        "low_snr_rate": overall["low_snr_rate"],
+        "mean_speaker_sim": overall["mean_speaker_sim"],
+        "mean_chars_per_sec": overall["mean_chars_per_sec"],
+        "mean_speech_ratio": overall["mean_speech_ratio"],
         "mean_f0_std": round(sum(i["f0_std_st"] for i in items) / len(items), 2),
         "by_lang": by_lang,
         "note": "ASR/漏尾均为诊断；F0 不作通过门限。按语言、ref 语言、角色、情绪分组做母语盲听。"
-                "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词/秒），不横向比。",
+                "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词级），不横向比。"
+                "suspected_truncation=少读/漏尾，over_read=多读/跑飞（>1.4× 参考长度）。"
+                "mean_cer_non_numeric 剔除了含阿拉伯数字的 case——那一类的 CER 会被 Whisper "
+                "自身的数字归一化污染，只能靠盲听。metallic/low_snr 阈值移植自 OmniVoice 生产口径。"
+                "speaker_sim 是 MFCC 余弦（低可信档），只用于同一 ref 下 base 与 checkpoint 的相对比较。",
         "items": items,
     }
     out_dir = EVAL_DIR
@@ -245,16 +315,24 @@ def save_reviews(report_a: str, report_b: str, session: list[dict],
             "written": [report_a, report_b]}
 
 
+def _row(name: str, d: dict) -> str:
+    return (f"{name:<40} {d.get('mean_cer'):>7} {str(d.get('mean_cer_non_numeric')):>9} "
+            f"{str(d.get('suspected_truncation_rate')):>6} {str(d.get('over_read_rate')):>6} "
+            f"{str(d.get('metallic_rate')):>6} {str(d.get('mean_speaker_sim')):>7} "
+            f"{str(d.get('mean_chars_per_sec')):>7}")
+
+
 def print_compare(reports: list[dict]) -> None:
-    print(f"{'checkpoint':<44} {'CER↓':>8} {'疑似漏尾':>8} {'F0(描述)':>9}")
+    print(f"{'checkpoint':<40} {'CER↓':>7} {'CER非数字':>9} {'少读':>6} {'多读':>6} "
+          f"{'金属音':>6} {'SIM':>7} {'字/秒':>7}")
     for r in reports:
-        print(f"{r['target']:<44} {r['mean_cer']:>8} "
-              f"{r['suspected_truncation_rate']:>8} {r['mean_f0_std']:>9}")
+        print(_row(r["target"], r))
         if len(r.get("by_lang", {})) > 1:
             for lang, s in r["by_lang"].items():
-                print(f"  {lang:<42} {s['mean_cer']:>8} "
-                      f"{s['suspected_truncation_rate']:>8}")
+                print(_row("  " + lang, s))
     print("\n不能凭以上指标自动通过；请做母语盲听，检查情绪、音色、自然度和真实截断。")
+    print("数字类 case 的 CER 会被 Whisper 自身的数字归一化污染，结论看「CER非数字」那一列；")
+    print("SIM 是 MFCC 余弦（低可信档），只在同一 ref 下做 base 与 checkpoint 的相对比较。")
 
 
 def main() -> None:
