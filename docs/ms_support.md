@@ -51,7 +51,7 @@
 | 源 id | 角色 | 许可 | 规模 | speaker ID | 状态 | 可用性 |
 |---|---|---|---|---|---|---|
 | `drama_ms` | expressive | 按自有授权 | 自建 | ✅ 人工核实 | ✅ 通路已验证（与 `drama_tl`/`drama_vi` 同构） | **10/10** 唯一可信表现力来源 |
-| `yodas2_ms` | anchor | CC-BY-3.0 | **未核实** | ❌（视频级近似身份） | ~ config `ms000` 已由 parquet API 核实存在；**字段形态未核实** | 7/10 ms 自然口语首选 |
+| `yodas2_ms` | anchor | CC-BY-3.0 | **未核实** | ❌（视频级近似身份） | ✅ 2026-09-15 下载路径已修可下（ms000 6 片 parquet 走 API 端点）；**字段形态与口音抽听未办** | 7/10 ms 自然口语首选 |
 | `fleurs_ms` | anchor | CC-BY-4.0 | **未核实** | ❌ | ✅ config `ms_my` 已由 parquet API 核实存在（103 个 config 之一） | 5/10 干净朗读，只当发音锚点 |
 
 **为什么只注册这 3 个**：AGENTS.md 的红线是「低资源语种的调研结论必须核实到页面/API 原文」，所以凡是规模、许可、字段形态没取到原文的候选一律不进代码，只进 §3 的待核实清单。`yodas2_ms` 与已在用的 `yodas_th` 是同一上游家族（YODAS2 + Sidon 降噪），许可同为 CC-BY-3.0；注册的是**可复现的路径，不是编造的数字**，所以 note 里写着「先 `--max-samples` 试跑」。
@@ -84,7 +84,7 @@ curl -s "https://huggingface.co/api/datasets/<repo>/parquet" | python -c "import
 
 | # | 待核实项 | 要确认什么 | 命令/入口 |
 |---|---|---|---|
-| 1 | **`yodas2_ms` 字段形态** | 自动转换的 parquet 里音频是内嵌 bytes 还是只有元数据（音频留在 `.tar.gz` 分片里）；时长是否落 3-30s；`metadata.json` 的 YouTube video ID 字段名叫什么（要映射到 `session_col`，否则同一视频的切片会跨 train/val 泄漏） | `download --source yodas2_ms --max-samples 20`，看日志时长分布与列名 |
+| 1 | **`yodas2_ms` 字段形态** | 自动转换的 parquet 里音频是内嵌 bytes 还是只有元数据（音频留在 `.tar.gz` 分片里）；时长是否落 3-30s；`metadata.json` 的 YouTube video ID 字段名叫什么（要映射到 `session_col`，否则同一视频的切片会跨 train/val 泄漏） | `download --source yodas2_ms --max-samples 20`，看日志时长分布与列名 → **✅ 下载路径 2026-09-15 已修可下（ms000 6 片 parquet，走 `/api/datasets/sarulab-speech/yodas2_sidon/parquet/...` 端点，列是 WebDataset 原样成员 `flac`/`metadata.json`）；字段形态试跑与口音抽听仍待办** |
 | 2 | `fleurs_ms` 小时数 | config `ms_my` 已确认存在，但各语种通常十余小时，ms 具体多少没取到原文 | `download --source fleurs_ms --max-samples 50` |
 | 3 | **`mesolitica` 全线授权** | Malaysia-AI 是马来语最大的语料方，`Malaysian-STT-Whisper`(10M+ 条)、`dedup-Malaysian-Emilia`(70GB)、`pseudolabel-malaysian-youtube-*`(1M+) 规模都很大，但**没有一个标了 license**。要问清：能否商用、能否用于训练对外发布的模型、要不要署名 | 联系 Malaysia-AI（对应泰语 MagicHub 的询价路径），或查 https://github.com/malaysia-ai/dataset 的授权说明 |
 | 4 | `deepdml/common_voice_26_0` 的 `ms` | Common Voice **22** 镜像确认没有 ms，但 **26** 这个镜像的 cardData 里**有 ms**（50 语种，东南亚含 id/ms/th/vi）。问题是 `gated: manual` 且**无许可声明**——CV 官方数据本身是 CC0，镜像为什么不标？validated 小时数多少？ | `curl -s ".../api/datasets/deepdml/common_voice_26_0?full=true"`；申请访问后看 config 列表 |
@@ -107,6 +107,17 @@ curl -s "https://huggingface.co/api/datasets/<repo>/parquet" | python -c "import
 | `MERaLiON/sea_audiobench_datasets_*` | ❌ NC-ND | `cc-by-nc-4.0` / `cc-by-nc-nd-4.0`，NC 禁商用且 ND 禁演绎（微调就是演绎） |
 | `LULab/myMediEval_speech` 等 | ❌ NC-SA + gated manual | 医疗领域，许可与领域都不对 |
 | `DatarrX/burmese-synthetic-speech-corpus` 之类合成集 | ❌ 合成语音 | 同 `Malaysian-TTS` 的理由 |
+| **IMDA National Speech Corpus** | ❌ **纯新加坡英语，ms 内容为零** | MERaLiON 论文 arXiv 2412.09818 原文：10,600h **Singaporean English**；SEACrowd 镜像 cardData `language: [eng]`。别再查 |
+| **Meta Omnilingual ASR Corpus**（2025-11，CC-BY-4.0，348 语种） | ❌ **不含标准马来语** | 专收低资源语种：ms/ind/tha/vie/tgl 都没有；ms 相关只有 `msh`/`msw` 两个马来语族小语种，不能混用。别再查 |
+| `Scicom-intl/Malaysian-Emilia` 系列与 `charlieliu331` 衍生子集 | ❌ 默认不可用 | 无许可声明 + YouTube rip + 姊妹集标 NC；拿到书面授权前一律不用 |
+| `malaysia-ai/Multilingual-TTS` | ❌ **CC-BY-NC** | 禁商用 |
+| MagicHub **ASR-MalCSC** | ❌ 不值得 | 只有 5h，且免费通道是 NC 条款；为 5h 单谈商用授权不值 |
+
+**已核实的低价值/无新增结论（2026-09-15，别再重复扫）：** SEACrowd 434 个数据集 2025–2026 **零新增 ms 音频**；`asr_malcsc` / `asr_smaldusc` 都是 CC-BY-NC-ND。HF 2025–2026 新 ms 音频里 `mesolitica/sebut-perkataan` 是 **MIT** 但只有 3 人单词朗读、量小价值低；`malaysia-ai` 其余条目全线无许可声明（无声明 ≠ 开放，默认全权保留）。
+
+### 3.2 唯一可买的 ms 自然口语现货：Nexdata 200h（SKU 1280）
+
+✅ 官方页核实：https://www.nexdata.ai/datasets/speechrecog/1280 —— **200h Malay 自发对话**，带转写 + speaker ID + gender，与已核实的泰语 1004h（SKU 1687）同厂商同形态。ms 侧没有 gigaspeech2 / CV22 级别的免费口语现货，这是商业渠道里唯一对口的条目，询价可与泰语 SKU 合并谈。
 
 ---
 

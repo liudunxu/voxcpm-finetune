@@ -21,7 +21,7 @@ class Source:
     id: str
     lang: str  # th / tl / vi / id / ms / zh / en
     label: str
-    kind: str  # hf_dataset | hf_tar | openslr | local
+    kind: str  # hf_dataset | hf_tar | cv22 | openslr | local
     repo: str = ""
     config: str = ""
     split: str = "train"
@@ -169,9 +169,13 @@ SOURCES: list[Source] = [
     ),
     Source(
         "cv22_th", "th", "Common Voice 22 泰语（量大但噪，发音锚点）",
-        "hf_dataset", "fsicoli/common_voice_22_0", "th", "train",
-        "CC0", "官方已撤架，此为社区镜像（无需同意条款）；众包噪音大，自动 Whisper 校验",
-        has_speaker=True, qc="whisper", quality=30,
+        "cv22", "fsicoli/common_voice_22_0", "th", "train",
+        "CC0",
+        "官方已撤架，此为社区镜像（无需同意条款）。仓库是脚本式数据集，加载脚本把数据 URL "
+        "硬编码到 huggingface.co、HF_ENDPOINT 管不到，已改为按真实布局直拉 tsv+tar"
+        "（只取 train/dev/test，48kHz mp3）。client_id 是众包自报身份：写进 speaker/session "
+        "供 train/val 隔离，但不标 speaker_verified、不作 ref 依据。众包噪音大，自动 Whisper 校验",
+        has_speaker=False, qc="whisper", quality=30,
     ),
     # ---- Tagalog ----
     Source(
@@ -245,12 +249,14 @@ SOURCES: list[Source] = [
     ),
     Source(
         "cv22_vi", "vi", "Common Voice 22 越南语（众包朗读，发音锚点）",
-        "hf_dataset", "fsicoli/common_voice_22_0", "vi", "train",
+        "cv22", "fsicoli/common_voice_22_0", "vi", "train",
         "CC0",
-        "官方已撤架，此为社区镜像（无需同意条款）；该 locale 的 validated 小时数未核实，"
-        "先 --max-samples 试跑。众包噪音大，自动 Whisper 校验；朗读语料有权威文本，"
-        "语种不符就是错行，因此不吃 code-switch 放行",
-        has_speaker=True, qc="whisper", accept_langs=("vi",), quality=30,
+        "官方已撤架，此为社区镜像（无需同意条款）；脚本式数据集的数据 URL 硬编码到 "
+        "huggingface.co，已改为按真实布局直拉 tsv+tar（只取 train/dev/test）。"
+        "client_id 是众包自报身份：供 train/val 隔离，不标 speaker_verified、不作 ref 依据。"
+        "该 locale 的 validated 小时数未核实，先 --max-samples 试跑。众包噪音大，"
+        "自动 Whisper 校验；朗读语料有权威文本，语种不符就是错行，因此不吃 code-switch 放行",
+        has_speaker=False, qc="whisper", accept_langs=("vi",), quality=30,
     ),
     # ---- 印尼语 ----
     Source(
@@ -276,12 +282,14 @@ SOURCES: list[Source] = [
     ),
     Source(
         "cv22_id", "id", "Common Voice 22 印尼语（众包朗读，发音锚点）",
-        "hf_dataset", "fsicoli/common_voice_22_0", "id", "train",
+        "cv22", "fsicoli/common_voice_22_0", "id", "train",
         "CC0",
-        "官方已撤架，此为社区镜像（无需同意条款）；该 locale 的 validated 小时数未核实，"
-        "先 --max-samples 试跑。众包噪音大，自动 Whisper 校验；朗读语料有权威文本，"
-        "语种不符就是错行，因此不吃 id 默认的 (id, en) 放行",
-        has_speaker=True, qc="whisper", accept_langs=("id",), quality=30,
+        "官方已撤架，此为社区镜像（无需同意条款）；脚本式数据集的数据 URL 硬编码到 "
+        "huggingface.co，已改为按真实布局直拉 tsv+tar（只取 train/dev/test）。"
+        "client_id 是众包自报身份：供 train/val 隔离，不标 speaker_verified、不作 ref 依据。"
+        "该 locale 的 validated 小时数未核实，先 --max-samples 试跑。众包噪音大，"
+        "自动 Whisper 校验；朗读语料有权威文本，语种不符就是错行，因此不吃 id 默认的 (id, en) 放行",
+        has_speaker=False, qc="whisper", accept_langs=("id",), quality=30,
     ),
     # ---- 马来语 ----
     Source(
@@ -289,12 +297,12 @@ SOURCES: list[Source] = [
         "hf_dataset", "sarulab-speech/yodas2_sidon", "ms000", "train",
         "CC-BY-3.0",
         "ms 的自然口语首选：与已在用的 yodas_th 同一上游家族（YODAS2 + Sidon 降噪），"
-        "许可干净（CC-BY-3.0，无 SA/NC 红线），config ms000 已由 parquet API 核实存在。"
-        "⚠️ 仓库是 WebDataset .tar.gz 分片（flac + 可选 metadata.json），**规模与字段形态"
-        "未核实**，先 --max-samples 20 试跑确认 audio 列存在且时长落 3-30s；若转换 parquet "
-        "只有元数据、音频留在 .tar 里，本源即不可用。试跑后还要把 metadata.json 里的 "
-        "YouTube video ID 映射到 session_col，否则同一视频的切片会跨 train/val 泄漏。"
-        "YouTube 抓取，speaker 是视频级近似身份，不作 ref 依据。详见 docs/ms_support.md",
+        "许可干净（CC-BY-3.0，无 SA/NC 红线）。**已核实形态（2026-09-15）**：仓库无 "
+        "refs/convert/parquet 分支，下载器 404 后回退索引 API URL 直链；转换 parquet 的列是 "
+        "WebDataset 原样成员——`flac` 是 HF Audio 结构（bytes=整段视频音频）、`metadata.json` "
+        "含 video_id 与 utterances(start/end/text/utt_id)，下载器已按 utterances 切句、"
+        "session=video_id（同 yodas_th 的 rsplit 约定）。speaker 是视频级近似身份，不作 ref 依据。"
+        "详见 docs/ms_support.md",
         has_speaker=False, qc="none", role="anchor", preferred=True, quality=80,
     ),
     Source(

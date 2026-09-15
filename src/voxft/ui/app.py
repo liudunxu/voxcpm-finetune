@@ -70,7 +70,7 @@ def do_preview(name, idx):
         p = DATA_PROCESSED / name / "train.jsonl"
         if not p.exists():
             return "（该数据集不存在）", None
-        rows = [json.loads(l) for l in p.open(encoding="utf-8") if l.strip()]
+        rows = [json.loads(line) for line in p.open(encoding="utf-8") if line.strip()]
         if not rows:
             return "（空数据集）", None
         i = int(idx or 0) % len(rows)

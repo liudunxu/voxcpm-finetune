@@ -150,10 +150,11 @@ def _check_gated(exc: Exception, repo: str) -> None:
                            f"(https://huggingface.co/datasets/{repo})") from exc
 
 
-def _tree(endpoint: str, repo: str, path: str, token: str) -> list[dict]:
+def _tree(endpoint: str, repo: str, path: str, token: str,
+          revision: str = "refs%2Fconvert%2Fparquet") -> list[dict]:
     import requests
     r = requests.get(
-        f"{endpoint}/api/datasets/{repo}/tree/refs%2Fconvert%2Fparquet/{path}",
+        f"{endpoint}/api/datasets/{repo}/tree/{revision}/{path}",
         headers={"Authorization": f"Bearer {token}"} if token else {},
         timeout=30)
     if r.status_code in (401, 403):
@@ -264,6 +265,60 @@ def _resolve_parquet_ref(entry: str) -> tuple[str, str]:
     return path.lstrip("/"), "main"
 
 
+def _is_404(exc: Exception) -> bool:
+    """只认「资源不存在」；网络/权限等其它错误不许掉进直链回退。"""
+    from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
+    if isinstance(exc, EntryNotFoundError):
+        return True
+    resp = getattr(exc, "response", None)
+    return isinstance(exc, HfHubHTTPError) and resp is not None \
+        and resp.status_code == 404
+
+
+def _download_parquet_url(url: str, dest: Path, token: str, progress=None) -> str:
+    """parquet 索引 API URL 的直链下载，落到 dest 下的临时文件并续传。
+
+    实测（2026-09-15，sarulab-speech/yodas2_sidon ms000）：仓库没有 refs/convert/parquet
+    分支时索引 API 照样返回 URL，解析成分支路径下载必 404，但 API URL 本身跟随跳转可
+    直接 GET（Range 返回 206），镜像侧同样可用。主机改写到 HF_ENDPOINT；残留的
+    .dl-* 临时文件下次按 Range 续传。
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    import requests
+
+    parts = urlparse(url)
+    endpoint = env("HF_ENDPOINT").rstrip("/")
+    if endpoint:
+        mirror = urlparse(endpoint)
+        if mirror.netloc and mirror.netloc != parts.netloc:
+            parts = parts._replace(scheme=mirror.scheme, netloc=mirror.netloc)
+            url = urlunparse(parts)
+    tmp = dest / f".dl-{Path(parts.path).name}"
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    for attempt in range(3):
+        pos = tmp.stat().st_size if tmp.exists() else 0
+        if pos:
+            headers["Range"] = f"bytes={pos}-"
+        try:
+            with requests.get(url, headers=headers, stream=True, timeout=60) as r:
+                if r.status_code == 416:      # Range 越过末尾：已下完
+                    return str(tmp)
+                r.raise_for_status()
+                # 服务端不理会 Range（200）就从头重写，只在真续传（206）时追加
+                with tmp.open("ab" if pos and r.status_code == 206 else "wb") as f:
+                    for chunk in r.iter_content(1 << 20):
+                        f.write(chunk)
+            return str(tmp)
+        except Exception as exc:
+            if attempt == 2:
+                raise RuntimeError(f"索引 API URL 直链下载失败（已重试 3 次）: {exc}") from exc
+            if progress:
+                progress(f"直链下载出错（{exc}），5 秒后重试 {attempt + 2}/3")
+            time.sleep(5)
+    raise RuntimeError("unreachable")
+
+
 def _download_parquet(source: Source, files: list[tuple[str, str]], dest: Path,
                       max_samples: int | None, token: str, progress=None) -> int:
     """逐分片下载（hf_hub_download 自带断点续传与缓存）并解析。"""
@@ -285,7 +340,9 @@ def _download_parquet(source: Source, files: list[tuple[str, str]], dest: Path,
             if max_samples is not None and n >= max_samples:
                 break
             if not revision:  # 索引 API 回退路径：条目是 URL
-                repo_file, revision = _resolve_parquet_ref(repo_file)
+                api_url, repo_file, revision = repo_file, *_resolve_parquet_ref(repo_file)
+            else:
+                api_url = ""
             name = Path(repo_file).name
             if progress:
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 下载 {name}")
@@ -294,11 +351,16 @@ def _download_parquet(source: Source, files: list[tuple[str, str]], dest: Path,
                              repo_type="dataset", token=token or None)
             if bar:
                 dl_kwargs["tqdm_class"] = bar
+            local = None
             for attempt in range(3):
                 try:
                     local = hf_hub_download(**dl_kwargs)
                     break
                 except Exception as exc:
+                    # 仓库没有 refs/convert/parquet 分支时 404 重试无意义，
+                    # 直接回退到索引 API 的原始 URL 直链下载（yodas2_sidon 实测）
+                    if api_url and _is_404(exc):
+                        break
                     if attempt == 2:
                         raise RuntimeError(f"{source.id}: 分片 {name} 下载失败"
                                            f"（已重试 3 次）: {exc}") from exc
@@ -306,6 +368,10 @@ def _download_parquet(source: Source, files: list[tuple[str, str]], dest: Path,
                         progress(f"{source.id}: 分片 {name} 下载出错（{exc}），"
                                  f"5 秒后重试 {attempt + 2}/3")
                     time.sleep(5)
+            if local is None:
+                if progress:
+                    progress(f"{source.id}: parquet 分支 404，回退索引 API URL 直链下载 {name}")
+                local = _download_parquet_url(api_url, dest, token, progress)
             if progress:
                 size_mb = Path(local).stat().st_size / 1024 / 1024
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 下载完成"
@@ -317,10 +383,75 @@ def _download_parquet(source: Source, files: list[tuple[str, str]], dest: Path,
             s_col = _pick(source.speaker_cols or _SPK_COLS, cols)
             e_col = source.emotion_col if source.emotion_col in cols else None
             g_col = source.session_col if source.session_col in cols else None
-            if a_col is None or (t_col is None and not source.needs_transcribe):
+            # WebDataset 原样成员列（yodas2_sidon 实测）：flac 是 HF Audio 结构
+            # {bytes=整段视频音频, path}，metadata.json 给逐句 start/end/text/utt_id
+            # 与 video_id——一行一个视频，按 utterances 切成句级样本
+            wds = a_col is None and "flac" in cols and "metadata.json" in cols
+            if not wds and (a_col is None or (t_col is None and not source.needs_transcribe)):
                 if progress:
                     progress(f"{source.id}: 分片 {name} 缺少 audio/text 列"
                              f"（实际列: {cols}），跳过")
+                continue
+            if wds:
+                if progress:
+                    progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 含 {len(df)} 个视频"
+                             "（WebDataset 成员列，按 utterances 切句），写入音频...")
+                before, missing_text, bad_audio = n, 0, 0
+                for _, row in df.iterrows():
+                    if max_samples is not None and n >= max_samples:
+                        break
+                    md = row["metadata.json"] or {}
+                    utts = md.get("utterances") or {}
+
+                    def _lst(key):
+                        v = utts.get(key)
+                        return [] if v is None else list(v)
+
+                    texts = _lst("text")
+                    if not texts:        # 无句级标注的视频不解码，直接跳过
+                        continue
+                    starts, ends, utt_ids = _lst("start"), _lst("end"), _lst("utt_id")
+                    try:
+                        wav, sr = _load_audio(row["flac"], source, token)
+                    except (sf.LibsndfileError, ValueError, TypeError) as exc:
+                        bad_audio += 1
+                        if bad_audio <= 3:
+                            log(f"{source.id}: 分片 {name} 第 {row.name} 行音频读取失败：{type(exc).__name__}: {exc}")
+                        continue
+                    session = _clean_text(md.get("video_id"))
+                    for ui, utext in enumerate(texts):
+                        if max_samples is not None and n >= max_samples:
+                            break
+                        text = _clean_text(utext)
+                        if not text:
+                            missing_text += 1
+                            continue
+                        try:
+                            s = max(0, int(round(float(starts[ui]) * sr)))
+                            e = min(len(wav), int(round(float(ends[ui]) * sr)))
+                        except (IndexError, TypeError, ValueError):
+                            bad_audio += 1
+                            continue
+                        clip = wav[s:e]
+                        if not clip.size:
+                            bad_audio += 1
+                            continue
+                        # utt_id 形如 <video_id>-00000-00001694-00002270，
+                        # rsplit("-", 3)[0] 即视频 ID（同 yodas_th 约定）；
+                        # 优先用显式 video_id 字段。speaker 是视频级近似身份，不强凑
+                        utt_id = str(utt_ids[ui]) if ui < len(utt_ids) else ""
+                        _write_record(f, audio_dir, n, clip, sr, text, None, "",
+                                      session=session or utt_id.rsplit("-", 3)[0],
+                                      metadata=_metadata(source, {"utt_id": utt_id}.get))
+                        n += 1
+                        if progress and (n == 1 or n % 200 == 0):
+                            progress(f"{source.id}: 已写入 {n} 条")
+                log(f"{source.id}: 分片 {fi + 1}/{len(files)} 完成"
+                    f"（写入 {n - before} 条，缺文本 {missing_text} 条，"
+                    f"音频/切片失败 {bad_audio} 条，累计 {n} 条）")
+                if bad_audio and n == before:
+                    raise RuntimeError(f"{source.id}: 分片 {name} 的候选音频全部读取失败；"
+                                       "请看上方首批具体错误，不是分片下载失败")
                 continue
             if progress:
                 progress(f"{source.id}: 分片 {fi + 1}/{len(files)} 含 {len(df)} 条"
@@ -521,6 +652,101 @@ def _download_hf_tar(source: Source, dest: Path, max_samples: int | None,
     return n
 
 
+# Common Voice 22 只取官方切分；other 是未进切分的 validated 余量、invalidated 是
+# 被投票否决的，都不进训练。
+_CV22_SPLITS = ("train", "dev", "test")
+
+
+def _download_cv22(source: Source, dest: Path, max_samples: int | None,
+                   token: str, progress=None) -> int:
+    """Common Voice 22 社区镜像（fsicoli/common_voice_22_0）的自包含下载。
+
+    仓库是脚本式数据集，加载脚本把数据文件 URL 硬编码到 huggingface.co，
+    HF_ENDPOINT 管不到，国内直连必失败——绕开脚本按真实布局直拉（2026-09-15
+    镜像 tree API 核实）：`transcript/<lang>/<split>.tsv`（表头
+    client_id/path/sentence_id/sentence/...）+ `audio/<lang>/<split>/
+    <lang>_<split>_<n>.tar`（成员 `<lang>_<split>_<n>/common_voice_<lang>_<id>.mp3`，
+    48kHz，libsndfile 1.2 直接解码）。
+    client_id 是众包自报身份：写进 speaker 与 session（供 train/val 隔离），
+    但 registry 里 has_speaker=False，不标 speaker_verified、不作 ref 依据。
+    """
+    import csv
+    from functools import partial
+
+    from huggingface_hub import hf_hub_download
+
+    from ..log import LogBar
+
+    log = progress or print
+    audio_dir = dest / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    kw = dict(repo_id=source.repo, repo_type="dataset", token=token or None)
+    bar = partial(LogBar, log=progress) if progress else None
+    n = 0
+    with (dest / "manifest.jsonl").open("w", encoding="utf-8") as out:
+        for split in _CV22_SPLITS:
+            if max_samples is not None and n >= max_samples:
+                break
+            tsv = hf_hub_download(
+                filename=f"transcript/{source.config}/{split}.tsv", **kw)
+            clips: dict[str, tuple[str, str]] = {}
+            with open(tsv, encoding="utf-8", newline="") as fh:
+                for row in csv.DictReader(fh, delimiter="\t"):
+                    text = _clean_text(row.get("sentence"))
+                    if row.get("path") and text:
+                        clips[row["path"]] = (text, _clean_text(row.get("client_id")))
+            if not clips:
+                raise RuntimeError(f"{source.id}: transcript/{source.config}/{split}.tsv "
+                                   "没解析出任何条目")
+            endpoint = env("HF_ENDPOINT").rstrip("/") or "https://huggingface.co"
+            tars = sorted(e["path"] for e in
+                          _tree(endpoint, source.repo,
+                                f"audio/{source.config}/{split}", token, "main")
+                          if e["type"] == "file" and e["path"].endswith(".tar"))
+            if not tars:
+                raise RuntimeError(f"{source.id}: audio/{source.config}/{split} 下没有 tar")
+            log(f"{source.id}: split {split} 转写 {len(clips)} 条，{len(tars)} 个 tar")
+            for ti, tar_name in enumerate(tars):
+                if max_samples is not None and n >= max_samples:
+                    break
+                tar_path = hf_hub_download(
+                    filename=tar_name,
+                    **({"tqdm_class": bar} if bar else {}), **kw)
+                no_text = bad = 0
+                with tarfile.open(tar_path, "r:*") as tf:
+                    for member in tf:
+                        if max_samples is not None and n >= max_samples:
+                            break
+                        if not member.isfile() or not member.name.endswith(".mp3"):
+                            continue
+                        hit = clips.get(Path(member.name).name)
+                        if not hit:
+                            no_text += 1
+                            continue
+                        handle = tf.extractfile(member)
+                        if handle is None:
+                            bad += 1
+                            continue
+                        try:
+                            wav, sr = _load_audio(handle.read(), source, token)
+                        except (sf.LibsndfileError, ValueError, TypeError) as exc:
+                            bad += 1
+                            if bad <= 3:
+                                log(f"{source.id}: {member.name} 音频读取失败："
+                                    f"{type(exc).__name__}: {exc}")
+                            continue
+                        text, client_id = hit
+                        _write_record(out, audio_dir, n, wav, sr, text,
+                                      client_id or None, "", session=client_id,
+                                      metadata=_metadata(source, {}.get))
+                        n += 1
+                        if progress and (n == 1 or n % 200 == 0):
+                            progress(f"{source.id}: 已写入 {n} 条")
+                log(f"{source.id}: {split} 分片 {ti + 1}/{len(tars)} 完成"
+                    f"（累计 {n} 条，无转写 {no_text} 条，音频读取失败 {bad} 条）")
+    return n
+
+
 def _download_aishell3(source: Source, dest: Path, max_samples: int | None,
                        progress=None) -> int:
     tgz = dest / "data_aishell3.tgz"
@@ -600,6 +826,8 @@ def download_source(source_id: str, max_samples: int | None = None,
         n = _download_aishell3(source, dest, max_samples, progress)
     elif source.kind == "hf_tar":
         n = _download_hf_tar(source, dest, max_samples, env("HF_TOKEN"), progress)
+    elif source.kind == "cv22":
+        n = _download_cv22(source, dest, max_samples, env("HF_TOKEN"), progress)
     else:
         n = _download_hf(source, dest, max_samples, progress)
     if n == 0:

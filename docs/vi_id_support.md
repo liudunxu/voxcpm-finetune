@@ -52,8 +52,8 @@
 | `gigaspeech2_id` | id | anchor | Apache-2.0 | **未核实** | ❌ | ~ 同上 | 6/10 同上 |
 | `fleurs_vi` | vi | anchor | CC-BY-4.0 | **未核实**（FLEURS 各语种通常十余小时，但本轮未取原文） | ❌ | ~ config `vi_vn` 按 `{lang}_{country}` 模式推得 | 5/10 干净朗读，只能当发音锚点 |
 | `fleurs_id` | id | anchor | CC-BY-4.0 | **未核实** | ❌ | ~ config `id_id` 同上 | 5/10 同上 |
-| `cv22_vi` | vi | anchor | CC0 | **未核实**（该 locale 的 validated 小时数没取到原文） | 众包 `client_id` | ~ locale 码按 CV 惯例 | 3/10 众包噪音大，走 Whisper 校验 |
-| `cv22_id` | id | anchor | CC0 | **未核实** | 众包 `client_id` | ~ 同上 | 3/10 同上 |
+| `cv22_vi` | vi | anchor | CC0-1.0 | validated **6.34h / 354 人**（2026-09-15 核实） | 众包 `client_id`（自报，不默认可信） | ✅ 下载器 `kind="cv22"` 已修，镜像直拉 tsv+tar | 3/10 规模小、众包噪音大，走 Whisper 校验 |
+| `cv22_id` | id | anchor | CC0-1.0 | validated **33.46h / 639 人**（2026-09-15 核实） | 众包 `client_id`（同上） | ✅ 同上 | 3/10 同上 |
 
 **为什么只注册这 8 个**：本轮网络受限，无法拉 HF API/数据卡原文。AGENTS.md 的红线是「低资源语种的调研结论必须核实到页面/API 原文」，所以凡是规模、许可、字段形态没取到原文的候选一律不进代码，只进 §3 的待核实清单。已注册的 8 个里，`drama_*` 是本仓库已跑通的 `local` 通路，另外 6 个都沿用本仓库 th/tl 已经在用的仓库与 config 命名模式——**注册的是可复现的路径，不是编造的数字**，所以每个源的 `note` 字段都写着「先 `--max-samples` 试跑」。
 
@@ -93,17 +93,51 @@ curl -s "https://huggingface.co/api/datasets/<repo>/parquet" | python -c "import
 | 1 | `speechcolab/gigaspeech2` 的 vi/id | **字段形态**：是内嵌 `audio` 数组，还是 `path`+`start`+`end` 的长音频切片？后者本项目的 `_load_audio` 不支持（会整段读入，时长过滤会大面积丢弃） | `download --source gigaspeech2_vi --max-samples 20`，看日志的时长分布与 `audio` 列名；再 `curl .../parquet` |
 | 2 | gigaspeech2 的 gated 类型与条款 | `gated: auto` 还是 `manual`；条款有没有限制商用 | `curl ".../api/datasets/speechcolab/gigaspeech2?full=true"` 看 `gated` |
 | 3 | `google/fleurs` 的 `vi_vn` / `id_id` | config 名是否确切存在、各自小时数 | `curl ".../api/datasets/google/fleurs/parquet"` |
-| 4 | `fsicoli/common_voice_22_0` 的 `vi` / `id` | locale 是否存在、validated 小时数、众包噪音水平 | 同上 + https://commonvoice.mozilla.org/datasets 的语言统计表 |
-| 5 | **VIVOS**（越南语朗读，规模/说话人数/许可全未核实） | 现在托管在哪（HF / OpenSLR / 原发布方）、小时数、说话人数、**能否商用、能否用于训练模型** | HF 搜 `vivos`；OpenSLR 资源列表搜 Vietnamese |
-| 6 | **YODAS2 / Sidon 整理版有没有 vi/id** | 泰语用的 `Chalermdej/yodas2_sidon_th_tts` 有没有 vi/id 对应版本（带 DNSMOS + 三路 ASR 分级，对本项目最合用） | `curl ".../api/datasets?author=Chalermdej&full=true"`；`curl ".../api/datasets?search=yodas2"` |
-| 7 | **MagicHub 印尼语/越南语库** | 区分 scripted monologue 朗读（价值低）与自发对话（价值高）；免费档常是 **CC-BY-NC-ND**（NC 禁商用、ND 禁演绎 = 微调，**可用性 0**），有价值的那档通常要询价 | https://magichub.com/datasets/ 搜 Indonesian / Vietnamese |
-| 8 | **Nexdata 越南语/印尼语现货** | SKU、小时数、**是否带 speaker ID + gender**、许可形态（商业买断？） | nexdata.ai 数据集列表页 |
-| 9 | **HF 系统扫描**：有没有我漏掉的真人情感/对话语料 | 真人录音（排除 TTS 合成）、规模 ≥5h、许可可商用、最好带 speaker ID | `curl ".../api/datasets?language=language:vi&other=other:modality:audio&full=true&limit=100&sort=downloads"`，`vi` 换 `id` 再跑一遍 |
-| 10 | 越南语/印尼语**情感语音**语料是否存在 | 这是决定「要不要自建」的关键结论，必须核到原文才能写死 | 同 #9，关键词加 emotion/expressive |
+| 4 | `fsicoli/common_voice_22_0` 的 `vi` / `id` | locale 是否存在、validated 小时数、众包噪音水平 | 同上 + https://commonvoice.mozilla.org/datasets 的语言统计表 → **✅ 2026-09-15 已核实，见 §3.1** |
+| 5 | **VIVOS**（越南语朗读，规模/说话人数/许可全未核实） | 现在托管在哪（HF / OpenSLR / 原发布方）、小时数、说话人数、**能否商用、能否用于训练模型** | HF 搜 `vivos`；OpenSLR 资源列表搜 Vietnamese → **❌ CC-BY-NC-SA-4.0，已排除，见 §3.1** |
+| 6 | **YODAS2 / Sidon 整理版有没有 vi/id** | 泰语用的 `Chalermdej/yodas2_sidon_th_tts` 有没有 vi/id 对应版本（带 DNSMOS + 三路 ASR 分级，对本项目最合用） | `curl ".../api/datasets?author=Chalermdej&full=true"`；`curl ".../api/datasets?search=yodas2"` → **✅ `sarulab-speech/yodas2_sidon` 的 vi000/id000 可下，见 §3.1** |
+| 7 | **MagicHub 印尼语/越南语库** | 区分 scripted monologue 朗读（价值低）与自发对话（价值高）；免费档常是 **CC-BY-NC-ND**（NC 禁商用、ND 禁演绎 = 微调，**可用性 0**），有价值的那档通常要询价 | https://magichub.com/datasets/ 搜 Indonesian / Vietnamese → **✅ 2026-09-15 已核实：开源集全部不可用，商业 id 有现货，见 §3.1** |
+| 8 | **Nexdata 越南语/印尼语现货** | SKU、小时数、**是否带 speaker ID + gender**、许可形态（商业买断？） | nexdata.ai 数据集列表页 → **✅ 2026-09-15 已核实，SKU 见 §3.1** |
+| 9 | **HF 系统扫描**：有没有我漏掉的真人情感/对话语料 | 真人录音（排除 TTS 合成）、规模 ≥5h、许可可商用、最好带 speaker ID | `curl ".../api/datasets?language=language:vi&other=other:modality:audio&full=true&limit=100&sort=downloads"`，`vi` 换 `id` 再跑一遍 → **~ 2026-09-15 扫过一轮，新发布见 §3.1（PhoAudiobook 等）** |
+| 10 | 越南语/印尼语**情感语音**语料是否存在 | 这是决定「要不要自建」的关键结论，必须核到原文才能写死 | 同 #9，关键词加 emotion/expressive → **~ 已扫，无可商用开源情感语料，结论见 §3.1** |
 
 **核实纪律**（来自 `corpus_sourcing.md §1` 的教训）：这个领域出现过完全编造的论文和不存在的许可声明。**任何「有现成大规模语料」的说法，在拉到页面/API 原文之前都当作不存在**——一条编造的结论足以让人跳过真正该做的自建工作。
 
 **已确认可用的排除项**：`laion/dramabox-voice-acting-data-annotated` 这类看着对口的短剧配音数据集，源头是 TTS 合成（`ResembleAI/Dramabox`、`gemini-2.5-pro-tts`），违反本项目「不用模型合成语音补量」约定，**vi/id 同样禁用** ❌。
+
+### 3.1 2026-09-15 核实结论（五语种调研，vi/id 部分）
+
+**✅ 已核实可用 / 复活：**
+
+| 源 | 许可 | 规模 | 结论 |
+|---|---|---|---|
+| `fsicoli/common_voice_22_0` 的 `vi` | **CC0-1.0** | validated 6.34h / 354 人 | ✅ 复活。带 `client_id`（众包自报身份，不默认可信），可作同语种 ref 候选。下载器 `kind="cv22"` 镜像直拉 tsv+tar。https://huggingface.co/datasets/fsicoli/common_voice_22_0 |
+| 同上 `id` | **CC0-1.0** | validated 33.46h / 639 人 | ✅ 同上 |
+| `sarulab-speech/yodas2_sidon` 的 `vi000` / `id000` | **CC-BY-3.0**（需署名） | vi000 4 片 / id000 5 片 parquet，每片 ≤500MB | ✅ 可下，走 `/api/datasets/sarulab-speech/yodas2_sidon/parquet/<config>/train/<n>.parquet` 端点（实测 Range 206）。⚠️ 转换出的 parquet 列是 WebDataset 原样成员（`flac`/`metadata.json`/`__key__`/`__url__`），不是 audio/text 列；全量是 WebDataset tar（vi000/id000 各约 335GB），试跑取 1-2 片 parquet 就够，不必全量 |
+
+**❌ 已核实排除（别再重复调研）：**
+
+| 源 | 结论 | 依据 |
+|---|---|---|
+| **VIVOS**（`AILAB-VNUHCM/vivos`） | ❌ **CC-BY-NC-SA-4.0**，禁商用 | HF API cardData 双重确认。早先以为可商用是错的，§3 #5 就此结案 |
+| MagicHub **开源小集** | ❌ 全部不可用 | "Magic Data Open-Source License" 原文是 all-rights-reserved + 仅限个人非商业 + 禁止再分发（https://magichub.com/magic-data-open-source-license/），比 CC NC 还严；其开源集**无越南语条目**（官方 awesome 列表亲验） |
+| VoxVietnam（261.5h / 1406 人） | ❌ **CC-BY-NC** | 禁商用 |
+| viVoice（约 1200h） | ❌ **CC-BY-NC-SA** | 禁商用 |
+| Nexdata 挂在 HF 的 sample 集 | ❌ **CC-BY-NC-ND** 引流件 | 商业数据商的 HF sample 一律按引流件处理，不可用 |
+
+**~ 商业现货（已核实存在，可询价，未下单）：**
+
+- **印尼语**：MagicHub **ASR-BICSC 2298h / 1020 人**自发对话（https://magichub.com/datasets/bahasa-indonesia-conversational-speech-corpus/）与印尼-英语混合 645h / 1084 人；Nexdata 89h 电话会话 / 124 人、**1900h 真实场景会话（SKU 1240，https://www.nexdata.ai/datasets/speechrecog/1240 ）**
+- **越南语**：Nexdata 500h 会话（约 750 人，SKU 1122）、760h scripted（SKU 1006）、977h 呼叫中心（SKU 1408）、1218h 真实场景（SKU 1128）；MagicHub 商业 vi 集**未发现**
+
+**~ 2024–2026 新发布（开源侧）：**
+
+- **PhoAudiobook**（`thivux/phoaudiobook`，941h vi 有声书 / 735 朗读者，ACL 2025）：**无许可声明 + gated:auto** —— 拿到书面授权前不进训练；若授权则是 vi 最大现货 + 身份来源
+- VietSuperSpeech（arXiv 2603.01894）：README 声称 MIT 但文本是机器转写，低优先
+- VieSpeaker（arXiv 2606.24066，902h / 4715 人）：未找到下载入口，**未核实**
+- `BabelSpeech/40hours_Indonesian_Colloquial`（**Apache-2.0**，gated:manual）：值得申请
+
+vi/id 情感/表演语料的结论不变：开源侧没有可商用的，表演档靠自建 `drama_vi` / `drama_id`。
 
 ---
 

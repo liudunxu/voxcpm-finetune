@@ -56,6 +56,11 @@ class Options:
     target_dbfs: float = -24.0       # 按说话人整体增益对齐，保留条内与条间动态
     edge_trim_ratio: float = _EDGE_TRIM_RATIO  # 首尾裁切门限/有声电平；表演语料调低保留换气
     edge_vad: bool = False       # 用 Silero VAD 定首尾边界（朗读语料）；表演语料走 RMS 留换气
+    # VAD/RMS 边界内残留的尾静音会教会模型垫尾：FLEURS 加工样本尾静音 p50=0.30s，
+    # 训出的 LoRA 输出 p50=0.32s（base 只有 0.084s），三轮一致复现。根因是 Silero VAD
+    # 的 min_silence_duration_ms=500 把更短的尾部停顿并进最后一段语音，edge 裁切碰不到；
+    # 边界确定后把尾部再压到这个硬上限。只裁尾不裁头：头部没有缺陷证据。
+    max_tail_silence_sec: float = 0.15
     holdout_sessions: tuple[str, ...] = ()  # 钉住的会话永远进验证集，不参与随机分组
     seed: int = 42
 
@@ -149,6 +154,30 @@ def trim_silence(wav: np.ndarray, sr: int, floor: float = 1e-3,
     start = max(0, s * hop - int(0.05 * sr)) if s >= run else 0
     end = min(len(wav), e * hop + hop + int(tail_keep * sr)) if len(below) - e >= run else len(wav)
     return wav[start:end]
+
+
+def _cap_tail_silence(wav: np.ndarray, sr: int, max_tail: float) -> np.ndarray:
+    """把 clip 边界内残留的尾部静音压到 max_tail 秒；只裁尾，不裁头。
+
+    帧口径与 qc/audio.py 的 speech_ratio 同一套（40ms 帧 / 20ms hop，
+    gate = max(-52, p90-32) dB，即 OmniVoice api.py:1843-1895），从尾部往回找最后
+    一个高于 gate 的帧，其后超过 max_tail 的部分裁掉。找不找得到有声帧都不动头部：
+    头部没有缺陷证据，保持最小改动。
+    """
+    y = np.asarray(wav, dtype=np.float64).reshape(-1)
+    frame = int(0.04 * sr)
+    if frame <= 0 or y.size < frame * 4:
+        return wav
+    hop = frame // 2
+    count = (y.size - frame) // hop + 1
+    frames = np.lib.stride_tricks.sliding_window_view(y, frame)[::hop][:count]
+    db = 20.0 * np.log10(np.maximum(np.sqrt(np.mean(frames ** 2, axis=1)), 1e-7))
+    gate = max(-52.0, float(np.percentile(db, 90)) - 32.0)
+    voiced = np.flatnonzero(db >= gate)
+    if not voiced.size:
+        return wav
+    cap = voiced[-1] * hop + frame + int(max_tail * sr)
+    return wav[:cap] if cap < len(wav) else wav
 
 
 def peak_normalize(wav: np.ndarray, peak: float = 0.95) -> np.ndarray:
@@ -547,8 +576,9 @@ def _write_jsonl(records: list[dict], path: Path) -> None:
 # ---------------------------------------------------------------- 解码
 
 def _decoded_clips(rows: list[dict], stats: dict,
-                   edge_ratio: float = _EDGE_TRIM_RATIO, edge_vad: bool = False):
-    """逐条解码 → 16k → 裁静音（不做逐条响度归一，留给按说话人的增益对齐）。"""
+                   edge_ratio: float = _EDGE_TRIM_RATIO, edge_vad: bool = False,
+                   max_tail_silence: float = 0.15):
+    """逐条解码 → 16k → 裁静音 → 压尾静音硬上限（不做逐条响度归一，留给按说话人的增益对齐）。"""
     for row in rows:
         try:
             wav, sr = load_wav_mono(row["audio"])
@@ -563,7 +593,10 @@ def _decoded_clips(rows: list[dict], stats: dict,
         bounds = _vad_bounds(wav, TARGET_SR) if edge_vad else None
         out = wav[bounds[0]:bounds[1]] if bounds else \
             trim_silence(wav, TARGET_SR, edge_ratio=edge_ratio)
-        yield Clip(out,
+        capped = _cap_tail_silence(out, TARGET_SR, max_tail_silence)
+        if len(capped) < len(out):
+            stats["tail_capped"] += 1
+        yield Clip(capped,
                    str(row["text"]).strip(),
                    row.get("speaker", "default"), row.get("emotion", ""),
                    row.get("session", ""), dict(row))
@@ -775,6 +808,8 @@ def process_dataset(source_id: str, out_name: str | None = None,
     if not (0 <= opts.control_ratio <= 1 and 0 <= opts.control_zh_ratio <= 1
             and 0 <= opts.val_ratio < 1 and opts.val_max >= 1):
         raise ValueError("控制比例/验证集比例或 val_max 无效")
+    if opts.max_tail_silence_sec < 0:
+        raise ValueError("max_tail_silence_sec 不能为负")
     if opts.min_snr_db is not None or opts.min_f0_std is not None:
         raise ValueError("不再按能量分位差或 F0 起伏硬筛；请使用真实音质检查与母语试听")
     rng = random.Random(opts.seed)
@@ -894,8 +929,10 @@ def process_dataset(source_id: str, out_name: str | None = None,
     embs: list[np.ndarray] = []
     stats = {"total": len(rows), "drop_transcribe": n_bad, "drop_decode": 0,
              "drop_duration": 0, "drop_lang": 0, "drop_whisper": 0, "drop_utmos": 0,
+             "tail_capped": 0, "max_tail_silence_sec": opts.max_tail_silence_sec,
              "edge_vad": opts.edge_vad, "edge_trim_ratio": opts.edge_trim_ratio}
-    samples = _decoded_clips(rows, stats, opts.edge_trim_ratio, opts.edge_vad)
+    samples = _decoded_clips(rows, stats, opts.edge_trim_ratio, opts.edge_vad,
+                             opts.max_tail_silence_sec)
     for i, clip in enumerate(samples):
         if progress and i % 50 == 0:
             progress(f"加工 {source_id}: 已扫描 {i} 条，保留 {len(kept)} 条")

@@ -57,11 +57,16 @@
 8kHz 以上带宽只能靠推理后处理（带宽扩展 / 谐波激励），是独立产品决策，**不占微调轮次**。
 
 **剩余动作**
-- [ ] 给 `src/voxft/qc/audio.py` 加 `spectral_rolloff_99` 与 `band_ratio_2_8k`，进 `analyze()`。
-      补 `tests/` 单测——用已知带宽的合成信号验证读数，**别用随机噪声**（AGENTS.md 已有教训）。
-- [ ] **关键分叉**：用**我们自己的** `voxft.eval` 裸输出（无 OmniVoice 后处理）复测同一组指标。
-      若裸输出是明亮的 ⇒ 问题在后处理链，一行就能修；若同样 7.5kHz 砖墙 ⇒ 坐实是模型，结案。
-- [ ] 需远端实例。连不上先问用户实例状态，别反复重试 ssh。
+- [x] 给 `src/voxft/qc/audio.py` 加 `spectral_rolloff_99` 与 `band_ratio_2_8k`，进 `analyze()`（2026-09-15 完成，
+      含合成信号单测 4 个）。
+- [x] **关键分叉已结案（2026-09-15，远端实测）**：用我们自己的 `voxft.eval` **裸输出**（84 条 base、
+      48kHz、无 OmniVoice 后处理）复测——rolloff_99 中位 **7262Hz**（p75 7450）、16-24kHz 能量
+      占比 max 0.0035%（砖墙）、与 OmniVoice 后处理过的输出同一堵墙。⇒ **坐实是模型（VAE 16k 编码器），
+      不是后处理链**，目标 3 的带宽半彻底结案，只能靠推理后处理 BWE（独立立项）。
+      附带量到「带内明亮度」：base `band_ratio_2_8k` 中位 0.162，**r2 配对 Δ 均值 -0.0143、
+      71% 对子变暗**——r2 训练数据确实引入了轻度变暗（32% YouTube 自发口语 + FLEURS 录音质量参差），
+      这是目标 3 里微调能碰的那半，修在数据侧（归 E）。
+- [ ] ~~需远端实例~~（实例在线，已完成上述复测）
 
 ---
 
@@ -95,10 +100,18 @@
   `metallic_resonance` ×2（case1 cfg2.0/2.4）。**这些是基座自带的，别记到微调账上。**
 
 **剩余动作**
-- [ ] **先问用户一个 scoping 问题**：线上 `seed` 是固定的（归档 payload 实测"seed 固定"）。
-      若同一音色的所有 cue 都用同一个 seed，跨 seed 方差**不是线上缺陷**，真正该量的是
-      **跨 cue 一致性**（同 ref、不同台词）——那是另一个测量。若 badcase 重试会换 seed，
-      跨 seed 方差才是线上能感知到的。**这一步决定 B 后面所有动作的量法，先确认再动手。**
+- [x] ~~**先问用户一个 scoping 问题**~~ **已查实（2026-09-15，读 OmniVoice + dubbing_intelligence_service 源码）**：
+      线上默认 **per-speaker stable seed**——`backends/voxcpm.py:438-463` 用
+      `sha256(speaker + model_id + cfg + steps + …)` 派生（**不含文本**），`VOXCPM_SPEAKER_STABLE_SEED`
+      默认 true，**同一说话人的所有 cue 共享同一个 seed**。⇒ 跨 seed 方差在线上首 take 不可感知，
+      每个 speaker 只生活在一个 seed 上；**但重试路径大多会换 seed**（模型内 retry_badcase +1、
+      prompt-leak +1、speaker-mismatch +1、text regen +7、best_of +1009、主调方整轮重试 crc32 重派生；
+      例外：metallic 质量重试**不换 seed 只降 cfg 加 steps**，`api.py:9184-9196`）。
+      ⇒ **正确量法是两件事都量**：① 跨 seed 方差 = "重试把 seed 从好 take 换到坏 take 的风险"，
+      用相邻 seed 扰动（base、base+1、base+7 这类线上真实偏移）而不是无关大跨度 seed；
+      ② **跨 cue 一致性**（同 speaker 同 seed 不同文本）才是首 take 线上可感知的稳定性。
+      另：`reference_identity_locked` 的 cue 对伪影重试保 seed 防邻句音色断层——跨 cue 音色断层
+      是线上真实顾虑。
 - [ ] `voxft.eval` 把跨 seed 方差做成一等输出：每 case 报 `speaker_sim` 的 std/极差、
       `audio_sec` 的 std/极差、CER 的 std。**seed 数提到 ≥5**（估方差比估均值需要更多样本，
       现在的 3 seed 只能给出上面这种量级）。
@@ -150,9 +163,14 @@
 而有声段字/秒只差 1.7%（**不是语速问题，是垫静音**）。B 节独立量到的基座跨 seed 时长极差
 0.547s 指向同一处。成因：32% 的 gigaspeech2 自发口语比朗读多犹豫停顿。
 
-- [ ] 数据侧修：加工时对尾部静音单独设更严的裁切；或调 gigaspeech2 与 FLEURS 的配比。
-      线上 `trim_silence_vad=True` 会裁掉所以基本无感，但**不裁切的下游会拿到长 12% 的音频**，
-      且跨 seed 时长极差大会让"同 ref 同文本"的稳定性无法保证。
+- [x] 数据侧修：**已归因并执行（2026-09-15，r4 训练中）**。实测推翻原假设：尾部垫音不是 gigaspeech2
+      的犹豫停顿——**长尾来自 FLEURS**（训练样本尾静音 p50 0.30s；gigaspeech2 p50≈0s），根因是 Silero VAD
+      `min_silence_duration_ms=500` 把 <500ms 尾停顿并进语音段。r1（纯 FLEURS）输出尾静音 0.305s 与
+      r2/r3 相同，与数据分布数字级吻合。修法：pipeline 加 `max_tail_silence_sec=0.15` 硬上限（只裁尾），
+      远端后裁 11 源得 `<src>_tc`（FLEURS 50-87% 行被裁、147 条跌破 3s 丢弃），按 **r2 配比**重建
+      `joint_omni4`（76.5h）重训 `lora_omni5_r4`（同 r2/r3 超参，2055 步）。
+      明亮度顺带实测：变暗与 gigaspeech2 份额相关（r1 0.164 / r2 0.152 / r3 0.155），但训练源的
+      band_ratio 分布两源几乎相同 ⇒ 无可操作的筛选靶子，本轮不动（详见 AGENTS.md「输出带宽」条）。
 - [ ] 注意 AGENTS.md 已实测否掉的两条：`vi` 退化主因是**长度出分布**不是数字覆盖；
       val loss **不能**用来选 checkpoint（一律交付 `latest`）。
 - 验收：D 扩容后的口径下，尾部静音 p90 回到 base 量级、跨 seed 时长极差下降，

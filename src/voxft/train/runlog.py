@@ -99,6 +99,63 @@ def _regressed(evals: list[dict], noise: float = 0.05) -> dict[str, dict[str, li
     return out
 
 
+# 时长类门禁阈值，标定依据见 _duration_gates docstring
+DURATION_INFLATION_RATIO = 0.10    # mean audio_sec 相对涨幅上限
+DURATION_INFLATION_CER_TOL = 0.01  # |Δmean_cer_non_numeric| ≤ 此值才算「变长但内容没变」
+TAIL_SILENCE_P90_DELTA = 0.10      # p90 尾静音绝对增量上限（秒）
+TAIL_SILENCE_P90_MAX = 0.5         # checkpoint p90 尾静音绝对上限（秒），对齐官方训练数据尾静音上限
+SPEECH_RATIO_DROP = 0.05           # mean speech_ratio 下降上限
+
+
+def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
+    """时长类红线：以第一份报告为基线，overall 与 by_lang 都查。
+
+    三条门禁都是已被盲听交叉验证的失败形态（r2 vs base，84 条生产口径 case）：
+    盲听 8 条「B 更差」里 6 条是「B 音频明显变长而 CER 没变」（最极端 ms_manglish
+    1.76s→3.52s、CER 反而 0.094→0.000）；自动测量同向——尾部静音均值 0.084s→0.292s
+    （p90 0.42s，0/84 越过 0.5s 的官方训练数据尾静音上限）、speech_ratio 0.94→0.84
+    （缺陷 -0.10，门槛取一半）、总时长 +12.3% 而有声段字/秒只差 1.7%。⇒ 「变长但
+    内容没变」（duration_inflation）、尾部垫静音（tail_silence）、有声占比下降
+    （speech_ratio）不需要母语者就能判，可以进自动门禁。
+
+    旧报告没有这些聚合字段时对应检查跳过、不误报；tail_silence 的绝对上限
+    （p90 > 0.5s）只依赖 checkpoint 自己的值，base 缺字段时仍然生效。
+    """
+    if len(evals) < 2:
+        return {}
+    base, base_lang = evals[0], evals[0].get("by_lang", {})
+    out = {}
+    for e in evals[1:]:
+        gates: dict[str, list[str]] = {"duration_inflation": [], "tail_silence": [],
+                                       "speech_ratio": []}
+        scopes = [("overall", base, e)]
+        scopes += [(lang, base_lang.get(lang, {}), v)
+                   for lang, v in sorted(e.get("by_lang", {}).items())]
+        for name, b, c in scopes:
+            ba, ca = b.get("mean_audio_sec"), c.get("mean_audio_sec")
+            bc, cc = b.get("mean_cer_non_numeric"), c.get("mean_cer_non_numeric")
+            if (ba and ca and bc is not None and cc is not None
+                    and ca > ba * (1 + DURATION_INFLATION_RATIO)
+                    and abs(cc - bc) <= DURATION_INFLATION_CER_TOL):
+                gates["duration_inflation"].append(
+                    f"{name} audio_sec {ba:.2f}→{ca:.2f}s（+{(ca / ba - 1) * 100:.0f}%），"
+                    f"ΔCER非数字 {cc - bc:+.4f}——变长但内容没变")
+            bp, cp = b.get("p90_tail_silence"), c.get("p90_tail_silence")
+            if cp is not None:
+                if bp is not None and cp - bp > TAIL_SILENCE_P90_DELTA:
+                    gates["tail_silence"].append(
+                        f"{name} p90尾静音 {bp:.3f}→{cp:.3f}s（+{cp - bp:.3f}s）")
+                if cp > TAIL_SILENCE_P90_MAX:
+                    gates["tail_silence"].append(
+                        f"{name} p90尾静音 {cp:.3f}s 越过 {TAIL_SILENCE_P90_MAX}s 上限")
+            bs, cs = b.get("mean_speech_ratio"), c.get("mean_speech_ratio")
+            if bs is not None and cs is not None and bs - cs > SPEECH_RATIO_DROP:
+                gates["speech_ratio"].append(
+                    f"{name} speech_ratio {bs:.3f}→{cs:.3f}（{cs - bs:+.3f}）")
+        out[e.get("label", "?")] = gates
+    return out
+
+
 def build_record(run: str, eval_paths: list[str], verdict: str = "",
                  next_step: str = "", notes: str = "", noise: float = 0.005) -> str:
     cfg, plan = _read_yaml(run), _read_plan(run)
@@ -144,7 +201,7 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
             lines.append(f"| {lang} | {v.get('requested')} | {v.get('actual')} | {v.get('hours')} |")
 
     if evals:
-        langs = sorted({l for e in evals for l in e.get("by_lang", {})})
+        langs = sorted({lang for e in evals for lang in e.get("by_lang", {})})
         e0 = evals[0]
         n_items = len(e0.get("items", []))
         n_cases = len({i["case_id"] for i in e0.get("items", [])})
@@ -169,6 +226,15 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
             lines.append(f"- `{label}` 红线：" + ("；".join(d["red"]) if d["red"] else "无"))
             if d["noise"]:
                 lines.append("  - 噪声级（未触发红线，照实记录）：" + "；".join(d["noise"]))
+        dur = _duration_gates(evals)
+        lines += ["", f"时长类门禁（audio_sec 涨幅 >{DURATION_INFLATION_RATIO:.0%} 且 "
+                  f"|ΔCER非数字| ≤{DURATION_INFLATION_CER_TOL}；p90尾静音增量 "
+                  f">{TAIL_SILENCE_P90_DELTA}s 或 >{TAIL_SILENCE_P90_MAX}s；speech_ratio 降 "
+                  f">{SPEECH_RATIO_DROP}；标定依据见 docs/qc_gates.md）："]
+        for label, g in dur.items():
+            hits = [x for k in ("duration_inflation", "tail_silence", "speech_ratio")
+                    for x in g[k]]
+            lines.append(f"- `{label}`：" + ("；".join(hits) if hits else "无"))
         lines += ["", "报告文件：" + "、".join(f"`{Path(p).name}`" for p in eval_paths)]
 
     lines += ["", "### 人工盲听", "",

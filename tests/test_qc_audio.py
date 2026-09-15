@@ -2,8 +2,9 @@
 import numpy as np
 import pytest
 
-from voxft.qc.audio import (FLOOR_SEPARATION_MIN_DB, floor_separation_db,
-                            metallic_resonance, speaker_sim)
+from voxft.qc.audio import (FLOOR_SEPARATION_MIN_DB, band_ratio_2_8k,
+                            edge_silence, floor_separation_db,
+                            metallic_resonance, spectral_rolloff_99)
 
 SR = 48000
 
@@ -74,6 +75,71 @@ def test_speech_ratio_separates_padding_from_slow_speech():
     assert speech_ratio(voiced, sr) > 0.9
     assert 0.35 < speech_ratio(padded, sr) < 0.65
     assert speech_ratio(voiced[:sr // 8], sr) is None
+
+
+def test_edge_silence_splits_edge_padding_from_internal_pauses():
+    """r2 的失败形态经盲听交叉验证是尾部垫静音（实测均值 0.084s→0.292s），不是
+    有声段内部停顿——首尾静音必须单独量出来，时长类门禁才有输入。用已知时长的
+    静音头尾 + 正弦中段钉住读数（40ms 帧 / 20ms hop，边界误差在一帧以内）。"""
+    sr = 16000
+    head = np.zeros(int(sr * 0.5), dtype=np.float32)
+    tail = np.zeros(int(sr * 0.8), dtype=np.float32)
+    mid = _tone(200, 2.0, sr=sr)
+    out = edge_silence(np.concatenate([head, mid, tail]), sr)
+    assert 0.4 < out["head_silence_sec"] <= 0.5
+    assert 0.7 < out["tail_silence_sec"] <= 0.8
+    # 有声段内部的停顿不算首尾静音
+    gap = np.zeros(int(sr * 0.5), dtype=np.float32)
+    out = edge_silence(np.concatenate([_tone(200, 1.0, sr=sr), gap,
+                                       _tone(200, 1.0, sr=sr)]), sr)
+    assert out["head_silence_sec"] < 0.1 and out["tail_silence_sec"] < 0.1
+    # 全静音没有边界可谈、过短不足 4 帧，都给 None 而不是假值
+    assert edge_silence(np.zeros(sr, dtype=np.float32), sr) == {
+        "head_silence_sec": None, "tail_silence_sec": None}
+    assert edge_silence(mid[:sr // 8], sr)["tail_silence_sec"] is None
+    # 接进 analyze()，runlog 的时长类门禁靠这两个键吃饭
+    from voxft.qc import audio as qc
+    full = qc.analyze(np.concatenate([head, mid, tail]), sr)
+    assert 0.7 < full["tail_silence_sec"] <= 0.8
+    assert 0.4 < full["head_silence_sec"] <= 0.5
+
+
+def _tones(freqs, seconds=1.0, sr=SR, amp=0.3):
+    t = np.arange(int(sr * seconds)) / sr
+    return sum(amp * np.sin(2 * np.pi * f * t) for f in freqs).astype(np.float32)
+
+
+def test_spectral_rolloff_99_tracks_bandwidth_of_known_signal():
+    """基座输出是 16kHz 带宽装在 48kHz 容器里（99% 滚降约 7.5kHz）——用已知带宽的
+    合成信号钉住读数：全部成分 ≤4kHz 时滚降必须落在 4kHz 以下，混入一个 12kHz
+    正弦后必须跳到 11kHz 以上。不用随机噪声：噪声没有可预期的频谱形态。"""
+    low = _tones([500, 1500, 2500, 3500])
+    assert 3300 < spectral_rolloff_99(low, SR) < 3800
+    high = _tones([500, 1500, 2500, 3500, 12000])
+    assert spectral_rolloff_99(high, SR) > 11000
+
+
+def test_spectral_rolloff_99_returns_none_when_too_short_or_silent():
+    """不足 4 帧长、或全零音频时没有谱可谈，给 None 而不是假值。"""
+    assert spectral_rolloff_99(_tones([500, 3000], seconds=0.1), SR) is None
+    assert spectral_rolloff_99(np.zeros(SR, dtype=np.float32), SR) is None
+
+
+def test_band_ratio_2_8k_is_high_only_when_energy_lives_in_band():
+    """带内明亮度监控（基座输出实测约 0.043）：能量全在带内（3kHz 单音）时
+    比值接近 1，全在带外（500Hz 单音）时接近 0。"""
+    assert band_ratio_2_8k(_tones([3000]), SR) > 0.99
+    assert band_ratio_2_8k(_tones([500]), SR) < 0.01
+    assert band_ratio_2_8k(_tones([500, 3000], seconds=0.1), SR) is None
+    assert band_ratio_2_8k(np.zeros(SR, dtype=np.float32), SR) is None
+
+
+def test_analyze_includes_spectral_metrics():
+    out_keys = {"spectral_rolloff_99", "band_ratio_2_8k"}
+    from voxft.qc import audio as qc
+    out = qc.analyze(_tones([500, 1500, 2500, 3500]), SR)
+    assert out_keys <= out.keys()
+    assert 3300 < out["spectral_rolloff_99"] < 3800
 
 
 def test_numeric_flag_covers_verbalized_numbers():

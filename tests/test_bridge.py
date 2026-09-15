@@ -1,5 +1,4 @@
 """TB→wandb 桥接增量逻辑自测：合成 TensorBoard event 文件 + 桩 wandb。"""
-from pathlib import Path
 
 import pytest
 

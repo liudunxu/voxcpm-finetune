@@ -45,6 +45,49 @@ def test_leading_room_tone_trimmed_for_read_speech_kept_for_performance():
     assert len(trim_silence(wav, sr, edge_ratio=0.02)) > 1.8 * sr, "表演语料的换气被裁掉了"
 
 
+def test_tail_silence_capped_but_short_tail_and_head_untouched():
+    """VAD/RMS 边界内残留的尾静音会教会模型垫尾（FLEURS 加工样本尾静音 p50=0.30s →
+    LoRA 输出 p50=0.32s，三轮一致复现），根因是 Silero VAD 的 min_silence 500ms
+    吃不掉更短的尾部停顿；加工时把尾部压到硬上限。只裁尾：头部没有缺陷证据。"""
+    from voxft.data.pipeline import _cap_tail_silence
+    sr = 16000
+    speech = _tone(440, 1.0, sr, amp=0.5)
+    wav = np.concatenate([speech, np.zeros(int(0.8 * sr), np.float32)])
+    capped = _cap_tail_silence(wav, sr, 0.15)
+    tail = len(capped) / sr - 1.0
+    assert 0.1 <= tail <= 0.21, f"尾静音应裁到 ≈0.15s（帧粒度 40ms）: {tail}"
+    assert np.array_equal(capped[:sr], speech), "裁尾动了语音本体"
+    short = np.concatenate([speech, np.zeros(int(0.08 * sr), np.float32)])
+    assert len(_cap_tail_silence(short, sr, 0.15)) == len(short), "短尾不该被动"
+    headed = np.concatenate([np.zeros(int(0.5 * sr), np.float32), speech,
+                             np.zeros(int(0.8 * sr), np.float32)])
+    capped = _cap_tail_silence(headed, sr, 0.15)
+    assert not capped[:int(0.5 * sr)].any(), "头部被裁了"
+
+
+def test_tail_cap_drops_clip_below_min_dur_via_drop_duration():
+    """裁尾后跌破 min_dur 的样本必须按 drop_duration 丢掉，<3s 的不能混进训练。"""
+    sr = 16000
+    src = DATA_RAW / "t_tailcap"
+    audio = src / "audio"
+    audio.mkdir(parents=True, exist_ok=True)
+    good = _tone(440, 4.0, sr, amp=0.3)
+    sf.write(audio / "good.wav", good, sr)
+    # 2.8s 语音 + 1.2s 尾静音：RMS 裁完留 0.3s 尾（3.1s 过 3.0 下限），
+    # 压到 0.15s 上限后不足 3s（帧宽 40ms 会把边界往后推一帧），必须被 drop_duration 丢掉
+    edge = np.concatenate([_tone(440, 2.8, sr, amp=0.3), np.zeros(int(1.2 * sr), np.float32)])
+    sf.write(audio / "edge.wav", edge, sr)
+    rows = [{"audio": str(audio / f"{n}.wav"), "text": f"文本{n}"} for n in ("good", "edge")]
+    with (src / "manifest.jsonl").open("w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    stats = process_dataset("t_tailcap", opts=Options(val_ratio=0.0, metrics=False))
+    assert stats["kept"] == 1 and stats["drop_duration"] == 1
+    assert stats["tail_capped"] == 1 and stats["max_tail_silence_sec"] == 0.15
+    info = json.loads((DATA_PROCESSED / "t_tailcap" / "stats.json").read_text())
+    assert info["tail_capped"] == 1 and info["max_tail_silence_sec"] == 0.15
+
+
 def test_short_edge_consonant_survives_min_run_guard():
     """门限是有声电平的相对值，词首清辅音也在门限以下；只有连续 min_run 以上的
     首尾低电平段才算留白，否则提高门限就会把 /s/ /h/ 一起啃掉。"""
@@ -207,7 +250,7 @@ def test_process_and_mix():
     stats = process_dataset("t_main", opts=Options(val_ratio=0.25))
     assert stats["kept"] == 12
     assert stats["val"] >= 1 and stats["train"] + stats["val"] == 12
-    train = [json.loads(l) for l in
+    train = [json.loads(line) for line in
              (DATA_PROCESSED / "t_main" / "train.jsonl").read_text().splitlines()]
     assert all(3.9 <= r["duration"] <= 4.1 for r in train)
     assert 0 < stats["with_ref_audio"] <= stats["train"]

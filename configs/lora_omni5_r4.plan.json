@@ -1,0 +1,17 @@
+{
+  "gpus": 1,
+  "epochs": 1.0,
+  "num_iters": 2055,
+  "effective_batch": 16,
+  "train_manifest": "/root/autodl-tmp/voxft_data/processed/joint_omni4/train.jsonl",
+  "train_samples": 32867,
+  "langs": {
+    "en": 1644,
+    "id": 6023,
+    "ms": 4373,
+    "th": 6941,
+    "tl": 3813,
+    "vi": 6860,
+    "zh": 3213
+  }
+}

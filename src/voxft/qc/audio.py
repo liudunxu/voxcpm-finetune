@@ -7,14 +7,18 @@
                       来自 api_contract.py:15-17 REFERENCE_FLOOR_SEPARATION_MIN_DB
   speech_ratio        api.py:1843-1895（_waveform_loudness_profile 的 gate）
 
-⚠️ **metallic_resonance 在本项目的用法下没有区分力，只能当参考值、不能当门禁**（实测校正）：
-拿 84 条 48kHz 原始模型输出对照人工盲听，自动检出 4 条（base 1 / checkpoint 3），
-**人工对这 4 条全部判 noise=False、自然度 5/5**；反过来人工唯一标了 noise=True 的那条
-score 只有 0.0694，远低于门限，**漏报**。4 误报 1 漏报 0 命中。
-原因是那套阈值（peak_ratio≥0.20、连续≥5帧、占比均值≥0.28）是在 OmniVoice
-**后处理过**的音频上标定的——它上线前有 peak ceiling 0.94、level match、可选 noise gate，
-频谱形态与这里的裸输出不同；4 条误报的 score 全挤在 0.29-0.33，刚好压线，也说明门限
-对这个分布太松。**没有人工标注量之前不要重新标定，也不要拿它否决任何一轮微调。**
+⚠️ **metallic_resonance 永久降级为参考值（2026-09-15 标定定案，不要再尝试重新标定）**：
+168 条带人工盲听标注的样本（base_87eed5ce + lora_omni5_r2_latest_1e6447a9）上，
+metallic_score 对人工 noise 标注 **AUC=0.060（反相关）**——唯一 noise=True 的样本
+score 只有 0.0694，比 167 条干净样本里的 157 条都低；对自然度 ≤3 / ≤4 的 AUC 也只有
+0.46 / 0.33。原因是那套阈值（peak_ratio≥0.20、连续≥5帧、占比均值≥0.28）是在
+OmniVoice **后处理过**的音频上标定的（peak ceiling 0.94、level match、可选 noise gate），
+频谱形态与这里的裸输出不同。**永久只作参考值、不作门禁，不要拿它否决任何一轮微调。**
+
+low_snr / floor_separation_db 同样定案降级：同批样本 ROC **AUC=0.509（纯随机）**，
+167 条人工判干净的样本上误报 48 条（28.7%）；与 OmniVoice 一致性核对（48 条生产
+后处理输出）显示 OmniVoice 自己 48/48 全判 low_snr + noisy_reference——**频繁触发的
+主因是参考音频噪底，不是生成问题**。同样永久只作参考值。
 
 刻意**没有**移植的：
   duration_off_reference —— 在 OmniVoice 里是死代码，5 个调用点全部传 ref_duration=None
@@ -203,6 +207,82 @@ def speech_ratio(wav: np.ndarray, sr: int) -> float | None:
     return round(float(np.mean(db >= gate)), 4)
 
 
+def edge_silence(wav: np.ndarray, sr: int) -> dict:
+    """首/尾连续低于 gate 的静音段时长（秒），帧定义与 speech_ratio 同一套
+    （40ms 帧 / 20ms hop / gate = max(-52, p90-32) dB）。
+
+    把「首尾垫的静音」与「有声段内部停顿」分开：r2 的失败形态经盲听交叉验证是尾部
+    多垫静音（均值 0.084s→0.292s，p90 0.42s），不是语速变慢。整段都低于 gate 时
+    没有边界可谈，返回 None 而不是把整条时长报成静音。
+    """
+    y = np.asarray(wav, dtype=np.float64).reshape(-1)
+    frame = int(0.04 * sr)
+    if frame <= 0 or y.size < frame * 4:
+        return {"head_silence_sec": None, "tail_silence_sec": None}
+    hop = max(1, frame // 2)
+    count = (y.size - frame) // hop + 1
+    if count < 4:
+        return {"head_silence_sec": None, "tail_silence_sec": None}
+    frames = np.lib.stride_tricks.sliding_window_view(y, frame)[::hop][:count]
+    db = 20.0 * np.log10(np.maximum(np.sqrt(np.mean(frames ** 2, axis=1)), 1e-7))
+    gate = max(-52.0, float(np.percentile(db, 90)) - 32.0)
+    voiced = np.flatnonzero(db >= gate)
+    if not voiced.size:
+        return {"head_silence_sec": None, "tail_silence_sec": None}
+    head = voiced[0] * hop / sr
+    tail = (y.size - (voiced[-1] * hop + frame)) / sr
+    return {"head_silence_sec": round(head, 3), "tail_silence_sec": round(tail, 3)}
+
+
+def _mean_power_spectrum(wav: np.ndarray, sr: int):
+    """40ms 帧 / 20ms hop / Hann 的分帧平均功率谱（与 metallic_resonance 同一套参数）。"""
+    y = np.asarray(wav, dtype=np.float64).reshape(-1)
+    frame = max(256, int(0.040 * sr))
+    if frame <= 0 or y.size < frame * 4:
+        return None, None
+    hop = max(1, frame // 2)
+    window = np.hanning(frame)
+    spectra = [np.abs(np.fft.rfft(y[s:s + frame] * window)) ** 2
+               for s in range(0, y.size - frame + 1, hop)]
+    if len(spectra) < 4:
+        return None, None
+    return np.mean(spectra, axis=0), np.fft.rfftfreq(frame, 1.0 / sr)
+
+
+def spectral_rolloff_99(wav: np.ndarray, sr: int) -> float | None:
+    """99% 累计谱能量所在频点（Hz）。只出读数，没有门限。
+
+    已知锚点：VoxCPM 基座输出是 16kHz 带宽装在 48kHz 容器里，该值约 7.5kHz，
+    16kHz 以上能量为 0——用这个读数在报告里自动暴露带宽上限，而不是靠抽听。
+    """
+    spec, freqs = _mean_power_spectrum(wav, sr)
+    if spec is None:
+        return None
+    total = float(np.sum(spec))
+    if total <= 1e-12:
+        return None
+    idx = int(np.searchsorted(np.cumsum(spec), 0.99 * total))
+    return round(float(freqs[min(idx, freqs.size - 1)]), 1)
+
+
+def band_ratio_2_8k(wav: np.ndarray, sr: int) -> float | None:
+    """2-8kHz 能量占 100Hz-Nyquist 总能量的比例。只出读数，没有门限。
+
+    已知锚点（2026-09-15 实测本项目 84 条 base 裸输出）：中位 0.162、范围 0.068-0.277，
+    r2 配对 Δ 均值 -0.0143（71% 对子变暗，训练数据引入的轻度变暗）。
+    带宽上限（spectral_rolloff_99）是容器决定的、训练改不动，这个带内共振峰/辅音占比
+    是唯一可能随训练数据变化的带宽相关量。
+    """
+    spec, freqs = _mean_power_spectrum(wav, sr)
+    if spec is None:
+        return None
+    total = float(np.sum(spec[freqs >= 100.0]))
+    if total <= 1e-12:
+        return None
+    band = float(np.sum(spec[(freqs >= 2000.0) & (freqs <= 8000.0)]))
+    return round(band / total, 4)
+
+
 def analyze(wav: np.ndarray, sr: int, ref_wav: np.ndarray | None = None,
             ref_sr: int | None = None) -> dict:
     """一次装齐全部质检指标；音频只加载一次。"""
@@ -212,6 +292,9 @@ def analyze(wav: np.ndarray, sr: int, ref_wav: np.ndarray | None = None,
     out["low_snr"] = None if sep is None else bool(sep < FLOOR_SEPARATION_MIN_DB)
     out["audio_sec"] = round(len(np.asarray(wav).reshape(-1)) / max(sr, 1), 3)
     out["speech_ratio"] = speech_ratio(wav, sr)
+    out.update(edge_silence(wav, sr))
+    out["spectral_rolloff_99"] = spectral_rolloff_99(wav, sr)
+    out["band_ratio_2_8k"] = band_ratio_2_8k(wav, sr)
     # 报出后端与失败原因：speaker_sim 是 None 时要能分清"没算"和"算出来是 0"
     model = _spk_model()
     out["speaker_sim_backend"] = model[3] if model else None

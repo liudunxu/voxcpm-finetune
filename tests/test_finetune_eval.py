@@ -164,9 +164,9 @@ def test_gpu_command_uses_absolute_interpreter():
 
 def _fake_report(path, label, nats):
     import json
-    items = [{"case_id": c, "seed": s, "lang": l, "text": f"text {c}", "wav": f"/w/{c}_{s}.wav",
+    items = [{"case_id": c, "seed": s, "lang": lang, "text": f"text {c}", "wav": f"/w/{c}_{s}.wav",
               "human_review": {"naturalness_1_5": None, "cutoff": None, "notes": ""}}
-             for c, s, l in nats]
+             for c, s, lang in nats]
     path.write_text(json.dumps({"target": label, "label": label, "items": items},
                                ensure_ascii=False), encoding="utf-8")
 
@@ -237,6 +237,85 @@ def test_regressed_splits_red_line_from_noise():
     assert out["red"] == ["vi 0.0700→0.5300"]
     assert out["noise"] == ["ms 0.0850→0.0854"]   # th 改善、tl 持平，都不该出现
     assert _regressed([base]) == {}
+
+
+def test_eval_aggregates_duration_and_spectral_metrics(tmp_path, monkeypatch):
+    """时长/频谱聚合是 runlog 时长类门禁的输入，缺了键门禁会全部静默跳过。"""
+    from voxft.data import pipeline
+    monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
+    monkeypatch.setattr(infer, "get_model", lambda *args: object())
+    monkeypatch.setattr(infer, "_run", lambda model, kw: ("fake.wav", 0.1))
+    monkeypatch.setattr(evaluation, "_transcribe", lambda *a: "Saya tidak tahu")
+    monkeypatch.setattr(evaluation, "_acoustics", lambda *a: {
+        "f0_std_st": 1.0, "audio_sec": 2.0, "chars_per_sec": 5.0, "metallic": False,
+        "low_snr": False, "speaker_sim": 0.9, "speech_ratio": 0.9,
+        "head_silence_sec": 0.1, "tail_silence_sec": 0.2,
+        "spectral_rolloff_99": 7300.0, "band_ratio_2_8k": 0.16})
+    report = evaluation.evaluate("base", "ms", [{"text": "Saya tidak tahu", "lang": "ms"}],
+                                 seeds=[42, 43])
+    assert report["mean_audio_sec"] == 2.0
+    assert report["mean_head_silence"] == 0.1
+    assert report["mean_tail_silence"] == 0.2
+    assert report["p90_tail_silence"] == 0.2
+    assert report["mean_spectral_rolloff_99"] == 7300.0
+    assert report["mean_band_ratio_2_8k"] == 0.16
+    assert report["by_lang"]["ms"]["p90_tail_silence"] == 0.2
+    assert report["by_lang"]["ms"]["mean_head_silence"] == 0.1
+
+
+def _dur_report(label, *, audio=2.0, cer_nn=0.003, tail_p90=0.10, speech=0.94,
+                lang=None, **lang_vals):
+    """最小伪报告：top-level + 可选单语种 by_lang 的时长类聚合键。"""
+    r = {"label": label, "mean_audio_sec": audio, "mean_cer_non_numeric": cer_nn,
+         "p90_tail_silence": tail_p90, "mean_speech_ratio": speech, "by_lang": {}}
+    if lang:
+        r["by_lang"][lang] = {"mean_audio_sec": lang_vals.get("audio", audio),
+                              "mean_cer_non_numeric": lang_vals.get("cer_nn", cer_nn),
+                              "p90_tail_silence": lang_vals.get("tail_p90", tail_p90),
+                              "mean_speech_ratio": lang_vals.get("speech", speech)}
+    return r
+
+
+def test_duration_gates_flag_the_r2_failure_shape():
+    """r2 实测形态：总时长 +12.3% 而 CER 没变、尾静音 0.084→0.292（p90 0.42）、
+    speech_ratio 0.94→0.84——三条门禁 overall 与 by_lang 都必须触发。"""
+    from voxft.train import runlog
+    base = _dur_report("base", lang="ms")
+    ck = _dur_report("ck", audio=2.25, tail_p90=0.42, speech=0.84, lang="ms")
+    out = runlog._duration_gates([base, ck])["ck"]
+    assert any(s.startswith("overall") for s in out["duration_inflation"])
+    assert any(s.startswith("ms") for s in out["duration_inflation"])
+    assert any(s.startswith("overall") for s in out["tail_silence"])
+    assert any(s.startswith("ms") for s in out["tail_silence"])
+    assert any(s.startswith("overall") for s in out["speech_ratio"])
+    assert any(s.startswith("ms") for s in out["speech_ratio"])
+
+
+def test_duration_gates_stay_quiet_when_content_also_changed():
+    """变长 12% 但 CER 也变差了 → 不是「变长但内容没变」，duration_inflation 不触发；
+    涨幅正好 10%、speech_ratio 正好降 0.05 也都在门槛上不触发（严格大于）。"""
+    from voxft.train import runlog
+    base = _dur_report("base")
+    worse = _dur_report("w", audio=2.25, cer_nn=0.05, tail_p90=0.15, speech=0.90)
+    out = runlog._duration_gates([base, worse])["w"]
+    assert out["duration_inflation"] == [] and out["tail_silence"] == []
+    assert out["speech_ratio"] == []
+    edge = _dur_report("e", audio=2.2, tail_p90=0.20, speech=0.89)
+    out = runlog._duration_gates([base, edge])["e"]
+    assert all(not v for v in out.values())
+
+
+def test_duration_gates_skip_old_reports_without_the_fields():
+    """旧报告没有时长聚合字段：跳过不误报。但 tail_silence 的 0.5s 绝对上限只依赖
+    checkpoint 自己，base 缺字段时仍生效（对齐官方训练数据尾静音上限）。"""
+    from voxft.train import runlog
+    old = {"label": "old", "mean_cer": 0.08, "by_lang": {"vi": {"mean_cer": 0.07}}}
+    new = {"label": "new", "mean_cer": 0.08, "by_lang": {"vi": {"mean_cer": 0.07}}}
+    assert all(not v for v in runlog._duration_gates([old, new])["new"].values())
+    ck = {"label": "ck", "p90_tail_silence": 0.6, "by_lang": {}}
+    assert runlog._duration_gates([old, ck])["ck"]["tail_silence"]
+    assert runlog._duration_gates([old]) == {}
 
 
 def test_runlog_puts_newest_record_first(tmp_path, monkeypatch):

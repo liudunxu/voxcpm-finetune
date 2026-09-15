@@ -82,6 +82,10 @@ MagicHub 真正有价值的是另一个库，见 §2.1。
 | `liva-ai/code-switching-asr` | CC-BY-4.0 且有 tl，但 **`n<1K`**，是 demo 样本不是语料 |
 | Common Voice tl | mozilla-foundation 在 HF 上现在只有 17_0 / 13_0；`fsicoli/common_voice_22_0` 的 tl config 查不到。与 AGENTS.md 记录的 `recordedHours=0` 一致 |
 | 菲律宾高校（UP PLD 48.6h、FSC 75h、Silencio 2h） | 均为 **CC-BY-NC 或 NC**，学术用途。商用禁止 |
+| **UP-DSP-PLD**（454h，Mozilla Data Collective 2026-03 上架） | ❌ **CC-BY-NC**（SIGUL 2024 论文 https://aclanthology.org/2024.sigul-1.32.pdf §Availability 明写），商用禁止，别被"上了 Mozilla Data Collective"误导 |
+| **InfoBayAI 菲律宾呼叫中心**（自称 4019h Tagalog） | ❌ 三重排除：8kHz 电话音质不适合 TTS + HF 只有 sample + 自称 CC-BY-4.0 与页面 "research only" 文案矛盾 |
+| `SilencioNetwork/tagalog` | ❌ **CC-BY-NC** |
+| `RidheshBhati/filipino-tts-biblical` | CC-BY-4.0 但仅 630 条，量太小不值得接入 |
 | YouTube / teleserye 抓取 | ABS-CBN、GMA、Viva 全是标准许可，不存在 CC 授权的菲短剧频道。抓取违反 ToS 且触及 RA8293 表演者邻接权。**商用产品不可用** |
 
 ### 2.3 付费定制采集
@@ -123,7 +127,8 @@ MagicHub 真正有价值的是另一个库，见 §2.1。
 
 | 来源 | 许可 | 规模 | 类型 | 有 speaker ID | 可用性 |
 |---|---|---|---|---|---|
-| **Nexdata 1004 Hours Thai**（SKU 1687，2025-07 上架） | **商业买断** | 1004h | 真人自然语音，低背景噪声，16kHz/16bit/mono WAV | ✅ **speaker ID + gender + noise**，WAR 98% | **8/10** 许可干净 + 有身份，是 `yodas_th` 的直接升级替代 |
+| **Nexdata 1004 Hours Thai**（SKU 1687，2025-07 上架） | **商业买断** | 1004h | 真人自然语音，低背景噪声，16kHz/16bit/mono WAV | ✅ **speaker ID + gender + noise**，WAR 98% | **8/10** 许可干净 + 有身份，是 `yodas_th` 的直接升级替代。✅ 官方页已核实：https://www.nexdata.ai/datasets/speechrecog/1687 （1004h 真实场景会话+独白、带转写+时间戳）。⚠️ 同厂另有 **1077h 电话版是 8kHz**，不适合 TTS，询价时别拿错 SKU |
+| **`fsicoli/common_voice_22_0` th（社区镜像）** | **CC0-1.0** | validated **173.07h / 365,963 条 / 7,973 speakers**，**条均 4.19s** | 众包朗读 | `client_id`（众包自报身份，**不默认可信**，不标 speaker_verified） | **8/10** ✅ 2026-09-15 复活：许可最干净 + 条均 4.19s 正对线上短 cue 分布；下载器 `kind="cv22"` 已修（镜像直拉 tsv+tar），实测 100 条成功。https://huggingface.co/datasets/fsicoli/common_voice_22_0 |
 | **`speechcolab/gigaspeech2` th** | **Apache-2.0** | 极大（10M–100M 段） | YouTube/播客口语，th/id/vi | ❌ | 6/10 **许可最干净**（无 SA/NC），但短句为主、无身份。`gated: auto` 需 HF 登录同意条款 |
 | `nectec/LOTUSDIS` | CC-BY-SA-4.0 | 16.1 万条 / 11GB | 远场会议自发对话 | ✅ speaker_id + mic | 4/10 SA + 远场混响，不能当 TTS 目标 |
 | Nexdata 211h 泰语全双工自发对话 | 商业买断 | 211h | 手机自发对话 | ✅ | 7/10 |
@@ -134,6 +139,13 @@ MagicHub 真正有价值的是另一个库，见 §2.1。
 **已核实「不存在」**：THAI-SER 之后没有任何新的泰语情感/表演语料公开。THAI-SER 自己的 LRE 2026 正式版就写明，此前的泰语语料（ORCHID-SPEECH、NECTEC-ATR 2004）都只服务 ASR。Nexdata / Datatang 的泰语 SKU 里**没有现成情感库** —— 泰语的情绪表演语料同样只能定制采集。
 
 **泰剧抓取同样不可行**：已核实 GMMTV 在 YouTube 上主动发起版权打击与下架（含二创和泰语配音视频），ONE31 / Ch3 同样。不存在 CC 授权的泰剧渠道。
+
+**2024–2026 无改变格局的新泰语语料（2026-09-15 扫过一轮，别再重复查）**：
+
+- `typhoon-ai/thai-dialect-isan`：Apache-2.0 但是**伊善方言**，对中部泰语配音是负资产
+- TVSpeech：3.75h 测试集，量级只够做 eval
+- wayu-ai 三个 bench：都是评测集；其中 `thai-tts-keyword-bench`（CC-BY-4.0，1531 条）**可进 eval 不进训练**
+- arXiv 2504.07858：500h 泰语 TTS 数据集论文，**数据未发布**
 
 ### 3.3 泰语转写可以换更好的模型
 
@@ -322,7 +334,10 @@ acted speech corpus for model fine-tuning.
 |---|---|
 | MagicHub ASR-BigFTagaCSC 1285h / 514 人 / 专有授权 | ✅ |
 | MagicHub ASR-SFDuSC 4.58h / 10 人 / CC-BY-NC-ND | ✅（AGENTS.md 原记录有误，已更正） |
-| Nexdata 1004 Hours Thai（SKU 1687）字段与 WAR 98% | ✅ |
+| Nexdata 1004 Hours Thai（SKU 1687）字段与 WAR 98% | ✅（官方页 https://www.nexdata.ai/datasets/speechrecog/1687 已核实；注意同厂 1077h 电话版是 8kHz） |
+| `fsicoli/common_voice_22_0` th = CC0-1.0，validated 173.07h / 7,973 speakers / 条均 4.19s | ✅（2026-09-15，`kind="cv22"` 下载器实测 100 条成功） |
+| UP-DSP-PLD 454h = CC-BY-NC（SIGUL 2024 §Availability） | ✅（2026-09-15，Mozilla Data Collective 上架不改变许可） |
+| InfoBayAI 菲律宾呼叫中心 4019h | ✅ 排除（8kHz + 许可文案自相矛盾） |
 | `speechcolab/gigaspeech2` th = Apache-2.0 | ✅ |
 | `nectec/LOTUSDIS` = CC-BY-SA-4.0 | ✅ |
 | `liva-ai/yapdo-convo` 无许可声明 | ✅ |
@@ -333,6 +348,6 @@ acted speech corpus for model fine-tuning.
 | Appen Expressive TTS 定制采集 | ~ 官网条目存在，未核实泰语/菲语库存 |
 | Defined.ai TL 自发对话 SKU 与时长 | ~ |
 | Nexdata 菲律宾语 306h / 522h / 1100h | ~ |
-| 菲律宾高校 UP PLD 48.6h / FSC 75h / Silencio 2h | ~ 许可为 NC |
+| 菲律宾高校 UP PLD 48.6h / FSC 75h / Silencio 2h | ✅ 许可为 NC（2026-09-15 复核结论不变：drama_tl 自建 + MagicHub BigFTagaCSC 询价） |
 | Chulalongkorn CCOST（Zenodo 17366698） | ~ Zenodo 超时，未核实 |
 | Common Voice Scripted Speech 26.0 泰语小时数 | ~ |

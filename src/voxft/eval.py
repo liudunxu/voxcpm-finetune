@@ -159,6 +159,10 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
             vals = [i[key] for i in g if i.get(key) is not None]
             return round(sum(bool(v) for v in vals) / len(vals), 4) if vals else None
 
+        def p90(key):
+            vals = sorted(i[key] for i in g if i.get(key) is not None)
+            return round(vals[min(len(vals) - 1, int(0.9 * len(vals)))], 4) if vals else None
+
         out = {
             "cases": len(g),
             "mean_cer": mean("cer"),
@@ -170,6 +174,12 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
             "mean_speaker_sim": mean("speaker_sim"),
             "mean_chars_per_sec": mean("chars_per_sec"),
             "mean_speech_ratio": mean("speech_ratio"),
+            "mean_audio_sec": mean("audio_sec"),
+            "mean_head_silence": mean("head_silence_sec"),
+            "mean_tail_silence": mean("tail_silence_sec"),
+            "p90_tail_silence": p90("tail_silence_sec"),
+            "mean_spectral_rolloff_99": mean("spectral_rolloff_99"),
+            "mean_band_ratio_2_8k": mean("band_ratio_2_8k"),
         }
         plain = [i for i in g if not i["numeric"]]
         if plain:
@@ -200,17 +210,24 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
         "mean_speaker_sim": overall["mean_speaker_sim"],
         "mean_chars_per_sec": overall["mean_chars_per_sec"],
         "mean_speech_ratio": overall["mean_speech_ratio"],
+        "mean_audio_sec": overall["mean_audio_sec"],
+        "mean_head_silence": overall["mean_head_silence"],
+        "mean_tail_silence": overall["mean_tail_silence"],
+        "p90_tail_silence": overall["p90_tail_silence"],
+        "mean_spectral_rolloff_99": overall["mean_spectral_rolloff_99"],
+        "mean_band_ratio_2_8k": overall["mean_band_ratio_2_8k"],
         "mean_f0_std": round(sum(i["f0_std_st"] for i in items) / len(items), 2),
         "by_lang": by_lang,
         "note": "ASR/漏尾均为诊断；F0 不作通过门限。按语言、ref 语言、角色、情绪分组做母语盲听。"
                 "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词级），不横向比。"
                 "suspected_truncation=少读/漏尾，over_read=多读/跑飞（>1.4× 参考长度）。"
                 "mean_cer_non_numeric 剔除了含阿拉伯数字的 case——那一类的 CER 会被 Whisper "
-                "自身的数字归一化污染，只能靠盲听。metallic/low_snr 阈值移植自 OmniVoice 生产口径，"
-                "但 metallic 那套是在 OmniVoice **后处理过**的音频上标定的（peak ceiling/level match），"
-                "用在裸模型输出上实测 4 误报 / 1 漏报 / 0 命中——人工对 4 条检出全判 noise=False、"
-                "自然度 5/5，**所以 metallic 只作参考值，不作通过门限**。"
-                "speaker_sim 是 MFCC 余弦（低可信档），只用于同一 ref 下 base 与 checkpoint 的相对比较。",
+                "自身的数字归一化污染，只能靠盲听。metallic 与 low_snr 阈值移植自 OmniVoice "
+                "生产口径，但 168 条盲听标注样本标定定案：metallic_score 对人工 noise 标注 "
+                "AUC=0.060（反相关），low_snr AUC=0.509（纯随机）且 28.7% 误报（主因是参考音频"
+                "噪底）——两者永久只作参考值，不作通过门限。speaker_sim 是 WavLM X-vector 余弦，"
+                "只做同一 ref 下 base 与 checkpoint 的相对比较，与生产 ERes2NetV2 门限刻度不可"
+                "互换。各指标口径与门禁阈值详见 docs/qc_gates.md。",
         "items": items,
     }
     out_dir = EVAL_DIR
@@ -350,7 +367,8 @@ def print_compare(reports: list[dict]) -> None:
                 print(_row("  " + lang, s))
     print("\n不能凭以上指标自动通过；请做母语盲听，检查情绪、音色、自然度和真实截断。")
     print("数字类 case 的 CER 会被 Whisper 自身的数字归一化污染，结论看「CER非数字」那一列；")
-    print("SIM 是 MFCC 余弦（低可信档），只在同一 ref 下做 base 与 checkpoint 的相对比较。")
+    print("SIM 是 WavLM X-vector 余弦，只在同一 ref 下做 base 与 checkpoint 的相对比较；")
+    print("metallic/low_snr 已标定定案为永久参考值（AUC 0.060 反相关 / 0.509 纯随机），不作门限。")
 
 
 def main() -> None:
