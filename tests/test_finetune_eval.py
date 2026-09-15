@@ -119,6 +119,49 @@ def test_eval_keeps_conditions_thai_marks_and_unique_reports(tmp_path, monkeypat
     assert all(not kw["retry_badcase"] and kw["text"].startswith("(surprised)") for kw in kwargs)
 
 
+def test_eval_shard_and_merge_roundtrip(tmp_path, monkeypatch):
+    """分片必须保持原始 case_id（否则合出来的报告跟整跑的基线配不上对），
+    各片并集等于整跑、交集为空；merge 重算的聚合必须与整跑一致。"""
+    from voxft.data import pipeline
+    monkeypatch.setattr(evaluation, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
+    monkeypatch.setattr(infer, "get_model", lambda *args: object())
+    monkeypatch.setattr(infer, "_run", lambda model, kw: ("fake.wav", 0.1))
+    monkeypatch.setattr(infer, "_resolve_base", lambda b: b or "base-repo")
+    monkeypatch.setattr(evaluation, "_transcribe", lambda *a: "Saya tidak tahu")
+    monkeypatch.setattr(evaluation, "_acoustics", lambda *a: {
+        "f0_std_st": 1.0, "audio_sec": 2.0, "chars_per_sec": 5.0, "metallic": False,
+        "low_snr": False, "speaker_sim": 0.9})
+    cases = [{"text": "Saya tidak tahu", "lang": "ms"} for _ in range(7)]
+    full = evaluation.evaluate("base", "ms", cases, seeds=[42])
+    shards = [evaluation.evaluate("base", "ms", cases, seeds=[42], shard=(k, 3))
+              for k in range(3)]
+    ids = [i["case_id"] for s in shards for i in s["items"]]
+    assert sorted(map(int, ids)) == list(range(7))         # 并集全覆盖且 case_id 是原始序号
+    assert all(s["shard"] for s in shards) and "shard" not in full
+    assert all("_shard" in s["label"] for s in shards)
+    merged = evaluation.merge_reports([s["report_path"] for s in shards])
+    assert merged["label"] == full["label"]
+    assert merged["mean_cer"] == full["mean_cer"]
+    assert merged["by_lang"] == full["by_lang"]
+    assert len(merged["items"]) == len(full["items"])
+    with pytest.raises(ValueError, match="重复"):
+        evaluation.merge_reports([shards[0]["report_path"], shards[0]["report_path"]])
+    with pytest.raises(ValueError, match="至少"):
+        evaluation.merge_reports([shards[0]["report_path"]])
+    bad = json.loads((tmp_path / shards[1]["report_path"]).read_text(encoding="utf-8"))
+    bad["cfg_value"] = 9.9
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text(json.dumps(bad), encoding="utf-8")
+    with pytest.raises(ValueError, match="口径不一致"):
+        evaluation.merge_reports([shards[0]["report_path"], str(bad_path)])
+    with pytest.raises(ValueError, match="0 <= k < n"):
+        evaluation.evaluate("base", "ms", cases, seeds=[42], shard=(3, 3))
+    with pytest.raises(ValueError, match="没有分到"):
+        evaluation.evaluate("base", "ms", cases[:1], seeds=[42], shard=(2, 3))
+
+
 def test_every_registry_lang_has_eval_channel():
     """加语种时必须同步 SAMPLE_BY_LANG，否则 eval 直接拒绝该语种的 case。"""
     from voxft.data.registry import SOURCES, TARGET_LANGS

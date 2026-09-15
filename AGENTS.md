@@ -90,6 +90,9 @@ uv run python -m voxft.eval base checkpoints/<run>/latest --lang th --ref-audio 
 #   cases.jsonl 每行 {"text": ..., "lang": "th|tl|vi|id|ms", "ref_audio"?, "control"?, "seed"?}
 uv run python -m voxft.eval base /root/autodl-tmp/voxft_ckpt/<run>/latest \
     --lang th --texts-file cases.jsonl --seeds 42
+# 大 case 集并行加速：N 个进程各跑一片（K 从 0 起），case_id 保持原始序号，跑完合并：
+uv run python -m voxft.eval base --texts-file cases.jsonl --seeds 42 43 44 --shard 0/3
+uv run python -m voxft.eval --merge <shard报告1.json> <shard报告2.json> <shard报告3.json>
 uv run pytest                        # 测试（testpaths=tests，不会去收 third_party 的官方脚本）
 # 训练（在 GPU 机器上，由页面生成的命令）：
 cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetune.py --config_path <生成的yaml>

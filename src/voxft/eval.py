@@ -96,16 +96,98 @@ def _acoustics(wav_path: str, text: str, ref_path: str | None, ref_cache: dict) 
     return out
 
 
+def _agg(g: list[dict]) -> dict:
+    def mean(key, subset=None):
+        vals = [i[key] for i in (g if subset is None else subset) if i.get(key) is not None]
+        return round(sum(vals) / len(vals), 4) if vals else None
+
+    def rate(key):
+        vals = [i[key] for i in g if i.get(key) is not None]
+        return round(sum(bool(v) for v in vals) / len(vals), 4) if vals else None
+
+    def p90(key):
+        vals = sorted(i[key] for i in g if i.get(key) is not None)
+        return round(vals[min(len(vals) - 1, int(0.9 * len(vals)))], 4) if vals else None
+
+    out = {
+        "cases": len(g),
+        "mean_cer": mean("cer"),
+        "mean_similarity": mean("similarity"),
+        "suspected_truncation_rate": rate("suspected_truncation"),  # 少读 / 漏尾
+        "over_read_rate": rate("over_read"),                        # 多读 / 跑飞
+        "metallic_rate": rate("metallic"),
+        "low_snr_rate": rate("low_snr"),
+        "mean_speaker_sim": mean("speaker_sim"),
+        "mean_chars_per_sec": mean("chars_per_sec"),
+        "mean_speech_ratio": mean("speech_ratio"),
+        "mean_audio_sec": mean("audio_sec"),
+        "mean_head_silence": mean("head_silence_sec"),
+        "mean_tail_silence": mean("tail_silence_sec"),
+        "p90_tail_silence": p90("tail_silence_sec"),
+        "mean_spectral_rolloff_99": mean("spectral_rolloff_99"),
+        "mean_band_ratio_2_8k": mean("band_ratio_2_8k"),
+    }
+    plain = [i for i in g if not i["numeric"]]
+    if plain:
+        # 数字类单列：Whisper 会把口播数字词归一成阿拉伯数字或货币符号，
+        # 那一类的 CER 差异不代表 TTS 质量差异，混进总均值会把结论带偏
+        out["non_numeric_cases"] = len(plain)
+        out["mean_cer_non_numeric"] = mean("cer", plain)
+    wers = [i["wer"] for i in g if i["wer"] is not None]
+    if wers:
+        out["mean_wer"] = round(sum(wers) / len(wers), 4)
+    return out
+
+
+_REPORT_NOTE = (
+    "ASR/漏尾均为诊断；F0 不作通过门限。按语言、ref 语言、角色、情绪分组做母语盲听。"
+    "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词级），不横向比。"
+    "suspected_truncation=少读/漏尾，over_read=多读/跑飞（>1.4× 参考长度）。"
+    "mean_cer_non_numeric 剔除了含阿拉伯数字的 case——那一类的 CER 会被 Whisper "
+    "自身的数字归一化污染，只能靠盲听。metallic 与 low_snr 阈值移植自 OmniVoice "
+    "生产口径，但 168 条盲听标注样本标定定案：metallic_score 对人工 noise 标注 "
+    "AUC=0.060（反相关），low_snr AUC=0.509（纯随机）且 28.7% 误报（主因是参考音频"
+    "噪底）——两者永久只作参考值，不作通过门限。speaker_sim 是 WavLM X-vector 余弦，"
+    "只做同一 ref 下 base 与 checkpoint 的相对比较，与生产 ERes2NetV2 门限刻度不可"
+    "互换。各指标口径与门禁阈值详见 docs/qc_gates.md。"
+)
+
+
+def _report_metrics(items: list[dict]) -> dict:
+    """top-level 聚合 + by_lang；evaluate 与 merge_reports 共用，保证口径一致。"""
+    overall = _agg(items)
+    by_lang = {lang: _agg([i for i in items if i["lang"] == lang])
+               for lang in sorted({i["lang"] for i in items})}
+    out = {k: overall.get(k) for k in (
+        "mean_similarity", "mean_cer", "mean_cer_non_numeric", "suspected_truncation_rate",
+        "over_read_rate", "metallic_rate", "low_snr_rate", "mean_speaker_sim",
+        "mean_chars_per_sec", "mean_speech_ratio", "mean_audio_sec", "mean_head_silence",
+        "mean_tail_silence", "p90_tail_silence", "mean_spectral_rolloff_99",
+        "mean_band_ratio_2_8k")}
+    out["mean_f0_std"] = round(sum(i["f0_std_st"] for i in items) / len(items), 2)
+    out["by_lang"] = by_lang
+    return out
+
+
 def evaluate(target: str, lang: str, texts: list[str | dict],
              base: str | None = None, ref_audio: str | None = None,
              control: str | None = None, seed: int = 42, *,
              seeds: list[int] | None = None, cfg_value: float = 2.0,
-             inference_timesteps: int = 20) -> dict:
-    """JSONL case 可覆盖 text/lang/ref_audio/ref_lang/control/seed，其他标签原样保留。"""
+             inference_timesteps: int = 20,
+             shard: tuple[int, int] | None = None) -> dict:
+    """JSONL case 可覆盖 text/lang/ref_audio/ref_lang/control/seed，其他标签原样保留。
+
+    shard=(k, n) 时只跑原始序号 i % n == k 的 case（case_id 保持原始序号），
+    用于多进程并行跑同一份 case 集，事后用 merge_reports 合并。
+    """
     from .data.pipeline import _whisper_model
 
     if not texts or (seeds is not None and not seeds):
         raise ValueError("评测台词和种子不能为空")
+    if shard is not None:
+        k, n = shard
+        if not (0 <= k < n):
+            raise ValueError(f"shard 须满足 0 <= k < n，收到 {k}/{n}")
     cases = []
     for i, raw in enumerate(texts):
         case = {"case_id": str(i), "lang": lang, "ref_audio": ref_audio,
@@ -117,11 +199,17 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
         if case.get("ref_audio") and not Path(case["ref_audio"]).is_file():
             raise ValueError(f"case {i} 参考音频不存在: {case['ref_audio']}")
         cases.append(case)
+    if shard is not None:
+        cases = [c for c in cases if int(c["case_id"]) % shard[1] == shard[0]]
+        if not cases:
+            raise ValueError(f"shard {shard[0]}/{shard[1]} 没有分到任何 case")
 
     whisper = _whisper_model(lang, "large-v3")
     lora = None if target == "base" else target
     model = infer.get_model(base, lora)
     label = Path(target).parent.name + "_" + Path(target).name if lora else "base"
+    if shard is not None:
+        label += f"_shard{shard[0]}of{shard[1]}"
     items = []
     ref_cache: dict = {}
     for case in cases:
@@ -150,89 +238,62 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                                  "cutoff": None, "noise": None, "notes": ""},
             })
 
-    def _agg(g: list[dict]) -> dict:
-        def mean(key, subset=None):
-            vals = [i[key] for i in (g if subset is None else subset) if i.get(key) is not None]
-            return round(sum(vals) / len(vals), 4) if vals else None
-
-        def rate(key):
-            vals = [i[key] for i in g if i.get(key) is not None]
-            return round(sum(bool(v) for v in vals) / len(vals), 4) if vals else None
-
-        def p90(key):
-            vals = sorted(i[key] for i in g if i.get(key) is not None)
-            return round(vals[min(len(vals) - 1, int(0.9 * len(vals)))], 4) if vals else None
-
-        out = {
-            "cases": len(g),
-            "mean_cer": mean("cer"),
-            "mean_similarity": mean("similarity"),
-            "suspected_truncation_rate": rate("suspected_truncation"),  # 少读 / 漏尾
-            "over_read_rate": rate("over_read"),                        # 多读 / 跑飞
-            "metallic_rate": rate("metallic"),
-            "low_snr_rate": rate("low_snr"),
-            "mean_speaker_sim": mean("speaker_sim"),
-            "mean_chars_per_sec": mean("chars_per_sec"),
-            "mean_speech_ratio": mean("speech_ratio"),
-            "mean_audio_sec": mean("audio_sec"),
-            "mean_head_silence": mean("head_silence_sec"),
-            "mean_tail_silence": mean("tail_silence_sec"),
-            "p90_tail_silence": p90("tail_silence_sec"),
-            "mean_spectral_rolloff_99": mean("spectral_rolloff_99"),
-            "mean_band_ratio_2_8k": mean("band_ratio_2_8k"),
-        }
-        plain = [i for i in g if not i["numeric"]]
-        if plain:
-            # 数字类单列：Whisper 会把口播数字词归一成阿拉伯数字或货币符号，
-            # 那一类的 CER 差异不代表 TTS 质量差异，混进总均值会把结论带偏
-            out["non_numeric_cases"] = len(plain)
-            out["mean_cer_non_numeric"] = mean("cer", plain)
-        wers = [i["wer"] for i in g if i["wer"] is not None]
-        if wers:
-            out["mean_wer"] = round(sum(wers) / len(wers), 4)
-        return out
-
-    by_lang = {lang: _agg([i for i in items if i["lang"] == lang])
-               for lang in sorted({i["lang"] for i in items})}
-    overall = _agg(items)
     report = {
         "target": target, "base": infer._resolve_base(base), "label": label,
         "cfg_value": cfg_value, "inference_timesteps": inference_timesteps,
         "retry_badcase": False, "asr_model": "large-v3",
         "asr_auto_detect_langs": sorted(AUTO_DETECT_LANGS),
-        "mean_similarity": overall["mean_similarity"],
-        "mean_cer": overall["mean_cer"],
-        "mean_cer_non_numeric": overall.get("mean_cer_non_numeric"),
-        "suspected_truncation_rate": overall["suspected_truncation_rate"],
-        "over_read_rate": overall["over_read_rate"],
-        "metallic_rate": overall["metallic_rate"],
-        "low_snr_rate": overall["low_snr_rate"],
-        "mean_speaker_sim": overall["mean_speaker_sim"],
-        "mean_chars_per_sec": overall["mean_chars_per_sec"],
-        "mean_speech_ratio": overall["mean_speech_ratio"],
-        "mean_audio_sec": overall["mean_audio_sec"],
-        "mean_head_silence": overall["mean_head_silence"],
-        "mean_tail_silence": overall["mean_tail_silence"],
-        "p90_tail_silence": overall["p90_tail_silence"],
-        "mean_spectral_rolloff_99": overall["mean_spectral_rolloff_99"],
-        "mean_band_ratio_2_8k": overall["mean_band_ratio_2_8k"],
-        "mean_f0_std": round(sum(i["f0_std_st"] for i in items) / len(items), 2),
-        "by_lang": by_lang,
-        "note": "ASR/漏尾均为诊断；F0 不作通过门限。按语言、ref 语言、角色、情绪分组做母语盲听。"
-                "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词级），不横向比。"
-                "suspected_truncation=少读/漏尾，over_read=多读/跑飞（>1.4× 参考长度）。"
-                "mean_cer_non_numeric 剔除了含阿拉伯数字的 case——那一类的 CER 会被 Whisper "
-                "自身的数字归一化污染，只能靠盲听。metallic 与 low_snr 阈值移植自 OmniVoice "
-                "生产口径，但 168 条盲听标注样本标定定案：metallic_score 对人工 noise 标注 "
-                "AUC=0.060（反相关），low_snr AUC=0.509（纯随机）且 28.7% 误报（主因是参考音频"
-                "噪底）——两者永久只作参考值，不作通过门限。speaker_sim 是 WavLM X-vector 余弦，"
-                "只做同一 ref 下 base 与 checkpoint 的相对比较，与生产 ERes2NetV2 门限刻度不可"
-                "互换。各指标口径与门禁阈值详见 docs/qc_gates.md。",
+        **({"shard": f"{shard[0]}/{shard[1]}"} if shard is not None else {}),
+        **_report_metrics(items),
+        "note": _REPORT_NOTE,
         "items": items,
     }
     out_dir = EVAL_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{label}_{uuid4().hex}.json"
+    report["report_path"] = str(out)
+    out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+
+
+def merge_reports(paths: list[str]) -> dict:
+    """合并同一 target 的分片报告：items 取并集，聚合指标用 _report_metrics 重算。
+
+    分片报告的 case_id 是原始序号（见 evaluate 的 shard 参数），所以合出来的
+    报告与一次性整跑完全同口径，可以直接与整跑的基线报告做盲听配对。
+    """
+    if len(paths) < 2:
+        raise ValueError("合并至少需要两份分片报告")
+    docs = [json.loads(Path(p).read_text(encoding="utf-8")) for p in paths]
+    first = docs[0]
+    for d in docs[1:]:
+        for key in ("target", "base", "cfg_value", "inference_timesteps", "asr_model"):
+            if d.get(key) != first.get(key):
+                raise ValueError(f"分片报告口径不一致（{key}）：{first.get(key)} vs {d.get(key)}")
+    seen: set[tuple[str, int]] = set()
+    items = []
+    for d in docs:
+        for i in d["items"]:
+            k = (i["case_id"], i["seed"])
+            if k in seen:
+                raise ValueError(f"case_id={k[0]} seed={k[1]} 在多份分片里重复出现")
+            seen.add(k)
+            items.append(i)
+    items.sort(key=lambda i: (int(i["case_id"]), i["seed"]))
+    label = re.sub(r"_shard\d+of\d+$", "", first["label"])
+    report = {
+        "target": first["target"], "base": first["base"], "label": label,
+        "cfg_value": first["cfg_value"], "inference_timesteps": first["inference_timesteps"],
+        "retry_badcase": first.get("retry_badcase", False),
+        "asr_model": first.get("asr_model"),
+        "asr_auto_detect_langs": first.get("asr_auto_detect_langs", []),
+        "merged_from": [str(p) for p in paths],
+        **_report_metrics(items),
+        "note": _REPORT_NOTE,
+        "items": items,
+    }
+    EVAL_DIR.mkdir(parents=True, exist_ok=True)
+    out = EVAL_DIR / f"{label}_{uuid4().hex}.json"
     report["report_path"] = str(out)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
@@ -373,7 +434,7 @@ def print_compare(reports: list[dict]) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("targets", nargs="+", help='"base" 或若干 LoRA checkpoint 目录')
+    ap.add_argument("targets", nargs="*", help='"base" 或若干 LoRA checkpoint 目录')
     ap.add_argument("--lang", default="th", choices=list(SAMPLE_BY_LANG))
     ap.add_argument("--base", default=None)
     ap.add_argument("--texts-file", default=None, help="逐 case JSONL；相对 ref 路径按此文件目录解析")
@@ -383,7 +444,26 @@ def main() -> None:
     ap.add_argument("--seeds", nargs="+", type=int, help="覆盖每个 case 的 seed，推荐 42 43 44")
     ap.add_argument("--cfg-value", type=float, default=2.0)
     ap.add_argument("--inference-timesteps", type=int, default=20)
+    ap.add_argument("--shard", default=None, metavar="K/N",
+                    help="只跑第 K 片（0 起）共 N 片，多进程并行跑同一份 case 集；"
+                         "case_id 保持原始序号，跑完用 --merge 合并")
+    ap.add_argument("--merge", nargs="+", metavar="REPORT",
+                    help="合并若干分片报告（voxft_ckpt/eval 下的文件名或路径）")
     args = ap.parse_args()
+    if args.merge:
+        paths = [p if Path(p).is_file() else str(EVAL_DIR / p) for p in args.merge]
+        report = merge_reports(paths)
+        print_compare([report])
+        print(f"\n合并报告: {report['report_path']}")
+        return
+    if not args.targets:
+        ap.error("需要至少一个 target（或改用 --merge）")
+    shard = None
+    if args.shard:
+        m = re.fullmatch(r"(\d+)/(\d+)", args.shard)
+        if not m:
+            ap.error("--shard 格式是 K/N（如 0/3）")
+        shard = (int(m.group(1)), int(m.group(2)))
     if args.texts_file:
         path = Path(args.texts_file).resolve()
         texts = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -395,7 +475,8 @@ def main() -> None:
         print("提示：内置单句仅为 smoke test，不能用于微调验收。")
     reports = [evaluate(t, args.lang, texts, args.base, args.ref_audio, args.control,
                         args.seed, seeds=args.seeds, cfg_value=args.cfg_value,
-                        inference_timesteps=args.inference_timesteps) for t in args.targets]
+                        inference_timesteps=args.inference_timesteps,
+                        shard=shard) for t in args.targets]
     print_compare(reports)
     print(f"\n详细报告: {CHECKPOINT_DIR / 'eval'}/")
 

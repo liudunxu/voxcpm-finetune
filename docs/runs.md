@@ -5,6 +5,79 @@
 
 用途：下一轮微调的起点参照、周报汇总、以及「这个结论是哪一轮、用什么数据得出的」回溯。
 
+## lora_omni5_r5
+
+- 生成时间：2026-09-15 20:28:54
+- 结论：**离线轨不通过：id 非数字 CER 0.0237→0.1130 过红线（Δ>0.05），集中在 id_nat 自然口语 case（id_nat_20/02 跨 seed 全崩）；ms 大胜（CER 0.068→0.016、漏尾 9.4%→0.6%）、th 改善（0.114→0.106）。待母语盲听终裁**
+- 下一步：若盲听确认 id 退化：r6 砍掉 cv22_id 份额（怀疑众包朗读韵律带偏自发口语），其余语种维持联合配比不变；尾静音继续观察（0.228→0.189 在收敛但仍差于 base 0.102）
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0 / 3267 |
+| warmup / weight_decay / max_grad_norm | 326 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/joint_omni5/train.jsonl |
+| 样本数 / 语种条数 | 52271 / {"en": 2394, "id": 10125, "ms": 7426, "th": 10929, "tl": 5496, "vi": 11205, "zh": 4696} |
+| val loss 首→末 | 1.0968 (step 0) → 0.9368 (step 3266)，最优 0.9134 |
+
+### 数据配比（按时长）
+
+- 总时长 **111.1782 h** / 52271 条，max_repeat=3.0
+- 带 ref_audio：0，带控制前缀：0
+- max_exposure：3
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.0501 | 5.5723 |
+| id | 0.17 | 0.1704 | 18.9418 |
+| ms | 0.17 | 0.1704 | 18.9503 |
+| th | 0.17 | 0.1704 | 18.944 |
+| tl | 0.17 | 0.1681 | 18.6865 |
+| vi | 0.17 | 0.1704 | 18.9417 |
+| zh | 0.1 | 0.1002 | 11.1415 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、182 个 case × seed = 910 条样本
+
+| 语种 | base CER | lora_omni5_r5_latest CER |
+|---|---|---|
+| en | 0.015 (WER 0.0248) | 0.0191 (WER 0.033) |
+| id | 0.023 (WER 0.0958) | 0.1016 (WER 0.1739) |
+| ms | 0.0681 (WER 0.1146) | 0.0156 (WER 0.0483) |
+| th | 0.1142 | 0.1055 |
+| tl | 0.0184 (WER 0.0742) | 0.0134 (WER 0.0726) |
+| vi | 0.073 (WER 0.0926) | 0.0764 (WER 0.0953) |
+| zh | 0.058 | 0.0864 |
+| **总体** | 0.0568 | 0.0618 |
+| 疑似漏尾 | 0.0385 | 0.033 |
+
+退化语种（红线阈值 ΔCER > 0.005；任一语种触发即整轮不通过）：
+- `lora_omni5_r5_latest` 红线：id 0.0230→0.1016；zh 0.0580→0.0864
+  - 噪声级（未触发红线，照实记录）：en 0.0150→0.0191；vi 0.0730→0.0764
+
+时长类门禁（audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r5_latest`：id p90尾静音 0.180→0.280s（+0.100s）；ms p90尾静音 0.180→0.280s（+0.100s）；th p90尾静音 0.180→0.300s（+0.120s）；tl p90尾静音 0.180→0.280s（+0.100s）；vi p90尾静音 0.180→0.300s（+0.120s）；id speech_ratio 0.902→0.841（-0.061）；th speech_ratio 0.902→0.848（-0.054）
+
+报告文件：`base_8de890a3af74491b948c1ae0449967b0.json`、`lora_omni5_r5_latest_3f898e8e9f84428eb3bef9e9e2ce7742.json`
+
+### 人工盲听
+
+（在 6006「盲听评估」Tab 做完后把分语种 B 胜/平/负 与要点粘到这里；**指标与盲听冲突时以盲听为准**）
+
+新增 cv22_th 25.2h/cv22_id 7.2h/cv22_vi 1.4h/yodas2_ms 1.1h 四个源；v2 case 集 182×5seed 首用；zh 回放漂移 0.058→0.086 未过线但需留意；eval 新增 --shard/--merge 并行
+
+---
+
 ## lora_omni5_r4
 
 - 生成时间：2026-09-15 12:06:43
