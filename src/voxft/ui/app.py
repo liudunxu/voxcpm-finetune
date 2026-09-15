@@ -579,6 +579,18 @@ def do_review_next(session, ratings, pos, *ctrl):
     return _review_nav(session, ratings, pos, +1, *ctrl)
 
 
+def do_review_jump(session, ratings, pos, target, *ctrl):
+    """跳到指定序号（1 起）。大 case 集的会话动辄几百条，逐条点不现实。"""
+    session = session or []
+    if not session:
+        return _rv_show([], ratings or {}, 0)
+    ratings = dict(ratings or {})
+    if 0 <= int(pos) < len(session):
+        ratings[review_key(session[int(pos)])] = _rv_collect(*ctrl)
+    t = max(1, min(len(session), int(target or 1))) - 1
+    return _rv_show(session, ratings, t)
+
+
 def do_review_save(a, b, session, ratings, pos, *ctrl):
     if not session:
         return "（会话为空，请先载入）"
@@ -895,11 +907,15 @@ def build_ui() -> gr.Blocks:
             with gr.Row():
                 rv_prev = gr.Button("← 上一条")
                 rv_next = gr.Button("保存并下一条 →", variant="primary")
+                rv_jump_to = gr.Number(1, label="跳到第 N 条", precision=0, minimum=1)
+                rv_jump = gr.Button("跳转")
             rv_save = gr.Button("汇总并写回报告", variant="primary")
             rv_summary = gr.Markdown()
             rv_load.click(do_review_load, [rv_a, rv_b, rv_seed], rv_out)
             rv_prev.click(do_review_prev, [rv_session, rv_ratings, rv_pos, *rv_ctrl], rv_out)
             rv_next.click(do_review_next, [rv_session, rv_ratings, rv_pos, *rv_ctrl], rv_out)
+            rv_jump.click(do_review_jump,
+                          [rv_session, rv_ratings, rv_pos, rv_jump_to, *rv_ctrl], rv_out)
             rv_save.click(do_review_save,
                           [rv_a, rv_b, rv_session, rv_ratings, rv_pos, *rv_ctrl], rv_summary)
             tab_review.select(lambda: (gr.update(choices=_report_choices()),
