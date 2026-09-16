@@ -174,12 +174,14 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
              control: str | None = None, seed: int = 42, *,
              seeds: list[int] | None = None, cfg_value: float = 2.0,
              inference_timesteps: int = 20,
-             shard: tuple[int, int] | None = None) -> dict:
+             shard: tuple[int, int] | None = None, progress=None) -> dict:
     """JSONL case 可覆盖 text/lang/ref_audio/ref_lang/control/seed，其他标签原样保留。
 
     shard=(k, n) 时只跑原始文件顺序序号 i % n == k 的 case（case_id 保持 case
     文件里声明的原样，可能是 "th_nat_01" 这类字符串），用于多进程并行跑同一份
-    case 集，事后用 merge_reports 合并。
+    case 集，事后用 merge_reports 合并。progress 每条出结果时回调一次
+    （CLI 传 print，方便远程 nohup 场景从日志数进度——全程只有 tqdm 条的话
+    只能靠数产物文件估进度）。
     """
     from .data.pipeline import _whisper_model
 
@@ -213,6 +215,8 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
         label += f"_shard{shard[0]}of{shard[1]}"
     items = []
     ref_cache: dict = {}
+    seed_list = seeds if seeds is not None else None
+    total = sum(len(seed_list) if seed_list else 1 for _ in cases)
     for case in cases:
         for requested_seed in seeds if seeds is not None else [int(case.get("seed", seed))]:
             kw = infer._gen_kwargs(case["text"], case.get("ref_audio"), None,
@@ -238,6 +242,9 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                                  "speaker_similarity_1_5": None, "intelligibility_1_5": None,
                                  "cutoff": None, "noise": None, "notes": ""},
             })
+            if progress:
+                progress(f"[{len(items)}/{total}] {case['case_id']} seed={requested_seed} "
+                         f"cer={items[-1]['cer']:.3f} gen={gen_sec}s")
 
     report = {
         "target": target, "base": infer._resolve_base(base), "label": label,
@@ -484,7 +491,7 @@ def main() -> None:
     reports = [evaluate(t, args.lang, texts, args.base, args.ref_audio, args.control,
                         args.seed, seeds=args.seeds, cfg_value=args.cfg_value,
                         inference_timesteps=args.inference_timesteps,
-                        shard=shard) for t in args.targets]
+                        shard=shard, progress=print) for t in args.targets]
     print_compare(reports)
     print(f"\n详细报告: {CHECKPOINT_DIR / 'eval'}/")
 

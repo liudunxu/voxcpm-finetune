@@ -178,7 +178,9 @@ def test_eval_shard_with_string_case_ids(tmp_path, monkeypatch):
         "low_snr": False, "speaker_sim": 0.9})
     cases = [{"text": "Saya tidak tahu", "lang": "ms", "case_id": f"ms_nat_{i:02d}"}
              for i in range(7)]
-    full = evaluation.evaluate("base", "ms", cases, seeds=[42])
+    seen = []
+    full = evaluation.evaluate("base", "ms", cases, seeds=[42], progress=seen.append)
+    assert len(seen) == 7 and seen[0].startswith("[1/7] ms_nat_00 seed=42")
     shards = [evaluation.evaluate("base", "ms", cases, seeds=[42], shard=(k, 3))
               for k in range(3)]
     assert sorted(i["case_id"] for s in shards for i in s["items"]) == \
