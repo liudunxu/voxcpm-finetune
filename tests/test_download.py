@@ -254,8 +254,8 @@ def test_cv22_reads_tsv_and_tar_without_loader_script(tmp_path, monkeypatch):
     """cv22 绕开把 URL 硬编码到 huggingface.co 的加载脚本，按真实布局直拉：
     transcript/<lang>/<split>.tsv（client_id/path/sentence 表头）+
     audio/<lang>/<split>/<lang>_<split>_<n>.tar（成员名前缀一层同名目录）。
-    client_id 是众包自报身份：进 speaker/session 供 train/val 隔离，
-    但绝不能标 speaker_verified（不作 ref 依据）。"""
+    client_id 是账号级持久身份：进 speaker/session 供 train/val 隔离，
+    r9 起 has_speaker=True、标 speaker_verified 并参与 ref 配对。"""
     import io
     import tarfile
 
@@ -265,7 +265,7 @@ def test_cv22_reads_tsv_and_tar_without_loader_script(tmp_path, monkeypatch):
     from voxft.data.registry import get_source
 
     src = get_source("cv22_th")
-    assert src.kind == "cv22" and not src.has_speaker
+    assert src.kind == "cv22" and src.has_speaker
 
     def _mp3(seconds):
         buf = io.BytesIO()
@@ -310,7 +310,7 @@ def test_cv22_reads_tsv_and_tar_without_loader_script(tmp_path, monkeypatch):
     assert [r["text"] for r in rows] == ["ประโยคที่หนึ่ง", "ประโยคที่สอง"]
     assert [r["speaker"] for r in rows] == ["client-a", "client-a"]
     assert [r["session"] for r in rows] == ["client-a", "client-a"]
-    assert all(r["speaker_verified"] is False and r["lang"] == "th" for r in rows)
+    assert all(r["speaker_verified"] is True and r["lang"] == "th" for r in rows)
     assert any("无转写 2 条" in line for line in log)  # 空文本行也不进 clips 映射
 
     # max_samples 在 tar 遍历中间就停，不扫后续 split

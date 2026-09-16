@@ -667,8 +667,9 @@ def _download_cv22(source: Source, dest: Path, max_samples: int | None,
     client_id/path/sentence_id/sentence/...）+ `audio/<lang>/<split>/
     <lang>_<split>_<n>.tar`（成员 `<lang>_<split>_<n>/common_voice_<lang>_<id>.mp3`，
     48kHz，libsndfile 1.2 直接解码）。
-    client_id 是众包自报身份：写进 speaker 与 session（供 train/val 隔离），
-    但 registry 里 has_speaker=False，不标 speaker_verified、不作 ref 依据。
+    client_id 是账号级持久身份（非聚类猜测）：写进 speaker 与 session（供 train/val
+    隔离），r9 起 registry 标 has_speaker=True，经 _metadata 自动标
+    speaker_verified、参与 ref 配对；只做匿名分组，不识别真人（CV 条款红线）。
     """
     import csv
     from functools import partial
