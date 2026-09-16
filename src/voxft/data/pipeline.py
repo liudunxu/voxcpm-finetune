@@ -1153,7 +1153,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     group = ap.add_mutually_exclusive_group(required=True)
     group.add_argument("--source")
-    group.add_argument("--mix", nargs="+", metavar="DATASET=WEIGHT")
+    group.add_argument("--mix", nargs="+", action="append", metavar="DATASET=WEIGHT",
+                       help="可多次给也可一次给多个；nargs='+' 不加 append 时重复 "
+                            "--mix 只保留最后一组，前面的配比会被静默丢掉")
     ap.add_argument("--out", default=None)
     ap.add_argument("--manifest", default=None, help="已审核原始 JSONL；相对音频路径按此文件所在目录解析")
     ap.add_argument("--max-items", type=int, default=None)
@@ -1178,7 +1180,8 @@ if __name__ == "__main__":
     if args.mix:
         if not args.out:
             ap.error("--mix 需要 --out")
-        parts = [(part.rsplit("=", 1)[0], float(part.rsplit("=", 1)[1])) for part in args.mix]
+        flat = [part for grp in args.mix for part in grp]
+        parts = [(part.rsplit("=", 1)[0], float(part.rsplit("=", 1)[1])) for part in flat]
         print(json.dumps(mix_manifests(parts, args.out, progress=print),
                          ensure_ascii=False, indent=2))
         raise SystemExit(0)

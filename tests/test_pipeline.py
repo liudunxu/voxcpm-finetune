@@ -750,3 +750,15 @@ def test_rate_counts_characters_for_scripts_without_word_spaces():
     assert audio_metrics(wav, sr, thai)["rate"] > 5.0
     # 拉丁正字法仍按词算，别被上面的改动带跑
     assert audio_metrics(wav, sr, "one two three four five six")["rate"] == 1.0
+
+
+def test_mix_cli_repeated_flags_accumulate():
+    """--mix 重复给必须累加：nargs='+' 不配 action='append' 时只保留最后一组，
+    前面的配比被静默丢掉（本轮踩过：14 个 --mix 只生效最后一个，混合变成纯 en）。"""
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, "-m", "voxft.data.pipeline",
+                        "--mix", "no_such_a=1.0", "--mix", "no_such_b=2.0",
+                        "--out", "t_out"], capture_output=True, text=True)
+    # mix_manifests 按顺序读清单，第一组若被静默丢掉，报错里就只剩 no_such_b
+    assert "no_such_a" in r.stderr
