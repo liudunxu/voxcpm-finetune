@@ -5,6 +5,78 @@
 
 用途：下一轮微调的起点参照、周报汇总、以及「这个结论是哪一轮、用什么数据得出的」回溯。
 
+## lora_omni5_r6
+
+- 生成时间：2026-09-16 12:37:47
+- 结论：**不通过：id 退化未修复且略恶化（CER 0.023→0.1373、漏尾 9.4%、多读 6.2%，红线 Δ>0.05），砍掉 cv22_id 没有解决，归因被推翻；th 小幅退化（漏尾 6.9%→10.6%、多读 3.1%）；ms 大胜保住（0.068→0.015、漏尾 9.4%→0）、tl/vi 持平略好、zh 回到基线（0.086→0.056）**
+- 下一步：查 r2 的 id 数据口径与 _tc 尾裁差异；失败集中在 id_nat/th_nat 自然口语探针且 r5/r6 同一批 case，怀疑 _tc 尾裁或 gigaspeech2 系数据破坏停止行为；r7 候选：id 退回非 _tc 数据或独立 LoRA
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0 / 2978 |
+| warmup / weight_decay / max_grad_norm | 297 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/joint_omni6/train.jsonl |
+| 样本数 / 语种条数 | 47646 / {"en": 2233, "id": 8240, "ms": 6946, "th": 10220, "tl": 5190, "vi": 10465, "zh": 4352} |
+| val loss 首→末 | 1.0791 (step 0) → 0.9446 (step 2977)，最优 0.9182 |
+
+### 数据配比（按时长）
+
+- 总时长 **104.2082 h** / 47646 条，max_repeat=3.0
+- 带 ref_audio：0，带控制前缀：0
+- max_exposure：3
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.05 | 5.2101 |
+| id | 0.17 | 0.17 | 17.7154 |
+| ms | 0.17 | 0.17 | 17.7139 |
+| th | 0.17 | 0.17 | 17.7184 |
+| tl | 0.17 | 0.17 | 17.7133 |
+| vi | 0.17 | 0.17 | 17.7173 |
+| zh | 0.1 | 0.1 | 10.4199 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、182 个 case × seed = 910 条样本
+
+| 语种 | base CER | lora_omni5_r6_latest CER |
+|---|---|---|
+| en | 0.015 (WER 0.0248) | 0.0242 (WER 0.0364) |
+| id | 0.023 (WER 0.0958) | 0.1373 (WER 0.1876) |
+| ms | 0.0681 (WER 0.1146) | 0.0146 (WER 0.0486) |
+| th | 0.1142 | 0.1216 |
+| tl | 0.0184 (WER 0.0742) | 0.0147 (WER 0.0732) |
+| vi | 0.073 (WER 0.0926) | 0.0638 (WER 0.0815) |
+| zh | 0.058 | 0.056 |
+| **总体** | 0.0568 | 0.067 |
+| 疑似漏尾 | 0.0385 | 0.0451 |
+
+退化语种（红线阈值 ΔCER > 0.005；任一语种触发即整轮不通过）：
+- `lora_omni5_r6_latest` 红线：en 0.0150→0.0242；id 0.0230→0.1373；th 0.1142→0.1216
+
+时长类门禁（audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r6_latest`：id p90尾静音 0.180→0.300s（+0.120s）；ms p90尾静音 0.180→0.280s（+0.100s）；th p90尾静音 0.180→0.280s（+0.100s）；tl p90尾静音 0.180→0.280s（+0.100s）；vi p90尾静音 0.180→0.300s（+0.120s）；id speech_ratio 0.902→0.840（-0.061）
+
+报告文件：`base_8de890a3af74491b948c1ae0449967b0.json`、`lora_omni5_r6_latest_e5c65c1f92be4f3a872dbecea45bbab8.json`
+
+### 人工盲听
+
+（在 6006「盲听评估」Tab 做完后把分语种 B 胜/平/负 与要点粘到这里；**指标与盲听冲突时以盲听为准**）
+
+失败 case 高度集中：id_nat_20 r6 CER 2.41（5 seed 全崩）、id_nat_08 0.544、id_nat_02 0.376；th_nat_05 0.350、th_nat_20 0.306。eval 分 3 片并行跑（新 --shard/--merge，已修字符串 case_id bug）
+
+---
+
 ## lora_omni5_r5
 
 - 生成时间：2026-09-15 20:28:54
@@ -72,11 +144,7 @@
 
 ### 人工盲听
 
-**2026-09-15（抽听 id 判决区）**：id_nat_02（seed 42/43）与 id_nat_20（seed 42/43）共 4 对，
-**确认 B（r5）多读/跑飞——续写了原文没有的字**，与离线 over_read/漏尾判定一致。
-离线红线成立，非 ASR 误报 ⇒ r5 整轮不通过，交付版仍为 r2。
-归因：退化集中在 cv22_id 占比最高的 id；r6 砍掉 cv22_id（id 退回 fleurs 7 + gigaspeech2 10）。
-（ms/th/vi/tl 的完整盲听未做；若后续补听，把分语种 B 胜/平/负 补到这里。）
+（在 6006「盲听评估」Tab 做完后把分语种 B 胜/平/负 与要点粘到这里；**指标与盲听冲突时以盲听为准**）
 
 新增 cv22_th 25.2h/cv22_id 7.2h/cv22_vi 1.4h/yodas2_ms 1.1h 四个源；v2 case 集 182×5seed 首用；zh 回放漂移 0.058→0.086 未过线但需留意；eval 新增 --shard/--merge 并行
 

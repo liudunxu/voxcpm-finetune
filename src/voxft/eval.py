@@ -177,8 +177,9 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
              shard: tuple[int, int] | None = None) -> dict:
     """JSONL case 可覆盖 text/lang/ref_audio/ref_lang/control/seed，其他标签原样保留。
 
-    shard=(k, n) 时只跑原始序号 i % n == k 的 case（case_id 保持原始序号），
-    用于多进程并行跑同一份 case 集，事后用 merge_reports 合并。
+    shard=(k, n) 时只跑原始文件顺序序号 i % n == k 的 case（case_id 保持 case
+    文件里声明的原样，可能是 "th_nat_01" 这类字符串），用于多进程并行跑同一份
+    case 集，事后用 merge_reports 合并。
     """
     from .data.pipeline import _whisper_model
 
@@ -200,7 +201,7 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
             raise ValueError(f"case {i} 参考音频不存在: {case['ref_audio']}")
         cases.append(case)
     if shard is not None:
-        cases = [c for c in cases if int(c["case_id"]) % shard[1] == shard[0]]
+        cases = [c for i, c in enumerate(cases) if i % shard[1] == shard[0]]
         if not cases:
             raise ValueError(f"shard {shard[0]}/{shard[1]} 没有分到任何 case")
 
@@ -256,11 +257,18 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
     return report
 
 
+def _case_sort_key(item: dict) -> tuple:
+    """case_id 可能是字符串（如 "th_nat_01"），数字 id 排前面，同 id 按 seed。"""
+    cid = str(item["case_id"])
+    return (0, int(cid), item["seed"]) if cid.isdigit() else (1, cid, item["seed"])
+
+
 def merge_reports(paths: list[str]) -> dict:
     """合并同一 target 的分片报告：items 取并集，聚合指标用 _report_metrics 重算。
 
-    分片报告的 case_id 是原始序号（见 evaluate 的 shard 参数），所以合出来的
-    报告与一次性整跑完全同口径，可以直接与整跑的基线报告做盲听配对。
+    分片按原始文件顺序切（见 evaluate 的 shard 参数），case_id 保持 case 文件
+    原样（可能是字符串），所以合出来的报告与一次性整跑同口径，可以直接与整跑
+    的基线报告做盲听配对（配对按 (case_id, seed)，与条目顺序无关）。
     """
     if len(paths) < 2:
         raise ValueError("合并至少需要两份分片报告")
@@ -279,7 +287,7 @@ def merge_reports(paths: list[str]) -> dict:
                 raise ValueError(f"case_id={k[0]} seed={k[1]} 在多份分片里重复出现")
             seen.add(k)
             items.append(i)
-    items.sort(key=lambda i: (int(i["case_id"]), i["seed"]))
+    items.sort(key=_case_sort_key)
     label = re.sub(r"_shard\d+of\d+$", "", first["label"])
     report = {
         "target": first["target"], "base": first["base"], "label": label,

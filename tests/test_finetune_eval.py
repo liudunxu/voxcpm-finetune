@@ -162,6 +162,32 @@ def test_eval_shard_and_merge_roundtrip(tmp_path, monkeypatch):
         evaluation.evaluate("base", "ms", cases[:1], seeds=[42], shard=(2, 3))
 
 
+def test_eval_shard_with_string_case_ids(tmp_path, monkeypatch):
+    """真实 case 文件（omnivoice_prod*.jsonl）每行自带字符串 case_id（如 th_nat_01）：
+    分片必须按文件顺序序号切而不是 int(case_id)，合并排序也要容忍字符串 id。"""
+    from voxft.data import pipeline
+    monkeypatch.setattr(evaluation, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
+    monkeypatch.setattr(infer, "get_model", lambda *args: object())
+    monkeypatch.setattr(infer, "_run", lambda model, kw: ("fake.wav", 0.1))
+    monkeypatch.setattr(infer, "_resolve_base", lambda b: b or "base-repo")
+    monkeypatch.setattr(evaluation, "_transcribe", lambda *a: "Saya tidak tahu")
+    monkeypatch.setattr(evaluation, "_acoustics", lambda *a: {
+        "f0_std_st": 1.0, "audio_sec": 2.0, "chars_per_sec": 5.0, "metallic": False,
+        "low_snr": False, "speaker_sim": 0.9})
+    cases = [{"text": "Saya tidak tahu", "lang": "ms", "case_id": f"ms_nat_{i:02d}"}
+             for i in range(7)]
+    full = evaluation.evaluate("base", "ms", cases, seeds=[42])
+    shards = [evaluation.evaluate("base", "ms", cases, seeds=[42], shard=(k, 3))
+              for k in range(3)]
+    assert sorted(i["case_id"] for s in shards for i in s["items"]) == \
+        sorted(i["case_id"] for i in full["items"])
+    merged = evaluation.merge_reports([s["report_path"] for s in shards])
+    assert merged["mean_cer"] == full["mean_cer"] and len(merged["items"]) == 7
+    assert [i["case_id"] for i in merged["items"]] == [f"ms_nat_{i:02d}" for i in range(7)]
+
+
 def test_every_registry_lang_has_eval_channel():
     """加语种时必须同步 SAMPLE_BY_LANG，否则 eval 直接拒绝该语种的 case。"""
     from voxft.data.registry import SOURCES, TARGET_LANGS
