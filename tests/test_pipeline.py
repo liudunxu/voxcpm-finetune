@@ -762,3 +762,40 @@ def test_mix_cli_repeated_flags_accumulate():
                         "--out", "t_out"], capture_output=True, text=True)
     # mix_manifests 按顺序读清单，第一组若被静默丢掉，报错里就只剩 no_such_b
     assert "no_such_a" in r.stderr
+
+
+def test_repair_refs_pairs_verified_speakers():
+    """cv22 的 client_id 上调为可信身份后，旧清单靠 repair_refs 补 ref 配对，
+    不用重加工音频；无身份行（:unknown）保持未验证、不参与配对。"""
+    from voxft.data.pipeline import _read_manifest, _write_jsonl, repair_refs
+    rows = []
+    for spk in ("a", "b"):
+        for i in range(3):
+            rows.append({"audio": f"/cv22_th/{spk}{i}.wav", "origin_audio": f"/raw/{spk}{i}.mp3",
+                         "duration": 4.0, "text": "t", "lang": "th",
+                         "source_id": "cv22_th", "speaker": f"cv22_th:{spk}",
+                         "speaker_verified": False})
+    rows.append({"audio": "/cv22_th/x.wav", "origin_audio": "/raw/x.mp3", "duration": 4.0,
+                 "text": "t", "lang": "th", "source_id": "cv22_th",
+                 "speaker": "cv22_th:unknown", "speaker_verified": False})
+    _write_jsonl(rows, DATA_PROCESSED / "cv22_th" / "train.jsonl")
+    out = repair_refs("cv22_th", opts=Options(ref_audio_ratio=1.0))
+    saved = _read_manifest(DATA_PROCESSED / "cv22_th" / "train.jsonl")
+    paired = [r for r in saved if r.get("ref_audio")]
+    assert out["train"]["verified"] == 6 and len(paired) == 6
+    for r in paired:
+        assert r["ref_speaker"] == r["speaker"]
+        assert r["ref_origin_audio"] != r["origin_audio"]
+    unknown = [r for r in saved if r["speaker"].endswith(":unknown")]
+    assert unknown and unknown[0]["speaker_verified"] is False
+
+
+def test_repair_refs_refuses_untrusted_source():
+    """registry 没标 has_speaker 的源不许重配对，防止给无身份语料强凑 ref。"""
+    from voxft.data.pipeline import _write_jsonl, repair_refs
+    _write_jsonl([{"audio": "/f/0.wav", "origin_audio": "/f/0.wav", "duration": 4.0,
+                   "text": "t", "lang": "th", "source_id": "fleurs_th",
+                   "speaker": "fleurs_th:unknown"}],
+                 DATA_PROCESSED / "fleurs_th" / "train.jsonl")
+    with pytest.raises(ValueError, match="has_speaker"):
+        repair_refs("fleurs_th")

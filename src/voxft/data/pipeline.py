@@ -1148,6 +1148,54 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
     return {"output": str(out), **summary}
 
 
+def repair_refs(dataset: str, opts: Options | None = None, seed: int = 42, progress=None) -> dict:
+    """对已加工数据集重跑 speaker_verified 标记与 ref 配对，不重加工音频。
+
+    registry 的 has_speaker 上调后（如 cv22 的 client_id 重新评估为可信身份），
+    旧 processed 清单靠这个补上 ref 配对。只接受单一来源且 registry 标了
+    has_speaker=True 的数据集，防止给无身份语料强凑配对。
+    """
+    from .registry import get_source
+    opts = opts or Options()
+    if Path(dataset).name != dataset or dataset in ("", ".", ".."):
+        raise ValueError("dataset 必须是单个数据集名称")
+    out = DATA_PROCESSED / dataset
+    rng = random.Random(seed)
+    result = {}
+    for split in ("train", "val"):
+        path = out / f"{split}.jsonl"
+        if not path.exists():
+            continue
+        rows = _read_manifest(path)
+        if not rows:
+            continue
+        source_ids = {r.get("source_id", "") for r in rows}
+        if len(source_ids) != 1:
+            raise ValueError(f"{dataset}/{split} 含多个来源 {sorted(source_ids)}，"
+                             "请对单源数据集逐个重配对")
+        src = get_source(source_ids.pop())
+        if not src.has_speaker:
+            raise ValueError(f"{src.id} 在 registry 里没有可信说话人身份"
+                             "（has_speaker=False），不能重配对")
+        n_verified = 0
+        for r in rows:
+            speaker = r.get("speaker", "")
+            real = bool(speaker) and not speaker.endswith(":unknown") \
+                and speaker.rsplit(":", 1)[-1] != "default"
+            r["speaker_verified"] = real
+            n_verified += real
+        rows = pair_references(rows, opts, rng)
+        _write_jsonl(rows, path)
+        n_ref = sum(bool(r.get("ref_audio")) for r in rows)
+        result[split] = {"rows": len(rows), "verified": n_verified, "with_ref_audio": n_ref}
+        if progress:
+            progress(f"{dataset}/{split}: {len(rows)} 条，已验证身份 {n_verified}，"
+                     f"配对 ref {n_ref} 条")
+    if not result:
+        raise FileNotFoundError(f"{out} 下没有 train/val 清单")
+    return result
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
@@ -1156,6 +1204,9 @@ if __name__ == "__main__":
     group.add_argument("--mix", nargs="+", action="append", metavar="DATASET=WEIGHT",
                        help="可多次给也可一次给多个；nargs='+' 不加 append 时重复 "
                             "--mix 只保留最后一组，前面的配比会被静默丢掉")
+    group.add_argument("--repair-refs", default=None, metavar="DATASET",
+                       help="对单一来源的已加工数据集重跑 ref 配对（registry 标 "
+                            "has_speaker 才允许），不重加工音频")
     ap.add_argument("--out", default=None)
     ap.add_argument("--manifest", default=None, help="已审核原始 JSONL；相对音频路径按此文件所在目录解析")
     ap.add_argument("--max-items", type=int, default=None)
@@ -1177,6 +1228,10 @@ if __name__ == "__main__":
     ap.add_argument("--ref-control-ratio", type=float, default=None)
     ap.add_argument("--val-ratio", type=float, default=None)
     args = ap.parse_args()
+    if args.repair_refs:
+        print(json.dumps(repair_refs(args.repair_refs, progress=print),
+                         ensure_ascii=False, indent=2))
+        raise SystemExit(0)
     if args.mix:
         if not args.out:
             ap.error("--mix 需要 --out")

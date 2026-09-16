@@ -173,9 +173,10 @@ SOURCES: list[Source] = [
         "CC0",
         "官方已撤架，此为社区镜像（无需同意条款）。仓库是脚本式数据集，加载脚本把数据 URL "
         "硬编码到 huggingface.co、HF_ENDPOINT 管不到，已改为按真实布局直拉 tsv+tar"
-        "（只取 train/dev/test，48kHz mp3）。client_id 是众包自报身份：写进 speaker/session "
-        "供 train/val 隔离，但不标 speaker_verified、不作 ref 依据。众包噪音大，自动 Whisper 校验",
-        has_speaker=False, qc="whisper", quality=30,
+        "（只取 train/dev/test，48kHz mp3）。client_id 是账号级持久身份（非聚类猜测），"
+        "r9 起重新评估为可信：标 speaker_verified、参与 ref 配对；仍只做匿名分组，"
+        "不识别真人（CV 条款红线）。众包噪音大，自动 Whisper 校验",
+        has_speaker=True, qc="whisper", quality=30,
     ),
     # ---- Tagalog ----
     Source(
@@ -286,10 +287,11 @@ SOURCES: list[Source] = [
         "CC0",
         "官方已撤架，此为社区镜像（无需同意条款）；脚本式数据集的数据 URL 硬编码到 "
         "huggingface.co，已改为按真实布局直拉 tsv+tar（只取 train/dev/test）。"
-        "client_id 是众包自报身份：供 train/val 隔离，不标 speaker_verified、不作 ref 依据。"
-        "该 locale 的 validated 小时数未核实，先 --max-samples 试跑。众包噪音大，"
-        "自动 Whisper 校验；朗读语料有权威文本，语种不符就是错行，因此不吃 id 默认的 (id, en) 放行",
-        has_speaker=False, qc="whisper", accept_langs=("id",), quality=30,
+        "client_id 是账号级持久身份（非聚类猜测），r9 起重新评估为可信：标 "
+        "speaker_verified、参与 ref 配对；仍只做匿名分组，不识别真人（CV 条款红线）。"
+        "众包噪音大，自动 Whisper 校验；朗读语料有权威文本，语种不符就是错行，"
+        "因此不吃 id 默认的 (id, en) 放行",
+        has_speaker=True, qc="whisper", accept_langs=("id",), quality=30,
     ),
     # ---- 马来语 ----
     Source(
