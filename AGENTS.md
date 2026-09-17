@@ -3,6 +3,59 @@
 ## 项目简介
 VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/马来语高质量语料的下载与加工、跨语言（中文→目标语言）混合微调、LoRA/全量训练管理、wandb 监控、LoRA merge、HuggingFace 同步。**目标是五语种（th/tl/vi/id/ms）联合微调：一个 LoRA 同时提升这几种语言的配音质量，但验收必须分语种做**。Gradio 页面端口 **6006**。
 
+## 当前执行边界（2026-09-17 用户更正）
+- **新文本对照全部完成（20:59:30）**：见 `docs/holdout_eval_20260917.md`。
+  `holdout_eval_20260917/done` 已写入，1500条生成/ASR与音色分析完成，追加24次ASR复核也完成。
+  内容诊断ID/MS有改善信号，TL/VI区间跨零、TH不明确；五语种两两音色均值略升，
+  但VI/TH等局部组下降，不能用均值或与ref的相似度冒充全面稳定性通过。
+  已有15条诊断+15条固定随机对照。TH高CER部分复测消失、部分base复测变差，
+  VI `fleurs_test_vi_1695/42`重复转写在两种VAD下保留；先核对ASR解码重复性与局部坏例，
+  不直接改训练数据、不重跑全量TTS、不启动r11。原始报告与未评人工/母语字段保持不变。
+  控制器结束后已修正共享指标增量的浮点边界（12位小数），门槛不改；
+  `gate_fix/comparison.json` 另存汇总，TH/ID尾静音提示保留、overall/MS的100ms误报消失。
+  前后源码已归档；本地133项、远端本次相关28项测试通过。
+- **r10 已完成固定预算 ref 开/关实验（18:40）**：见 `docs/ref_ab_20260917.md`。两组同5472条目标、
+  11.9866h、342步，从同一基座新训；B有575条可信CV22 th/id ref，投影关闭。后台训练、评测、
+  汇总入口 `scripts/ref_ab.py`，大盘 `ref_ab_20260917/done` 已写入，不要重复启动。
+  B在五语种的跨seed/跨cue两两音色均值均低于A和r8，本剂量不转正、不扩训，
+  不自动追加A/B的新文本生成；配对统计、30对待评声学报告已完成，母语质量仍未验证。
+- **v2 不等于独立文本留出集**：新预检发现 r8 的267条训练记录覆盖95/182条v2评测文本。
+  这是文本暴露，不直接证明音频/说话人泄漏；新A/B已排除评测文本，报告须分
+  `r8_seen_text` / `r8_unseen_text`，不能继续把全量v2当r8未见文本验收。
+- **并行 CPU 数据/统计任务**：见 `docs/data_candidates_20260917.md`。
+  `scripts/training_pool.py` 只建下一轮候选清单，不改本轮冻结输入或启动训练；
+  `scripts/ref_ab_diagnostics.py compare --wait` 等当前控制器完成后补配对统计，不占GPU。
+  现有源val已用于历史验证损失，不能重新命名成全新测试集。候选ref库存不等于训练ref比例，
+  疑似削波隔离不等于人工确认坏例，缺失语言/身份判断不填通过。
+  候选池已完成：61025条/108.6713h既有录音，排除598条评测/验证文本重合、隔离1条疑似削波；
+  TH/ID可选ref配对23656条，原数据不改。本地126项、远端118项测试通过。
+- **补充文本留出集已冻结，基座/r8评测已启动（18:07）**：`eval_cases/fleurs_test_holdout_20260917.jsonl`，
+  五语种各30条，官方FLEURS test固定版本，排除现有语料与历史评测文本；只取文本不下载音频。
+  不加入当前r10的182case，不用于训练，不声称基座预训练/说话人未见；未来用于反复调参后
+  应降级为开发验证集，不能继续称最终独立留出。新训练需复核此文件，`training_pool.py`已自动读取。
+  `acoustic_review.py`已复用现有音频生成30对声学试听报告，尚未人工评分，不新增GPU任务。
+- **新文本评测已完成，不重复启动或自动扩大训练**：`scripts/holdout_eval.py`，工作目录
+  `holdout_eval_20260917`；150条×seed42/43/44/45/49×base/r8，共1500条，CFG1.8/20步禁重试，
+  两个GPU进程，和r10剩余CPU分析独立。冻结输入/模型/源码哈希，低磁盘或条件不符就停止，
+  不重复启动。r10的1820条生成/ASR及音色分析已完成，配对统计和声学小报告也已生成。
+  B旧集MS风险集中于含数字/括注的 `ms_nat_16`，seed43有34.4s偏题转写，
+  不直接归因数字念错，不删坏例后宣布通过；先保留r8。
+  CPU并行先看容器配额，不能按宿主机CPU数估算：本轮 `cpu.max` 实测仅20核，
+  曾将旧WavLM全部240线程限到8核亲和性，但18:13至18:37只从775推进至825条，
+  **该限制已于18:38撤销**；恢复原CPU集合后约50秒推进到850条，不再照抄8核限制。
+  调度与撤销记录分别为新任务的 `cpu_scheduling.json` / `cpu_scheduling_restore.json`；
+  没改线程数、训练/推理参数或重启任务。GPU占用高不等于CPU并行调度已经优化。
+- **用户目前没有 drama 素材，也不能做五语种母语评审**；可确认爆音、金属感、异常娃娃音、明显音色跳变等声学 badcase，不确定可留空。不要再以交成片或完成母语评分阻塞离线实验。
+- 当前优先级见 `TODO.md`：明确坏例定位 → 验收口径/稳定性 → r8 LoRA 强度 → CFG/步数/ref 单变量对照 → 现有单人录音切片配 ref 小实验。生产保持 r8，新路线未验收不自动升级。
+- **工程检查与语言验收分开**：用户只评明确异常；CER/WER/疑似漏尾等做分语种诊断。没有合适母语评审时，口音/语言自然度/情绪标「未验证」，不把自动分数或非母语听感写成完整验收通过。具体规则见 `docs/qc_gates.md`。
+- **drama 不是硬依赖，enable_proj=true 也不是必经步骤**。r9 同时改了源、gs2 份额、投影层和训练步数，只能否定当轮组合，不能判死全部 ref 路线。先保持投影关闭，数据有效后再单独对照。
+- **同源切片 ref 仅为待验证实验**：须有单人证据、互不重叠的时间区间、准确 target 文本及原音频追溯；同原音频不跨 split，已知同人身份隔离照旧。当前代码拒绝同 `origin_audio` 配对，显式支持与防泄漏测试完成前不能绕过，不能改名伪造不同原音频。
+- 旧实验数字保留；旧文档中的「必须等 drama」「用户已有五语种成片」及旧轮次「下一步」不代表当前约定。
+- **本轮实测已完成**：见 `docs/quality_20260917.md`。690条GPU对照未得到统一占优方案，
+  保持r8/strength1/CFG1.8/20步；不要再次无依据全局降CFG或加步数。
+  `duration_inflation` 的时长与CER必须同取非数字样本（新字段 `mean_audio_sec_non_numeric`）；
+  旧报告先 `eval --summarize` 另存重算，缺字段是未评不是通过。121项测试已通过。
+
 ## 环境
 - Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检 + PyAV 视频解码）。
 - torch 平台分流（见 pyproject `[tool.uv.sources]`）：macOS → PyPI 轮子（CPU/MPS）；Linux → pytorch-cu124 index（CUDA 12.4）。训练只在 Linux GPU 机执行。
@@ -115,6 +168,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
    默认值、只在某种 shell 下能跑的命令、量纲不对的指标、只在 UI 路径下才成立的假设。
    能修的修（**并补对应测试**），不适合修的明确记进「踩坑与约定」并写清为什么不修。
 3. **质量评估双轨，人工盲听是最终判据**：
+   - **适用范围**：完整语言质量结论仍需合格母语评审；当前用户只做声学异常盲听，不能要求其填写五语种自然度/可懂度。未评项保持未验证；只完成工程检查不算完整语言验收通过，不阻塞离线候选实验。
    - 离线轨：`voxft.eval` 的 CER/WER/疑似漏尾 + `by_lang`，**必须 ≥3 个 seed**（原因见「单 seed 会给出相反结论」）
    - 人工轨：6006 工作台**「盲听评估」Tab** —— 选两份*同 case 集、同 seed 组*的报告（A 一般是 `base_*`，
      B 是 checkpoint），甲/乙顺序随机且不暴露来源，逐条打自然度/可懂度/截断/噪音，
@@ -126,7 +180,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
      两条都算退化，但那只是 12-18 条样本里的单条听感波动；离线侧同一份配比跑两轮
      `ms` 的 CER 差出 0.042。**红线喊多了就等于没有红线**，但门槛也不能高到放过成片退化，
      真正的修法是把统计功效提上来（每语种 30+ case、5 seed），不是继续调门槛。
-     两轨冲突时**以盲听为准**
+     两轨冲突时，在评审者能判断的维度**以盲听为准**；非母语者不能裁定声调、数字念法或口音正确性
    - **闭环**：盲听发现的失败形态必须落成新的 case 写进 `eval_cases/`（带 `note` 说明为什么加），
      让下一轮能自动复现——这是"根据反馈提升下一次微调"的唯一可靠机制，口头结论不算
    - 离线指标只作诊断的理由：ASR 误差不等于发音错误、疑似漏尾不等于真实截断、F0 不是越高越好、
@@ -178,10 +232,10 @@ OmniVoice 是 GPU 侧合成服务；配音编排在另一个仓库 `dubbing_inte
 - **万级转写必须能断点续跑**：每 300 条及退出时原子保存完整原清单（包括坏例、尚未处理的行），重跑跳过已转写行。WhisperModel.transcribe 不接受 `batched`；ndarray 输入先转 16k。推理异常必须中止，不可当语料坏例吞掉。`--max-items` 试跑不回写原清单
 - **数据源首选**：泰语 `thai_ser` 仅 impro / 审核后 `yodas_th`；Tagalog 自有真人 `drama_tl`；`filipino_emotion` 仅待审候选。`filswitch` 是新闻朗读，仅低比例补 Taglish 发音。越南语/印尼语表现力只有自建 `drama_vi` / `drama_id`，公开自然口语锚点首选 `gigaspeech2_vi/id`（Apache-2.0，**形态已核实可用，见下条**），`fleurs_*` 只当发音补充。马来语表现力同样只有自建 `drama_ms`，`fleurs_ms`（config `ms_my`）只当发音补充——**ms 的自然口语：yodas2_ms 已修复可下**（见下条②，YouTube 自发口语 + Sidon 降噪，CC-BY-3.0）——但口音必须抽听验证（可能是印尼内容互串）；自建 `drama_ms` 仍是表演档唯一解。中英文回放 `aishell3` / `fleurs_zh` / `fleurs_en` / 自备 `replay_en`。不能把朗读数据当去念稿感主力
 - **自然口语源可用性实测（本轮逐个撞过，别重复调研）**：① **`gigaspeech2` 只有 th/vi/id**（cardData configs 就这三个，ms/tl/fil 全 400），gated:auto 需在页面同意条款；**它的 `refs/convert/parquet` 分支不存在**，但 parquet 索引 API 照样返回 200 和一串 URL，`_resolve_parquet_ref` 解析后下载必 404——真实布局是 `data/<lang>/<split>.tar.gz`（**每条一个 wav，不是长音频+时间戳**，早先的担心不成立）+ 同名 `.tsv`（`id\t全大写文本`），已加 `kind="hf_tar"` 走 `_download_hf_tar`。**dev 分片约 1GB/语种（8-9h）就够，train 单片 vi 3.4GB×240 / th 6.6GB×193 / id 1.7GB×592**；tsv 全大写要靠 `Source.sentence_case` 转句首大写（`.lower()` 对越南语变音符号安全，代价是句内英文专有名词被小写）。实测时长分布 **p50 只有 4.2-6.2s、vi 有 77% 落在 3-8s**，是五语种里最贴近线上 cue 长度的现货。session 数是 YouTube 视频 ID（dev 分片 vi 30 个 / th 21 个 / id 52 个），已按它做 train/val 隔离；② **`yodas2_ms` 已修复可下（2026-09-15）**：早先「`refs/convert/parquet` 404 = 不可用」是路径错了——该仓库根本没有这个分支，真正的自动转换 parquet 走 **`/api/datasets/sarulab-speech/yodas2_sidon/parquet/<config>/train/<n>.parquet`** 端点（ms000 6 片、vi000 4 片、id000 5 片，每片 ≤500MB，实测 Range 206 可下），`_download_parquet` 已加 404→API URL 直链回退。⚠️ 转换出的 parquet 列是 WebDataset 原样成员（`flac`/`metadata.json`/`__key__`/`__url__`），不是 audio/text 列；全量是 WebDataset tar（vi000/id000 各约 335GB），试跑取 1-2 片 parquet 就够。ms 自然口语因此从零变为有现货（YouTube + Sidon 降噪 + ASR 文本，CC-BY-3.0 需署名）；③ **`cv22_*` 已修复复活（2026-09-15，th 实测下载 100 条成功）**：早先「流式路径失效」的真相是加载脚本把数据 URL 硬编码到 huggingface.co（远端直连不通），仓库本身完好、镜像 `raw/main/n_shards.json` 200。已改为新 `kind="cv22"`：绕开脚本，按镜像 tree API 布局直拉 `transcript/<lang>/<split>.tsv` + `audio/<lang>/<split>/*.tar`（48kHz mp3，libsndfile 直接解码），**`client_id` 写进 speaker+session；r9 起重新评估为账号级持久身份（非聚类猜测），`has_speaker=True`、标 speaker_verified 并参与 ref 配对——只做匿名分组，不识别真人（CV 条款禁止 determine identity 与再分发数据本身）**。规模（release_stats 核实）：**th validated 173h / 7973 人、条均 4.19s（正对短 cue 分布）**，id validated 33.5h / 639 人，vi 6.3h / 354 人，全 CC0；tl/fil/ms 依旧没有。**`client_id` 配 ref 的路重新通了**（聚类仅供审计的纪律不变）；④ `filipino_speech`（MIT，有 `speaker_id`）能下但**行过滤后产出率约 1%**（首个分片扫 1813 行只写出 20 条），139 分片 5.8GB 换一两千条短切片，不值
-- **自建短剧素材（已确认有：五语种、真人配音演员、自有版权、但是「成品混音」）的处理路线**：这是唯一能同时补上「表演语料 0 小时」「ref_audio 0%」「cue 长度错配」三个洞的来源，但**成品混音必须先分离人声**，否则 BGM 与音效会被当成语音学进去（模型会学会生成背景音乐）。
+- **自建短剧素材的备选处理路线（2026-09-17 更正：用户目前没有素材）**：将来有授权素材时，可用于补表演、短对白和同人 ref；并非减少声学坏例或构造可信 ref 的唯一途径。若拿到的是成品混音，须先分离并审核，不能把 BGM 与音效当目标语音学习。
   ① **分离**：用 **Demucs `htdemucs`**（Meta，MIT，pip 可装，4090 上 GPU 加速）。这是从混音内容建 TTS 语料的业界标准做法——Emilia 那套 in-the-wild 管线就是「Demucs 分离 → VAD 切分 → ASR → DNSMOS 过滤」，与本项目 `ingest` 的流程一一对应。**分离不替代逐条试听**：分离会留伪影（频谱空洞、水声/相位感），仍要淘汰 BGM 泄漏严重的片段；分离也**解决不了混响**（配音通常干声录制、混音时按场景加混响，分离出的人声仍带场景混响，而 OmniVoice 对 ref 是做 WPE 去混响的）——混响重不重要先分离一集试听再决定。注意 OmniVoice 里那个 ModelScope ZipEnhancer 是**降噪不是分离**，压 BGM 不够用。
   ② **交付格式**：`ingest` 走 PyAV，mp4/mkv/mov/wav/mp3/m4a/flac 都行。⚠️ `decode_to_wav` **只取 `streams.audio[0]`**——配音视频常同时带原声轨与配音轨，给错整集白解，要么只给配音轨要么先说明音轨顺序。有台词本或带时间轴的字幕就一起给：演员实际念的台词本才是权威文本（不吃 ASR 错误），字幕时间轴还比 VAD 给出更准的 cue 边界。
-  ③ **speaker 标注**：`pair_references` 只认 `speaker_verified=True`，这是把 ref 覆盖率从 0% 提到 30-50% 的唯一途径。流程是「自动 diarization 出候选簇（pyannote `speaker-diarization-3.1`，OmniVoice 自己在用，`api.py:238-240`，gated 需同意条款）→ 人工每簇听几条确认 → 6006「素材导入」Tab 勾选 `speaker_verified` + 标情绪」。AGENTS.md 的硬规矩照旧：**自动聚类仅供审计不能证明同人**，人工确认不能省；短剧里一个角色通常一个演员贯穿全剧，所以是"确认几个簇"而不是"标几千条"。跨集同一演员用同一个 ID。
+  ③ **speaker 标注**：`pair_references` 只认 `speaker_verified=True`，可信身份可以来自可靠元数据或人工确认，不要求一定来自 drama。成片可用「自动 diarization 出候选簇 → 人工确认 → 6006 标注」辅助；**自动聚类、同角色名都不能单独证明同人**。跨集已确认的同一演员用同一个 ID，用户不懂的情绪标签不要求其填写。
   ④ ⚠️ **有了 verified speaker 之后的 split 陷阱**：`split_records` 的并查集已经把 `("speaker", ...)` 当分组键（`pipeline.py:640-641`），会自动做**说话人不相交**的 train/val 切分，`preflight` 也查泄漏——这部分不用改代码。但并查集会同时 union「同一演员」与「同一集」，而短剧主演通常只有 5-15 人：**某个演员出现在多集里，这几集会全部并成一个组**，整组要么进 train 要么进 val；极端情况 `len(groups) < 2` 会退化成「全部进训练、没有验证集」。对策是用 `--holdout <集ID>` 钉住固定验证集，加工后必须查 `stats.json` 的 val 条数与 `holdout_pinned_records`。
   ⑤ **先拿 1 集（挑 BGM 最轻的）走通全链路量产出率，别一上来全量**：要量的是「分离后有多少条能过试听」与「有几个可用说话人」。这个产出率完全未知，而 `tagalog_tts` 的先例是没先量分布就投产、150 条只留下 62 条
 - **加工产出率实测（决定值不值得加工）**：FLEURS 四语种几乎全保留——`fleurs_vi` 60→60、`fleurs_ms` 60→60、`fleurs_th` 60→60、`fleurs_id` 60→59（只 1 条时长出界），`drop_*` 全 0；**`tagalog_tts` 只有 42%**：150 条转写后剩 146，其中 **84 条因不足 3s 被 `drop_duration` 砍掉**，与 registry 里「中位 1.6s」的警告一致。所以短切片源（`tagalog_tts` / `filipino_emotion` / `filipino_speech`）**先量时长分布再决定要不要加工**，别按原始条数估产能。另：加工进度文案已从「已产出 i 条样本」改成「已扫描 i 条，保留 N 条」——`i` 是 enumerate 的扫描序号，丢弃率高时会把产出说得严重虚高（tagalog_tts 末尾显示"已产出 100"，实际只留 62）
@@ -204,7 +258,7 @@ OmniVoice 是 GPU 侧合成服务；配音编排在另一个仓库 `dubbing_inte
 
   ⇒ **同一份权重在不同 ref 语言下胜负语种完全不同**，用一条 ref 得出的"某语种退化"不能当定论。另外 base 自己在 zh/en ref 下就差得多（总体 0.0774 → 0.126 / 0.1537），说明**跨语言 ref 距离越远越难**，这是基座特性不是微调引入的。⚠️ 目前每种 ref 语言只有 **1 条**，ref 语言与 ref 说话人/录音质量是混淆的，要分离结论需每种语言 3-5 条 ref 重测
 - **跨语言同人 ref 数据不存在，别再找（已确认死路）**：训练「zh/en ref → 目标语种」需要同一个说话人既有中/英录音又有目标语种录音。① 主调方确认**自有配音演员没有多语言版本**；② 公开语料也没有——FLEURS 是平行语料但各语种由不同众包说话人录制，Common Voice 的 `client_id` 理论上跨 locale 一致但 tl 的 `recordedHours=0`、ms 在 CV22 没有、CV23 起才有（2026-09-16 调研：CV26 scripted 29 人 3.65h + Spontaneous Malay 24 人 6.19h，CC0，需注册 MDC 下载，量小且几乎无 validated；cv22 下载器只能给同语种 ref 提供候选身份，跨语言同人依旧没有）。⇒ **`pair_references` 三级优先的第一级（中/英回放）永远是空的**，只能落到同语种 ref。同语种 ref 仍有价值（它至少让 `[103 ref 104][text][101 target 102]` 这条线上唯一在用的打包路径进入训练），但**对跨语言场景是否有正迁移是经验问题，必须实测不能预判**
-- **音色一致性：实测有明确空间，但当前 LoRA 结构上改不动**：换成 WavLM X-vector 后实测「输出 vs 参考音频」的贴合度是 **0.86-0.94**（不是 MFCC 显示的 0.99），且**随 ref 语言显著变化**：tl ref 0.9421 / zh ref 0.9250 / **en ref 只有 0.8587**。同人上限约 0.997、跨说话人约 0.514，所以 0.86 意味着**离天花板还很远**。三轮微调几乎没动它（tl −0.0010 / zh +0.0013 / en +0.0086），原因是**架构性的**：`enc_to_lm_proj`（`voxcpm2.py:326`/`:1036`）与 `fusion_concat_proj`（`:339`/`:1073`）正是参考音频条件进入 LM 与 DiT 的通路，而 `enable_proj: false` 把它们全冻结在基座权重上（训练日志里 `enc_to_lm_proj.weight False` 就是）。**要提升音色必须 `enable_proj: true`，但那要求先有 ref_audio 数据**——在 `ref_audio` 覆盖率 0% 的数据上开 `enable_proj`，等于拿"根本没有 ref 出现"的样本去调整 ref 融合层，会把基座的克隆能力往坏里带。依赖链：`有 speaker 身份的语料 → ref_audio 30-50% → enable_proj: true`，顺序不能颠倒。附带一个跨 seed 一致性的小改善：r2 在三种 ref 下都比 base 略稳（+0.0018 / +0.0058 / +0.0152）
+- **音色一致性：指标改善有限，不等于结构上改不动（2026-09-17 修正）**：历史 WavLM「输出 vs ref」为 0.86-0.94，tl/zh/en ref 分别 0.9421/0.9250/0.8587；三轮微调变化约 −0.0010/+0.0013/+0.0086。这些是观测，不能推出「必须开投影层」。`voxcpm2.py:forward` 中 ref 条件还经过可训练的 LM/DiT；官方 v2 LoRA 配置默认 `enable_proj=false`。先测 r8 增量强度与可信 ref 数据，投影开关另作单变量实验，不盲开；30–50% 是混合后可信 ref 目标，不为凑数伪造身份。r9 的多变量失败不证明同语种 ref 无效；跨录音、跨语言迁移仍须实测。
 - **说话人相似度已换成 WavLM X-vector，MFCC 版废弃**：`qc/audio.speaker_sim` 现在用 `microsoft/wavlm-base-plus-sv`（VoxCeleb 上训的说话人验证模型，512 维），经 **transformers** 加载——它已是本项目依赖（官方训练脚本要用），**零新增依赖**，也不引 modelscope。可用 `VOXFT_SPK_EMB_MODEL` 指向本地目录或镜像仓库（与 `VOXFT_WHISPER_MODEL` 同一套约定）。换的理由：MFCC 余弦实测 84 条全挤在 0.985-0.996、跨 seed 一致性也 0.99+，动态范围不足；WavLM 的**尺子自检**是跨说话人 0.32-0.62（均值 0.514）vs 同人 0.995-0.998，**间隔 0.48**。⚠️ **两个坑**：① 必须用 `WavLMForXVector`，用 `Wav2Vec2ForXVector` 加载这个仓库会打印一大片 `MISSING` 并把 encoder **随机初始化**——不报错，只是嵌入全是垃圾（本轮踩过）；② 拿**随机噪声**验证动态范围是无意义的（噪声没有说话人身份，嵌入会塌到同一方向，实测两段不同噪声 cos=0.985），必须用真实语音的不同说话人做自检。与 OmniVoice 生产用的 modelscope ERes2NetV2（门限 `VOXCPM_SPEAKER_MISMATCH_MIN_SIMILARITY=0.45`）**刻度不可互换**，要对齐生产门限才需要换成它
 - **离线指标的分辨率已经低于 run 间方差，别再对着它调配比**：`ms` 在 r2/r3 **配比完全相同**（都是 `fleurs_ms=17`）的情况下 CER 差出 **0.042**（0.0630 vs 0.1053）；`vi_digit_3` 同一条 case 在 base/r1/r2/r3 上是 `0.000 / 1.4375 / 0.000 / 0.958`，整条翻转且非单调。原因是混合用共享 RNG，改任何一部分的权重都会挪动后面所有部分的抽样，再叠加训练本身的非确定性 ⇒ **28 case × 3 seed 的差值在 ±0.04 以内一律当噪声**。要继续调参，先把统计功效提上来（每语种 30+ 条 case、5 个 seed），否则就是在噪声里挑好看的数字。本轮据此**停止了第 4 轮调参**
 - **被实测否掉的假设要老实改掉（本轮第二条）**：r2 里 vi/id 数字 case 退化，我归因为「gigaspeech2/yodas 带数字样本 0.0%、FLEURS 20.6-24.1%，压缩 FLEURS 份额使带数字训练时长各降约 40%」。r3 据此把 vi/id 的 FLEURS 份额从 7/17 提到 11/17，带数字时长确实恢复了（vi 1.44h→2.30h，接近 r1 的 2.41h）——**但 vi CER 反而从 0.1176 恶化到 0.2839**。所以 r1→r2 的改善根本不是数字覆盖带来的，**把 vi 的 FLEURS（长朗读）份额从 100% 降到 41% 才是关键**，即上一条的长度分布。带数字时长这个变量与结果无因果关系
@@ -213,7 +267,7 @@ OmniVoice 是 GPU 侧合成服务；配音编排在另一个仓库 `dubbing_inte
 - **远程脚本里 `cmd | tail` 会吞掉失败，本轮因此真丢了数据**：`uv run ... | tail -20` 的退出码是 `tail` 的 0，`set -e` 拦不住；`echo "exit=$?"` 拿到的也是 `tail` 的状态。结果加工明明抛了 `ValueError`，脚本却按"成功"分支把 `raw/<src>/audio` 和 tar 缓存删了，只能重下 3GB。规矩：**要么 `set -euo pipefail`，要么把命令输出重定向到文件再单独 `tail`，并且只有确认成功才删原始数据**（`if uv run ... > /tmp/x.log 2>&1; then ... rm -rf raw/...; else exit 1; fi`）
 - **临时脚本里 `import huggingface_hub` 必须在 `import voxft.paths` 之后**：`HF_ENDPOINT` 是 `paths.load_dotenv()` 才写进 `os.environ` 的，而 `huggingface_hub.constants` 在自己被 import 时就读死了它。顺序写反 → 直连 `huggingface.co` → 远程报 `[Errno 101] Network is unreachable`（重试 5 次全是这个）。项目内模块靠"函数体内 import hf_hub"规避了，**手写的探针脚本没有这层保护**；纯 `requests` 打 `env("HF_ENDPOINT")` 最省事
 - **`rate` 的单位按文字系统判，不按有没有空格判**：`audio_metrics` 原先 `" " in text` 就按词算，而泰文正字法本来没有词间空格，一个偶发空格能把整句切成 2"词"——实测泰语 `rate` 只有 **0.32/秒**（真实约 6 字/秒），差近 20 倍。已改为命中泰文/缅文区块（`_NO_WORD_SPACE`）一律按字符计。`rate` 只在 `log.py` 展示、不参与任何判定，所以**既有加工产物不需要重跑**，但看旧 stats 时要知道 th 的 rate 是失真的
-- **运行记录用 `python -m voxft.train.runlog` 生成，不要手抄**：它从 `configs/<run>.yaml` + `.plan.json`、混合数据集的 `mix.json`、checkpoint 的 `train.log`、eval 报告 JSON 里抽字段，追加到 **`docs/runs.md`**（新记录在最上面）。`--eval` 传多份报告时**第一份当基线**，其余自动比对并按 ΔCER 分「红线」与「噪声级」两档（阈值 `--noise`，默认 0.005——每语种只有十几条样本，一个字符就能让均值动 0.002-0.003，阈值太紧红线就天天喊狼来了）。`--verdict/--next/--notes` 三个字段是给周报和下一轮看的，别留空
+- **运行记录用 `python -m voxft.train.runlog` 生成，不要手抄**：它从 `configs/<run>.yaml` + `.plan.json`、`mix.json`、`train.log`、eval JSON 抽字段，追加到 **`docs/runs.md`**。`--eval` 第一份当基线；`--verdict/--next/--notes` 不留空。**2026-09-17 已修复默认值不一致**：`_regressed`、两个报告入口与 CLI 共用 `CER_NOISE=0.05`，已补默认值/覆盖测试。不手改历史原始指标，结论要标清工程检查与母语验收范围。
 - **验收 case 集在 `eval_cases/omnivoice_prod.jsonl`（28 条，五语种 + zh/en）**：按线上形态设计——单句 cue、保留大小写与句末标点、统一用线上那条 **4.47s 菲律宾语参考音频做跨语言 reference-only**（`ref_audio: "prod_ref_fil.wav"`，相对 case 文件目录解析），并专门覆盖数字/货币（`vi_digit*`、`th_digit*`、`ms_digit_2` 的 RM、`id_digit_3` 的航班号）、Taglish/Manglish 英文借词、vi 句尾 nặng 调嘎裂声。**`prod_ref_fil.wav` 故意不入库**（`.gitignore` 的 `*.wav` 也挡着）：它是从 OmniVoice 归档生产 payload `results/voxcpm_quality_cases.json` 的 `reference_audio_base64` 解出来的主调方音色库素材，不能公开分发。新环境要跑这份验收，先从那个 payload 里解 base64 存成 `eval_cases/prod_ref_fil.wav`（24kHz 单声道 16bit，214638 字节）。`tl_digit` 是压力 case（裸数字），`tl_digit_prod` 才是线上 fil 的真实形态（TN 已 verbalize）
 - **FilSwitch 下载**：转换 parquet 可以只有元数据，音频在原仓库的独立 FLAC 文件。`bytes=None` 不等于无音频；共享 `_load_audio` 支持内嵌 bytes、HF URL/路径和已解码数组，外链通过 hf_hub_download 保留原 revision、镜像、认证和缓存。不要把音频地址套到 `refs/convert/parquet` 分支；读取失败必须记录原因，不能静默跳过整包
 - **code-switch 语种不能只认目标语种**：Tagalog 短剧台词是 Taglish、印尼语日常口语混英文、马来语是 Manglish，句内英文词多的样本 Whisper 会判成 en，只认目标语种会把最该保留的 code-switch 样本全部误杀。`Source.languages()` 查 `CODE_SWITCH_ACCEPT`，对 tl / id / **ms** 默认放行 `en`；**vi 默认从严**（混英以词内借词为主），实测 `drop_lang` 误杀再给该源加 `accept_langs=("vi","en")`，别提前放开。有权威文本的朗读源（`fleurs_id` / `cv22_id` / `fleurs_ms`）用 `accept_langs` **覆盖掉**默认放行——语种不符意味着错行，不是 code-switch

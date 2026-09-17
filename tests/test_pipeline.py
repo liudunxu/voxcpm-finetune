@@ -676,6 +676,27 @@ def test_mix_reports_language_shares_and_warns_on_shortfall():
     assert any("th" in n and "占比未达请求值" in n for n in notes), notes
 
 
+def test_mix_fixed_training_budget_does_not_scale_with_source_pool():
+    from voxft.data.pipeline import _write_jsonl
+    for name, count in (("first", 100), ("extra", 200)):
+        rows = [{"audio": f"/{name}/{index}.wav", "duration": 6.0, "lang": "th"}
+                for index in range(count)]
+        _write_jsonl(rows, DATA_PROCESSED / name / "train.jsonl")
+        _write_jsonl([{**rows[0], "audio": f"/{name}/val.wav"}],
+                     DATA_PROCESSED / name / "val.jsonl")
+    for output, parts in (("one", [("first", 1)]),
+                          ("two", [("first", 1), ("extra", 1)])):
+        mix_manifests(parts, output, train_hours=0.1)
+        info = json.loads((DATA_PROCESSED / output / "mix.json").read_text())
+        assert info["train"]["seconds"] == 360
+        assert info["requested_train_hours"] == 0.1
+        assert info["val"]["rows"] == len(parts)
+    for invalid in (0, -1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="train_hours"):
+            mix_manifests([("first", 1)], "invalid_budget", train_hours=invalid)
+    assert not (DATA_PROCESSED / "invalid_budget").exists()
+
+
 def test_curated_import_cross_language_refs_and_safe_reprocessing():
     from voxft.data.pipeline import _write_jsonl
     raw = _make_source(None, "drama_tl", n_spk=2, per_spk=21)

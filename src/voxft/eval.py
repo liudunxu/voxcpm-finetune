@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import re
 import unicodedata
 from collections import defaultdict
 from difflib import SequenceMatcher
 from pathlib import Path
+from statistics import mean, stdev
 from uuid import uuid4
 
 from . import infer
@@ -133,6 +135,7 @@ def _agg(g: list[dict]) -> dict:
         # 那一类的 CER 差异不代表 TTS 质量差异，混进总均值会把结论带偏
         out["non_numeric_cases"] = len(plain)
         out["mean_cer_non_numeric"] = mean("cer", plain)
+        out["mean_audio_sec_non_numeric"] = mean("audio_sec", plain)
     wers = [i["wer"] for i in g if i["wer"] is not None]
     if wers:
         out["mean_wer"] = round(sum(wers) / len(wers), 4)
@@ -140,7 +143,9 @@ def _agg(g: list[dict]) -> dict:
 
 
 _REPORT_NOTE = (
-    "ASR/漏尾均为诊断；F0 不作通过门限。按语言、ref 语言、角色、情绪分组做母语盲听。"
+    "ASR/漏尾均为诊断；F0 不作通过门限，也不能直接判娃娃音。"
+    "声学异常可单独盲听；没有合格母语评分时，口音/语言自然度/情绪保持未验证。"
+    "工程检查通过不等于完整语言验收通过。"
     "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词级），不横向比。"
     "suspected_truncation=少读/漏尾，over_read=多读/跑飞（>1.4× 参考长度）。"
     "mean_cer_non_numeric 剔除了含阿拉伯数字的 case——那一类的 CER 会被 Whisper "
@@ -153,6 +158,55 @@ _REPORT_NOTE = (
 )
 
 
+def seed_stability(items: list[dict]) -> dict:
+    """同 case、同条件下的样本标准差（ddof=1），不混入文本间差异。"""
+    groups = defaultdict(list)
+    for item in items:
+        groups[str(item["case_id"])].append(item)
+    rows = []
+    metrics = ("speaker_sim", "audio_sec", "cer")
+    for case_id, group in sorted(groups.items()):
+        first = group[0]
+        seeds = [item["seed"] for item in group]
+        if len(set(seeds)) != len(seeds):
+            raise ValueError(f"case_id={case_id} 含重复 seed")
+        for item in group[1:]:
+            if any(item.get(key) != first.get(key)
+                   for key in ("lang", "text", "ref_audio", "control", "speaker")):
+                raise ValueError(f"case_id={case_id} 的条件不一致，不能计算跨 seed 方差")
+        row = {"case_id": case_id, "lang": first["lang"], "seeds": sorted(seeds)}
+        for metric in metrics:
+            values = [item[metric] for item in group
+                      if item.get(metric) is not None and math.isfinite(item[metric])]
+            row[metric] = {
+                "n": len(values),
+                "std": round(stdev(values), 6) if len(values) > 1 else None,
+                "range": round(max(values) - min(values), 6) if len(values) > 1 else None,
+            }
+        rows.append(row)
+
+    def summarize(group):
+        result = {"cases": len(group),
+                  "cases_with_5_seeds": sum(len(row["seeds"]) >= 5 for row in group)}
+        for metric in metrics:
+            valid = [row[metric] for row in group if row[metric]["std"] is not None]
+            result[metric] = {
+                "cases": len(valid),
+                "mean_std": round(mean(row["std"] for row in valid), 6) if valid else None,
+                "mean_range": round(mean(row["range"] for row in valid), 6) if valid else None,
+                "max_range": max((row["range"] for row in valid), default=None),
+            }
+        return result
+
+    return {
+        "by_case": rows, "overall": summarize(rows),
+        "by_lang": {lang: summarize([row for row in rows if row["lang"] == lang])
+                    for lang in sorted({row["lang"] for row in rows})},
+        "note": "std=样本标准差(ddof=1)，跨 case 等权汇总；少于2个有效值记空，不当作稳定。"
+                "稳定性结论至少5 seed，speaker_sim 方差不是生成音频两两音色距离。",
+    }
+
+
 def _report_metrics(items: list[dict]) -> dict:
     """top-level 聚合 + by_lang；evaluate 与 merge_reports 共用，保证口径一致。"""
     overall = _agg(items)
@@ -161,12 +215,33 @@ def _report_metrics(items: list[dict]) -> dict:
     out = {k: overall.get(k) for k in (
         "mean_similarity", "mean_cer", "mean_cer_non_numeric", "suspected_truncation_rate",
         "over_read_rate", "metallic_rate", "low_snr_rate", "mean_speaker_sim",
-        "mean_chars_per_sec", "mean_speech_ratio", "mean_audio_sec", "mean_head_silence",
+        "mean_chars_per_sec", "mean_speech_ratio", "mean_audio_sec",
+        "mean_audio_sec_non_numeric", "mean_head_silence",
         "mean_tail_silence", "p90_tail_silence", "mean_spectral_rolloff_99",
         "mean_band_ratio_2_8k")}
     out["mean_f0_std"] = round(sum(i["f0_std_st"] for i in items) / len(items), 2)
     out["by_lang"] = by_lang
+    out["seed_stability"] = seed_stability(items)
     return out
+
+
+def _save_report(report: dict) -> dict:
+    EVAL_DIR.mkdir(parents=True, exist_ok=True)
+    path = EVAL_DIR / f"{report['label']}_{uuid4().hex}.json"
+    report["report_path"] = str(path)
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+
+
+def summarize_report(path: str) -> dict:
+    """从已有逐条指标重算聚合，不重新合成、不覆盖原始报告或人工标注。"""
+    report = json.loads(Path(path).read_text(encoding="utf-8"))
+    report.update(_report_metrics(report["items"]))
+    report.update(summarized_from=str(path),
+                  aggregation_note="仅重算聚合，不重新合成；原始指标、测量口径及人工标注不变。"
+                                   "未评的语言质量仍未验证。")
+    report.setdefault("lora_strength", 0.0 if report["target"] == "base" else 1.0)
+    return _save_report(report)
 
 
 def evaluate(target: str, lang: str, texts: list[str | dict],
@@ -174,7 +249,8 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
              control: str | None = None, seed: int = 42, *,
              seeds: list[int] | None = None, cfg_value: float = 2.0,
              inference_timesteps: int = 20,
-             shard: tuple[int, int] | None = None, progress=None) -> dict:
+             shard: tuple[int, int] | None = None, progress=None,
+             lora_strength: float = 1.0) -> dict:
     """JSONL case 可覆盖 text/lang/ref_audio/ref_lang/control/seed，其他标签原样保留。
 
     shard=(k, n) 时只跑原始文件顺序序号 i % n == k 的 case（case_id 保持 case
@@ -185,6 +261,11 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
     """
     from .data.pipeline import _whisper_model
 
+    lora_strength = infer.validate_lora_strength(lora_strength)
+    if target == "base":
+        if lora_strength not in (0.0, 1.0):
+            raise ValueError("base 不含 LoRA，不能指定中间 strength")
+        lora_strength = 0.0
     if not texts or (seeds is not None and not seeds):
         raise ValueError("评测台词和种子不能为空")
     if shard is not None:
@@ -211,6 +292,8 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
     lora = None if target == "base" else target
     model = infer.get_model(base, lora)
     label = Path(target).parent.name + "_" + Path(target).name if lora else "base"
+    if lora and lora_strength != 1:
+        label += f"_strength{lora_strength:g}"
     if shard is not None:
         label += f"_shard{shard[0]}of{shard[1]}"
     items = []
@@ -222,7 +305,10 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
             kw = infer._gen_kwargs(case["text"], case.get("ref_audio"), None,
                                    cfg_value, inference_timesteps, requested_seed, case["control"])
             kw["retry_badcase"] = False  # 离线禁用换种子重试，避免 A/B 条件不一致
-            wav_path, gen_sec = infer._run(model, kw)
+            if lora and lora_strength != 1:
+                wav_path, gen_sec = infer._run(model, kw, lora_strength=lora_strength)
+            else:
+                wav_path, gen_sec = infer._run(model, kw)
             hyp = _transcribe(whisper, wav_path, case["lang"])
             h, r = _norm(hyp), _norm(case["text"])
             items.append({
@@ -240,7 +326,8 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                 "wav": wav_path, "gen_sec": gen_sec,
                 "human_review": {"naturalness_1_5": None, "emotion_fit_1_5": None,
                                  "speaker_similarity_1_5": None, "intelligibility_1_5": None,
-                                 "cutoff": None, "noise": None, "notes": ""},
+                                 "cutoff": None, "noise": None, "notes": "",
+                                 "acoustic_status": None, "acoustic_types": []},
             })
             if progress:
                 progress(f"[{len(items)}/{total}] {case['case_id']} seed={requested_seed} "
@@ -248,6 +335,7 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
 
     report = {
         "target": target, "base": infer._resolve_base(base), "label": label,
+        "lora_strength": lora_strength,
         "cfg_value": cfg_value, "inference_timesteps": inference_timesteps,
         "retry_badcase": False, "asr_model": "large-v3",
         "asr_auto_detect_langs": sorted(AUTO_DETECT_LANGS),
@@ -256,12 +344,7 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
         "note": _REPORT_NOTE,
         "items": items,
     }
-    out_dir = EVAL_DIR
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"{label}_{uuid4().hex}.json"
-    report["report_path"] = str(out)
-    out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    return report
+    return _save_report(report)
 
 
 def _case_sort_key(item: dict) -> tuple:
@@ -280,9 +363,12 @@ def merge_reports(paths: list[str]) -> dict:
     if len(paths) < 2:
         raise ValueError("合并至少需要两份分片报告")
     docs = [json.loads(Path(p).read_text(encoding="utf-8")) for p in paths]
+    for doc in docs:
+        doc.setdefault("lora_strength", 0.0 if doc["target"] == "base" else 1.0)
     first = docs[0]
     for d in docs[1:]:
-        for key in ("target", "base", "cfg_value", "inference_timesteps", "asr_model"):
+        for key in ("target", "base", "cfg_value", "inference_timesteps", "asr_model",
+                    "lora_strength", "retry_badcase", "asr_auto_detect_langs"):
             if d.get(key) != first.get(key):
                 raise ValueError(f"分片报告口径不一致（{key}）：{first.get(key)} vs {d.get(key)}")
     seen: set[tuple[str, int]] = set()
@@ -298,6 +384,7 @@ def merge_reports(paths: list[str]) -> dict:
     label = re.sub(r"_shard\d+of\d+$", "", first["label"])
     report = {
         "target": first["target"], "base": first["base"], "label": label,
+        "lora_strength": first["lora_strength"],
         "cfg_value": first["cfg_value"], "inference_timesteps": first["inference_timesteps"],
         "retry_badcase": first.get("retry_badcase", False),
         "asr_model": first.get("asr_model"),
@@ -307,16 +394,13 @@ def merge_reports(paths: list[str]) -> dict:
         "note": _REPORT_NOTE,
         "items": items,
     }
-    EVAL_DIR.mkdir(parents=True, exist_ok=True)
-    out = EVAL_DIR / f"{label}_{uuid4().hex}.json"
-    report["report_path"] = str(out)
-    out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    return report
+    return _save_report(report)
 
 
 # 与 evaluate() 写进 item 的 human_review 字段名保持一致
 _REVIEW_FIELDS = ("intelligibility_1_5", "naturalness_1_5", "speaker_similarity_1_5",
-                  "emotion_fit_1_5", "cutoff", "noise", "notes")
+                  "emotion_fit_1_5", "cutoff", "noise", "notes",
+                  "acoustic_status", "acoustic_types")
 
 
 def list_reports() -> list[str]:
@@ -331,29 +415,53 @@ def _mean(xs: list[float]):
     return round(sum(xs) / len(xs), 3) if xs else None
 
 
+def _review_reports(report_a: str, report_b: str) -> tuple[dict, dict]:
+    if (EVAL_DIR / report_a).resolve() == (EVAL_DIR / report_b).resolve():
+        raise ValueError("盲听必须选择两份不同报告")
+    docs = {who: json.loads((EVAL_DIR / name).read_text(encoding="utf-8"))
+            for who, name in (("a", report_a), ("b", report_b))}
+    indices = {}
+    for who, doc in docs.items():
+        rows = doc["items"]
+        index = {(row["case_id"], row["seed"]): row for row in rows}
+        if len(index) != len(rows):
+            raise ValueError("盲听报告含重复 case_id/seed")
+        if any(not row.get("lang") or not row.get("text") or not row.get("wav") for row in rows):
+            raise ValueError("盲听报告缺少语种、文本或音频路径")
+        indices[who] = index
+    if not indices["a"].keys() & indices["b"].keys():
+        raise ValueError("两份报告配不出任何 (case_id, seed)；必须使用同一份 case 集与 seed 组")
+    if indices["a"].keys() != indices["b"].keys():
+        raise ValueError("盲听报告的 case/seed 集合不一致；不静默忽略缺失样本")
+    for key, row_a in indices["a"].items():
+        row_b = indices["b"][key]
+        if (any((row_a.get(field) or "") != (row_b.get(field) or "")
+                for field in ("lang", "text", "ref_audio", "ref_lang", "control", "speaker"))
+                or _is_numeric(row_a) != _is_numeric(row_b)):
+            raise ValueError(f"盲听条件不一致：case_id={key[0]} seed={key[1]}")
+    return docs, indices
+
+
 def review_session(report_a: str, report_b: str, seed: int = 0) -> list[dict]:
     """按 (case_id, seed) 把两份报告配成盲听条目，甲/乙顺序随机。
 
     who_1/who_2 只在服务端用于回写，页面不显示——评分者一旦知道哪条是 base，
     就会朝"微调应该更好"的方向偏，盲听也就失去意义。
     """
-    a = json.loads((EVAL_DIR / report_a).read_text(encoding="utf-8"))
-    b = json.loads((EVAL_DIR / report_b).read_text(encoding="utf-8"))
-    idx = {(i["case_id"], i["seed"]): i for i in b["items"]}
+    docs, indices = _review_reports(report_a, report_b)
     rng = random.Random(seed)
     out = []
-    for ia in a["items"]:
-        ib = idx.get((ia["case_id"], ia["seed"]))
-        if ib is None:
-            continue
+    for ia in docs["a"]["items"]:
+        ib = indices["b"][ia["case_id"], ia["seed"]]
         swap = rng.random() < 0.5
         first, second = (ib, ia) if swap else (ia, ib)
         out.append({"case_id": ia["case_id"], "seed": ia["seed"], "lang": ia["lang"],
                     "text": ia["text"], "wav_1": first["wav"], "wav_2": second["wav"],
+                    "review_1": {key: value for key, value in first.get("human_review", {}).items()
+                                 if key in _REVIEW_FIELDS},
+                    "review_2": {key: value for key, value in second.get("human_review", {}).items()
+                                 if key in _REVIEW_FIELDS},
                     "who_1": "b" if swap else "a", "who_2": "a" if swap else "b"})
-    if not out:
-        raise ValueError(f"{report_a} 与 {report_b} 配不出任何 (case_id, seed)；"
-                         "两份报告必须用同一份 case 集与同一组 seed 跑出来")
     return out
 
 
@@ -373,17 +481,30 @@ def save_reviews(report_a: str, report_b: str, session: list[dict],
     `负 - 胜 >= BLIND_LOSS_MARGIN` 且 `负 >= BLIND_MIN_LOSSES`，
     在 12-18 条的量级上这个门槛刚好能挡住单条噪声、又不会放过成片的退化。
     """
-    docs = {who: json.loads((EVAL_DIR / name).read_text(encoding="utf-8"))
-            for who, name in (("a", report_a), ("b", report_b))}
-    index = {who: {(i["case_id"], i["seed"]): i for i in d["items"]}
-             for who, d in docs.items()}
+    docs, index = _review_reports(report_a, report_b)
+    seen = set()
+    for pair in session:
+        key = (pair["case_id"], pair["seed"])
+        if key in seen or {pair["who_1"], pair["who_2"]} != {"a", "b"}:
+            raise ValueError("盲听会话含重复条目或错误甲乙映射；请重新载入")
+        seen.add(key)
+        for slot in ("1", "2"):
+            item = index[pair[f"who_{slot}"]].get(key)
+            if item is None or any(pair.get(field) != item.get(field) for field in ("lang", "text")) \
+                    or pair[f"wav_{slot}"] != item["wav"]:
+                raise ValueError("报告或音频与盲听会话不符；请重新载入后再保存")
     nat_by_lang: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"a": [], "b": []})
     verdict: dict[str, dict[str, int]] = defaultdict(
         lambda: {"win": 0, "tie": 0, "loss": 0, "unrated": 0})
+    acoustic = defaultdict(lambda: {
+        "a": {"abnormal": 0, "clear": 0, "unknown": 0},
+        "b": {"abnormal": 0, "clear": 0, "unknown": 0},
+        "resolved": 0, "introduced": 0, "paired": 0})
     rated = 0
     for pair in session:
         entry = (ratings or {}).get(review_key(pair)) or {}
         nat: dict[str, float | None] = {}
+        status = {}
         for slot in ("1", "2"):
             r = entry.get(f"s{slot}") or {}
             who = pair[f"who_{slot}"]
@@ -395,12 +516,20 @@ def save_reviews(report_a: str, report_b: str, session: list[dict],
                 if f in r:
                     hr[f] = r[f]
             hr["paired_report"] = report_b if who == "a" else report_a
-            v = r.get("naturalness_1_5")
+            v = hr.get("naturalness_1_5")
             nat[who] = float(v) if isinstance(v, (int, float)) and v > 0 else None
+            status[who] = hr.get("acoustic_status") or "unknown"
+            if status[who] not in ("abnormal", "clear", "unknown"):
+                raise ValueError(f"无效声学标注：{status[who]}")
         lang = pair["lang"]
         for who in ("a", "b"):
             if nat.get(who) is not None:
                 nat_by_lang[lang][who].append(nat[who])
+            acoustic[lang][who][status.get(who, "unknown")] += 1
+        if all(status.get(who) in ("abnormal", "clear") for who in ("a", "b")):
+            acoustic[lang]["paired"] += 1
+            acoustic[lang]["resolved"] += status["a"] == "abnormal" and status["b"] == "clear"
+            acoustic[lang]["introduced"] += status["a"] == "clear" and status["b"] == "abnormal"
         if nat.get("a") is not None and nat.get("b") is not None:
             rated += 1
             d = nat["b"] - nat["a"]
@@ -414,14 +543,17 @@ def save_reviews(report_a: str, report_b: str, session: list[dict],
                        encoding="utf-8")
         tmp.replace(p)
     by_lang = {}
-    for lang, v in sorted(nat_by_lang.items()):
+    for lang in sorted(verdict):
+        v = nat_by_lang[lang]
         d = verdict[lang]
-        regressed = (d["loss"] - d["win"] >= BLIND_LOSS_MARGIN
-                     and d["loss"] >= BLIND_MIN_LOSSES)
+        regressed = ((d["loss"] - d["win"] >= BLIND_LOSS_MARGIN
+                      and d["loss"] >= BLIND_MIN_LOSSES)
+                     if d["win"] + d["tie"] + d["loss"] else None)
         by_lang[lang] = {"mean_naturalness_a": _mean(v["a"]),
                          "mean_naturalness_b": _mean(v["b"]), **d,
                          "regressed": regressed}
     return {"pairs": len(session), "rated": rated, "by_lang": by_lang,
+            "acoustic_by_lang": dict(acoustic),
             "regressed": [k for k, v in by_lang.items() if v["regressed"]],
             "written": [report_a, report_b]}
 
@@ -437,11 +569,11 @@ def print_compare(reports: list[dict]) -> None:
     print(f"{'checkpoint':<40} {'CER↓':>7} {'CER非数字':>9} {'少读':>6} {'多读':>6} "
           f"{'金属音':>6} {'SIM':>7} {'字/秒':>7}")
     for r in reports:
-        print(_row(r["target"], r))
+        print(_row(r["label"], r))
         if len(r.get("by_lang", {})) > 1:
             for lang, s in r["by_lang"].items():
                 print(_row("  " + lang, s))
-    print("\n不能凭以上指标自动通过；请做母语盲听，检查情绪、音色、自然度和真实截断。")
+    print("\n以上仅为工程诊断；声学异常可单独盲听，未评的口音/语言自然度/情绪保持未验证。")
     print("数字类 case 的 CER 会被 Whisper 自身的数字归一化污染，结论看「CER非数字」那一列；")
     print("SIM 是 WavLM X-vector 余弦，只在同一 ref 下做 base 与 checkpoint 的相对比较；")
     print("metallic/low_snr 已标定定案为永久参考值（AUC 0.060 反相关 / 0.509 纯随机），不作门限。")
@@ -459,12 +591,23 @@ def main() -> None:
     ap.add_argument("--seeds", nargs="+", type=int, help="覆盖每个 case 的 seed，推荐 42 43 44")
     ap.add_argument("--cfg-value", type=float, default=2.0)
     ap.add_argument("--inference-timesteps", type=int, default=20)
+    ap.add_argument("--lora-strength", type=float, default=1.0,
+                    help="已加载 LoRA 的增量强度（0=基座，1=原 LoRA），不改变训练配置")
     ap.add_argument("--shard", default=None, metavar="K/N",
                     help="只跑第 K 片（0 起）共 N 片，多进程并行跑同一份 case 集；"
                          "case_id 保持原始序号，跑完用 --merge 合并")
     ap.add_argument("--merge", nargs="+", metavar="REPORT",
                     help="合并若干分片报告（voxft_ckpt/eval 下的文件名或路径）")
+    ap.add_argument("--summarize", nargs="+", metavar="REPORT",
+                    help="重算已有报告的稳定性等聚合，另存报告，不重新合成")
     args = ap.parse_args()
+    if args.summarize:
+        reports = [summarize_report(p if Path(p).is_file() else str(EVAL_DIR / p))
+                   for p in args.summarize]
+        print_compare(reports)
+        for report in reports:
+            print(f"重算报告: {report['report_path']}")
+        return
     if args.merge:
         paths = [p if Path(p).is_file() else str(EVAL_DIR / p) for p in args.merge]
         report = merge_reports(paths)
@@ -491,7 +634,8 @@ def main() -> None:
     reports = [evaluate(t, args.lang, texts, args.base, args.ref_audio, args.control,
                         args.seed, seeds=args.seeds, cfg_value=args.cfg_value,
                         inference_timesteps=args.inference_timesteps,
-                        shard=shard, progress=print) for t in args.targets]
+                        shard=shard, progress=print,
+                        lora_strength=args.lora_strength) for t in args.targets]
     print_compare(reports)
     print(f"\n详细报告: {CHECKPOINT_DIR / 'eval'}/")
 

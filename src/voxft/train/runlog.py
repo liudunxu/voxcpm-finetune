@@ -20,6 +20,7 @@ import yaml
 from ..paths import CHECKPOINT_DIR, CONFIG_DIR, ROOT
 
 RUNLOG = ROOT / "docs" / "runs.md"
+CER_NOISE = 0.05
 
 _HEADER = """# 微调运行记录
 
@@ -72,7 +73,12 @@ def _report(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _regressed(evals: list[dict], noise: float = 0.05) -> dict[str, dict[str, list[str]]]:
+def _metric_delta(current: float, baseline: float) -> float:
+    """去除远小于报告精度的浮点尾差，避免相等边界被误判为严格超过。"""
+    return round(current - baseline, 12)
+
+
+def _regressed(evals: list[dict], noise: float = CER_NOISE) -> dict[str, dict[str, list[str]]]:
     """以第一份报告为基线，把 CER 变差的语种分成「红线」与「噪声级」两档。
 
     默认门槛 0.05 是实测出来的，不是拍的：同一份配比（`fleurs_ms=17`，其余不变）跑两轮，
@@ -94,7 +100,7 @@ def _regressed(evals: list[dict], noise: float = 0.05) -> dict[str, dict[str, li
             c = v.get("mean_cer")
             if b is None or c is None or c <= b:
                 continue
-            (red if c - b > noise else small).append(f"{lang} {b:.4f}→{c:.4f}")
+            (red if _metric_delta(c, b) > noise else small).append(f"{lang} {b:.4f}→{c:.4f}")
         out[e.get("label", "?")] = {"red": red, "noise": small}
     return out
 
@@ -118,7 +124,9 @@ def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
     内容没变」（duration_inflation）、尾部垫静音（tail_silence）、有声占比下降
     （speech_ratio）不需要母语者就能判，可以进自动门禁。
 
-    旧报告没有这些聚合字段时对应检查跳过、不误报；tail_silence 的绝对上限
+    duration 与 CER 必须同取非数字样本，否则数字跑飞会被误判为「内容没变」。
+    旧报告没有这些聚合字段时对应检查跳过、不误报；可用 eval --summarize 另存重算。
+    tail_silence 的绝对上限
     （p90 > 0.5s）只依赖 checkpoint 自己的值，base 缺字段时仍然生效。
     """
     if len(evals) < 2:
@@ -132,24 +140,24 @@ def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
         scopes += [(lang, base_lang.get(lang, {}), v)
                    for lang, v in sorted(e.get("by_lang", {}).items())]
         for name, b, c in scopes:
-            ba, ca = b.get("mean_audio_sec"), c.get("mean_audio_sec")
+            ba, ca = b.get("mean_audio_sec_non_numeric"), c.get("mean_audio_sec_non_numeric")
             bc, cc = b.get("mean_cer_non_numeric"), c.get("mean_cer_non_numeric")
             if (ba and ca and bc is not None and cc is not None
-                    and ca > ba * (1 + DURATION_INFLATION_RATIO)
-                    and abs(cc - bc) <= DURATION_INFLATION_CER_TOL):
+                    and _metric_delta(ca / ba, 1) > DURATION_INFLATION_RATIO
+                    and abs(_metric_delta(cc, bc)) <= DURATION_INFLATION_CER_TOL):
                 gates["duration_inflation"].append(
-                    f"{name} audio_sec {ba:.2f}→{ca:.2f}s（+{(ca / ba - 1) * 100:.0f}%），"
-                    f"ΔCER非数字 {cc - bc:+.4f}——变长但内容没变")
+                    f"{name} 非数字 audio_sec {ba:.2f}→{ca:.2f}s（+{(ca / ba - 1) * 100:.0f}%），"
+                    f"ΔCER非数字 {cc - bc:+.4f}——非数字音频变长但 CER 近似不变")
             bp, cp = b.get("p90_tail_silence"), c.get("p90_tail_silence")
             if cp is not None:
-                if bp is not None and cp - bp > TAIL_SILENCE_P90_DELTA:
+                if bp is not None and _metric_delta(cp, bp) > TAIL_SILENCE_P90_DELTA:
                     gates["tail_silence"].append(
                         f"{name} p90尾静音 {bp:.3f}→{cp:.3f}s（+{cp - bp:.3f}s）")
                 if cp > TAIL_SILENCE_P90_MAX:
                     gates["tail_silence"].append(
                         f"{name} p90尾静音 {cp:.3f}s 越过 {TAIL_SILENCE_P90_MAX}s 上限")
             bs, cs = b.get("mean_speech_ratio"), c.get("mean_speech_ratio")
-            if bs is not None and cs is not None and bs - cs > SPEECH_RATIO_DROP:
+            if bs is not None and cs is not None and _metric_delta(bs, cs) > SPEECH_RATIO_DROP:
                 gates["speech_ratio"].append(
                     f"{name} speech_ratio {bs:.3f}→{cs:.3f}（{cs - bs:+.3f}）")
         out[e.get("label", "?")] = gates
@@ -157,7 +165,7 @@ def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
 
 
 def build_record(run: str, eval_paths: list[str], verdict: str = "",
-                 next_step: str = "", notes: str = "", noise: float = 0.005) -> str:
+                 next_step: str = "", notes: str = "", noise: float = CER_NOISE) -> str:
     cfg, plan = _read_yaml(run), _read_plan(run)
     mix = _read_mix(cfg.get("train_manifest", ""))
     lora = cfg.get("lora") or {}
@@ -227,7 +235,7 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
             if d["noise"]:
                 lines.append("  - 噪声级（未触发红线，照实记录）：" + "；".join(d["noise"]))
         dur = _duration_gates(evals)
-        lines += ["", f"时长类门禁（audio_sec 涨幅 >{DURATION_INFLATION_RATIO:.0%} 且 "
+        lines += ["", f"时长类门禁（非数字 audio_sec 涨幅 >{DURATION_INFLATION_RATIO:.0%} 且 "
                   f"|ΔCER非数字| ≤{DURATION_INFLATION_CER_TOL}；p90尾静音增量 "
                   f">{TAIL_SILENCE_P90_DELTA}s 或 >{TAIL_SILENCE_P90_MAX}s；speech_ratio 降 "
                   f">{SPEECH_RATIO_DROP}；标定依据见 docs/qc_gates.md）："]
@@ -235,11 +243,14 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
             hits = [x for k in ("duration_inflation", "tail_silence", "speech_ratio")
                     for x in g[k]]
             lines.append(f"- `{label}`：" + ("；".join(hits) if hits else "无"))
+        if any(e.get("mean_audio_sec_non_numeric") is None for e in evals):
+            lines.append("非数字时长字段缺失/无适用样本：该项未评，不代表通过；"
+                         "旧报告先用 `voxft.eval --summarize` 另存重算。")
         lines += ["", "报告文件：" + "、".join(f"`{Path(p).name}`" for p in eval_paths)]
 
     lines += ["", "### 人工盲听", "",
-              "（在 6006「盲听评估」Tab 做完后把分语种 B 胜/平/负 与要点粘到这里；"
-              "**指标与盲听冲突时以盲听为准**）", ""]
+              "（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，"
+              "工程检查通过不等于完整语言验收通过）", ""]
     if notes:
         lines += [notes, ""]
     lines.append("---")
@@ -247,7 +258,7 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
 
 
 def append_record(run: str, eval_paths: list[str], verdict: str = "",
-                  next_step: str = "", notes: str = "", noise: float = 0.005) -> Path:
+                  next_step: str = "", notes: str = "", noise: float = CER_NOISE) -> Path:
     """把新一轮记录插到表头之后、旧记录之前——最近一轮永远在最上面。"""
     record = build_record(run, eval_paths, verdict, next_step, notes, noise)
     RUNLOG.parent.mkdir(parents=True, exist_ok=True)
@@ -270,8 +281,8 @@ def main() -> None:
     ap.add_argument("--verdict", default="", help="通过 / 不通过 + 一句原因")
     ap.add_argument("--next", dest="next_step", default="", help="下一轮要改什么")
     ap.add_argument("--notes", default="", help="自由文本（盲听结论、踩坑）")
-    ap.add_argument("--noise", type=float, default=0.005,
-                    help="ΔCER 低于此值算噪声级波动，不触发红线（默认 0.005）")
+    ap.add_argument("--noise", type=float, default=CER_NOISE,
+                    help=f"ΔCER 低于此值不触发红线，不代表已证明无退化（默认 {CER_NOISE}）")
     ap.add_argument("--print", dest="do_print", action="store_true",
                     help="只打印不写入")
     args = ap.parse_args()

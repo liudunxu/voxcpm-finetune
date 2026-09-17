@@ -508,7 +508,10 @@ def _ckpt_choices() -> list[str]:
 # ------------------------------------------------------- 盲听评估（人工反馈是最终判据）
 
 _RV_SCALE = [1, 2, 3, 4, 5]
-# 控件顺序固定：甲自然度/甲可懂度/甲截断/甲噪音，乙同四项，最后一条共用备注
+_RV_UNKNOWN = "不确定/未评"
+_RV_YN = [_RV_UNKNOWN, "有", "无"]
+_RV_STATUS = {_RV_UNKNOWN: None, "有明确异常": "abnormal", "无明显异常": "clear"}
+_RV_TYPES = ["爆音", "金属音", "异常娃娃音", "音色跳变", "明显截断", "其他"]
 
 
 def _rv_restore(ratings: dict, pair: dict | None) -> list:
@@ -517,14 +520,20 @@ def _rv_restore(ratings: dict, pair: dict | None) -> list:
     out = []
     for s in ((e or {}).get("s1") or {}, (e or {}).get("s2") or {}):
         out += [s.get("naturalness_1_5"), s.get("intelligibility_1_5"),
-                bool(s.get("cutoff")), bool(s.get("noise"))]
+                {True: "有", False: "无"}.get(s.get("cutoff"), _RV_UNKNOWN),
+                {True: "有", False: "无"}.get(s.get("noise"), _RV_UNKNOWN),
+                next(label for label, value in _RV_STATUS.items()
+                     if value == s.get("acoustic_status")),
+                s.get("acoustic_types", [])]
     out.append((e or {}).get("notes", ""))
     return out
 
 
-def _rv_collect(n1, i1, c1, x1, n2, i2, c2, x2, notes) -> dict:
-    def one(n, i, c, x):
-        d = {"cutoff": bool(c), "noise": bool(x)}
+def _rv_collect(n1, i1, c1, x1, a1, t1, n2, i2, c2, x2, a2, t2, notes) -> dict:
+    def one(n, i, c, x, status, types):
+        d = {"cutoff": {"有": True, "无": False}.get(c),
+             "noise": {"有": True, "无": False}.get(x),
+             "acoustic_status": _RV_STATUS.get(status), "acoustic_types": types or []}
         if n:
             d["naturalness_1_5"] = int(n)
         if i:
@@ -532,7 +541,8 @@ def _rv_collect(n1, i1, c1, x1, n2, i2, c2, x2, notes) -> dict:
         if notes:
             d["notes"] = str(notes)
         return d
-    return {"s1": one(n1, i1, c1, x1), "s2": one(n2, i2, c2, x2)}
+    return {"s1": one(n1, i1, c1, x1, a1, t1), "s2": one(n2, i2, c2, x2, a2, t2),
+            "notes": notes or ""}
 
 
 def _rv_head(pair: dict | None, pos: int, total: int) -> str:
@@ -557,7 +567,11 @@ def do_review_load(a, b, seed):
         session = review_session(a, b, int(seed or 0))
     except Exception as exc:
         return [[], {}, 0, f"载入失败：{exc}", None, None, *_rv_restore({}, None)]
-    return _rv_show(session, {}, 0)
+    ratings = {review_key(pair): {
+        "s1": pair["review_1"], "s2": pair["review_2"],
+        "notes": pair["review_1"].get("notes") or pair["review_2"].get("notes", "")}
+        for pair in session}
+    return _rv_show(session, ratings, 0)
 
 
 def _review_nav(session, ratings, pos, delta, *ctrl):
@@ -602,19 +616,28 @@ def do_review_save(a, b, session, ratings, pos, *ctrl):
         s = save_reviews(a, b, session, ratings)
     except Exception as exc:
         return f"写回失败：{exc}"
-    lines = [f"已写回 **{s['rated']}/{s['pairs']}** 对评分 → "
+    lines = [f"已写回标注；自然度有评分 **{s['rated']}/{s['pairs']}** 对 → "
              f"`{s['written'][0]}`、`{s['written'][1]}` 的 `human_review` 字段", "",
+             "声学检查与语言评分分开；不确定/未评不计通过。",
+             "| 语种 | A 异常/干净/未知 | B 异常/干净/未知 | B 修复 | B 新增 |",
+             "|---|---|---|---|---|"]
+    for lang, value in s["acoustic_by_lang"].items():
+        counts = ["/".join(str(value[who][key]) for key in ("abnormal", "clear", "unknown"))
+                  for who in ("a", "b")]
+        lines.append(f"| {lang} | {counts[0]} | {counts[1]} | {value['resolved']} "
+                     f"| {value['introduced']} |")
+    lines += ["",
              "| 语种 | 自然度 A | 自然度 B | B 胜 | 平 | B 负 | 未评 | 退化 |",
              "|---|---|---|---|---|---|---|---|"]
     for lang, v in s["by_lang"].items():
         lines.append(f"| {lang} | {v['mean_naturalness_a']} | {v['mean_naturalness_b']} "
                      f"| {v['win']} | {v['tie']} | {v['loss']} | {v['unrated']} "
-                     f"| {'**是**' if v['regressed'] else '否'} |")
+                     f"| {'未验证' if v['regressed'] is None else '**是**' if v['regressed'] else '未触发'} |")
     lines += ["", "**退化判据**：`B 负 − B 胜 ≥ 2` 且 `B 负 ≥ 3`。不是简单的「负 > 胜」——"
               "实测 id 拿到 0胜/14平/1负、zh 拿到 0胜/2平/1负，按「负 > 胜」两条都算退化，"
               "但那只是一两条听感的偶然波动，红线喊多了就等于没有红线。",
-              f"本轮触发退化的语种：**{'、'.join(s['regressed']) if s['regressed'] else '无'}**",
-              "", "与离线 `by_lang` 同口径；两轨冲突时**以盲听为准**，"
+              f"自然度退化：**{'、'.join(s['regressed']) if s['regressed'] else '未验证（没有成对评分）' if not s['rated'] else '未触发门槛'}**",
+              "", "声学检查不能替代母语验收；未评口音、语言自然度和情绪保持未验证。"
               "并把盲听发现的失败形态落成 `eval_cases/` 里的新 case，让下一轮能自动复现。"]
     return "\n".join(lines)
 
@@ -873,12 +896,11 @@ def build_ui() -> gr.Blocks:
                          [ab_base_out, ab_lora_out, ab_info])
 
         with gr.Tab("盲听评估") as tab_review:
-            gr.Markdown("""**人工盲听是最终判据**，离线 CER/WER 只是诊断（ASR 误差不等于发音错误，
-疑似漏尾不等于真实截断，F0 不是越高越好）。
-
-用法：选两份**用同一 case 集、同一组 seed** 跑出来的报告（A 一般填 `base_*`，B 填 checkpoint），
-载入后逐条听甲/乙打分 →「汇总并写回」把评分落进两份报告的 `human_review`，并给出分语种胜负。
-**任一语种 B 负 > B 胜 即算退化，整轮不通过**，与离线 `by_lang` 同口径；两者冲突时以盲听为准。""")
+            gr.Markdown("""**默认只检查明确声学异常，不要求听懂语种。**
+判断「有明确异常 / 无明显异常 / 不确定」，记录类型与时间点；不要根据 F0 自动判娃娃音。
+母语自然度/可懂度评分在折叠区，没有合格评审就留空。CER/WER 只作诊断。
+选同 case/seed 的两份报告，听甲/乙后「汇总并写回」；未评项不计通过。
+语言自然度退化判据：`B 负 − B 胜 ≥ 2` 且 `B 负 ≥ 3`。""")
             with gr.Row():
                 rv_a = gr.Dropdown(_report_choices(), label="报告 A（基座）")
                 rv_b = gr.Dropdown(_report_choices(), label="报告 B（checkpoint）")
@@ -892,17 +914,25 @@ def build_ui() -> gr.Blocks:
                 rv_w1 = gr.Audio(label="甲", type="filepath")
                 rv_w2 = gr.Audio(label="乙", type="filepath")
             with gr.Row():
-                rv_n1 = gr.Radio(_RV_SCALE, label="甲·自然度 1-5")
-                rv_i1 = gr.Radio(_RV_SCALE, label="甲·可懂度 1-5")
-                rv_c1 = gr.Checkbox(label="甲·有截断/漏尾")
-                rv_x1 = gr.Checkbox(label="甲·有噪音/金属声")
+                rv_ac1 = gr.Radio(list(_RV_STATUS), value=_RV_UNKNOWN, label="甲·声学异常")
+                rv_ac2 = gr.Radio(list(_RV_STATUS), value=_RV_UNKNOWN, label="乙·声学异常")
             with gr.Row():
-                rv_n2 = gr.Radio(_RV_SCALE, label="乙·自然度 1-5")
-                rv_i2 = gr.Radio(_RV_SCALE, label="乙·可懂度 1-5")
-                rv_c2 = gr.Checkbox(label="乙·有截断/漏尾")
-                rv_x2 = gr.Checkbox(label="乙·有噪音/金属声")
-            rv_note = gr.Textbox("", label="备注（写清哪一处念错/不自然，下一轮据此补 case）")
-            rv_ctrl = [rv_n1, rv_i1, rv_c1, rv_x1, rv_n2, rv_i2, rv_c2, rv_x2, rv_note]
+                rv_t1 = gr.CheckboxGroup(_RV_TYPES, label="甲·异常类型（可留空）")
+                rv_t2 = gr.CheckboxGroup(_RV_TYPES, label="乙·异常类型（可留空）")
+            with gr.Accordion("可选：具体缺陷与母语评分（不懂该语言就留空）", open=False):
+                with gr.Row():
+                    rv_n1 = gr.Radio(_RV_SCALE, label="甲·母语自然度 1-5")
+                    rv_i1 = gr.Radio(_RV_SCALE, label="甲·可懂度 1-5")
+                    rv_c1 = gr.Radio(_RV_YN, value=_RV_UNKNOWN, label="甲·截断/漏尾")
+                    rv_x1 = gr.Radio(_RV_YN, value=_RV_UNKNOWN, label="甲·噪音/金属声")
+                with gr.Row():
+                    rv_n2 = gr.Radio(_RV_SCALE, label="乙·母语自然度 1-5")
+                    rv_i2 = gr.Radio(_RV_SCALE, label="乙·可懂度 1-5")
+                    rv_c2 = gr.Radio(_RV_YN, value=_RV_UNKNOWN, label="乙·截断/漏尾")
+                    rv_x2 = gr.Radio(_RV_YN, value=_RV_UNKNOWN, label="乙·噪音/金属声")
+            rv_note = gr.Textbox("", label="定位备注（例如：甲 0.8–1.2s 爆音；不确定可留空）")
+            rv_ctrl = [rv_n1, rv_i1, rv_c1, rv_x1, rv_ac1, rv_t1,
+                       rv_n2, rv_i2, rv_c2, rv_x2, rv_ac2, rv_t2, rv_note]
             rv_out = [rv_session, rv_ratings, rv_pos, rv_head, rv_w1, rv_w2, *rv_ctrl]
             with gr.Row():
                 rv_prev = gr.Button("← 上一条")

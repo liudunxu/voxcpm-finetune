@@ -1031,7 +1031,8 @@ def process_dataset(source_id: str, out_name: str | None = None,
 
 
 def mix_manifests(parts: list[tuple[str, float]], out_name: str,
-                  seed: int = 42, max_repeat: float = 3.0, progress=None) -> dict:
+                  seed: int = 42, max_repeat: float = 3.0, progress=None, *,
+                  train_hours: float | None = None) -> dict:
     """按有效音频时长采样；每条原始目标音频全局最多 3×，验证集不重复采样。"""
     if not parts or any(not math.isfinite(w) or w <= 0 for _, w in parts):
         raise ValueError("parts 不能为空，权重须为有限正数")
@@ -1039,6 +1040,8 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
         raise ValueError("输入数据集不能重复，输出不能覆盖输入")
     if not (1 <= max_repeat <= 3 and float(max_repeat).is_integer()):
         raise ValueError("max_repeat 必须为 1、2 或 3")
+    if train_hours is not None and (not math.isfinite(train_hours) or train_hours <= 0):
+        raise ValueError("train_hours 必须为有限正数")
     for name in [out_name, *(n for n, _ in parts)]:
         if Path(name).name != name or name in ("", ".", ".."):
             raise ValueError("输入/输出必须是单个数据集名称")
@@ -1061,6 +1064,8 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
                     raise ValueError("混合需要有效 duration，请先重新加工旧数据集")
                 rec["duration"] = float(rec["duration"])
         seconds = sum(float(r["duration"]) for rows in rows_by_part for r in rows)
+        if split == "train" and train_hours is not None:
+            seconds = train_hours * 3600
         if split == "train":
             # 请求占比 = Σ(part 权重 × part 内该语种的时长占比)；口径是时长不是条数
             for (_name, w), rows in zip(parts, rows_by_part):
@@ -1140,6 +1145,7 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
                      "要么补该语种数据，要么在结论里写明实际占比")
     (out / "mix.json").write_text(
         json.dumps({"parts": parts, "basis": "duration", "max_repeat": max_repeat,
+                    "requested_train_hours": train_hours,
                     "counts": summary, "datasets": details,
                     "language_shares": language_shares,
                     "train": train_summary,

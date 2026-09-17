@@ -97,6 +97,7 @@ def test_lora_load_config_and_ab_toggles(tmp_path, monkeypatch):
 def test_eval_keeps_conditions_thai_marks_and_unique_reports(tmp_path, monkeypatch):
     from voxft.data import pipeline
     monkeypatch.setattr(evaluation, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
     monkeypatch.setattr(infer, "get_model", lambda *args: object())
     kwargs = []
@@ -113,6 +114,7 @@ def test_eval_keeps_conditions_thai_marks_and_unique_reports(tmp_path, monkeypat
     report = evaluation.evaluate("base", "th", cases, seeds=[42, 43])
     again = evaluation.evaluate("base", "th", cases, seeds=[42, 43])
     assert report["report_path"] != again["report_path"]
+    assert report["report_path"].startswith(str(tmp_path) + "/")
     assert report["mean_cer"] == 0 and report["items"][0]["ref_lang"] == "en"
     assert report["items"][0]["human_review"]["emotion_fit_1_5"] is None
     assert [kw["seed"] for kw in kwargs] == [42, 43, 42, 43]
@@ -205,6 +207,7 @@ def test_eval_computes_cer_and_wer_for_vi_id_and_ms(tmp_path, monkeypatch):
     """vi 正字法按音节空格分隔，WER 有值但是音节级口径；id/ms 是词级。"""
     from voxft.data import pipeline
     monkeypatch.setattr(evaluation, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
     monkeypatch.setattr(infer, "get_model", lambda *args: object())
     monkeypatch.setattr(infer, "_run", lambda model, kw: ("fake.wav", 0.1))
@@ -296,6 +299,40 @@ def test_review_session_rejects_mismatched_reports(tmp_path, monkeypatch):
         ev.review_session("a.json", "b.json")
 
 
+def test_review_guards_conditions_missing_pairs_and_stale_writeback(tmp_path, monkeypatch):
+    import json
+    from copy import deepcopy
+    from voxft import eval as ev
+
+    monkeypatch.setattr(ev, "EVAL_DIR", tmp_path)
+    cases = [("c1", 42, "vi"), ("c2", 42, "th")]
+    for name in ("a", "b", "replacement"):
+        _fake_report(tmp_path / f"{name}.json", name, cases)
+    original = json.loads((tmp_path / "b.json").read_text())
+    for field, value in (("text", "other"), ("lang", "ms"), ("ref_audio", "/other.wav"),
+                         ("control", "angry"), ("numeric", False)):
+        invalid = deepcopy(original)
+        invalid["items"][0][field] = value
+        (tmp_path / "b.json").write_text(json.dumps(invalid))
+        with pytest.raises(ValueError, match="条件不一致"):
+            ev.review_session("a.json", "b.json")
+    for rows in (original["items"][:1], original["items"] + original["items"][:1]):
+        (tmp_path / "b.json").write_text(json.dumps({**original, "items": rows}))
+        with pytest.raises(ValueError):
+            ev.review_session("a.json", "b.json")
+    (tmp_path / "b.json").write_text(json.dumps({**original, "cfg_value": 1.6}))
+    session = ev.review_session("a.json", "b.json")
+    replacement = deepcopy(original)
+    replacement["items"][0]["wav"] = "/new_take.wav"
+    (tmp_path / "replacement.json").write_text(json.dumps(replacement))
+    before = {path: path.read_bytes() for path in tmp_path.glob("*.json")}
+    with pytest.raises(ValueError, match="会话不符"):
+        ev.save_reviews("a.json", "replacement.json", session, {})
+    with pytest.raises(ValueError, match="重复"):
+        ev.save_reviews("a.json", "b.json", session + session[:1], {})
+    assert all(path.read_bytes() == contents for path, contents in before.items())
+
+
 def test_regressed_splits_red_line_from_noise():
     """每语种只有十几条样本，一个字符就能让均值动 0.002-0.003；
     阈值太紧会让红线每轮都触发，等于没有红线。"""
@@ -326,6 +363,8 @@ def test_eval_aggregates_duration_and_spectral_metrics(tmp_path, monkeypatch):
     report = evaluation.evaluate("base", "ms", [{"text": "Saya tidak tahu", "lang": "ms"}],
                                  seeds=[42, 43])
     assert report["mean_audio_sec"] == 2.0
+    assert report["mean_audio_sec_non_numeric"] == 2.0
+    assert report["by_lang"]["ms"]["mean_audio_sec_non_numeric"] == 2.0
     assert report["mean_head_silence"] == 0.1
     assert report["mean_tail_silence"] == 0.2
     assert report["p90_tail_silence"] == 0.2
@@ -338,10 +377,12 @@ def test_eval_aggregates_duration_and_spectral_metrics(tmp_path, monkeypatch):
 def _dur_report(label, *, audio=2.0, cer_nn=0.003, tail_p90=0.10, speech=0.94,
                 lang=None, **lang_vals):
     """最小伪报告：top-level + 可选单语种 by_lang 的时长类聚合键。"""
-    r = {"label": label, "mean_audio_sec": audio, "mean_cer_non_numeric": cer_nn,
+    r = {"label": label, "mean_audio_sec": audio, "mean_audio_sec_non_numeric": audio,
+         "mean_cer_non_numeric": cer_nn,
          "p90_tail_silence": tail_p90, "mean_speech_ratio": speech, "by_lang": {}}
     if lang:
         r["by_lang"][lang] = {"mean_audio_sec": lang_vals.get("audio", audio),
+                              "mean_audio_sec_non_numeric": lang_vals.get("audio", audio),
                               "mean_cer_non_numeric": lang_vals.get("cer_nn", cer_nn),
                               "p90_tail_silence": lang_vals.get("tail_p90", tail_p90),
                               "mean_speech_ratio": lang_vals.get("speech", speech)}
@@ -387,6 +428,26 @@ def test_duration_gates_skip_old_reports_without_the_fields():
     ck = {"label": "ck", "p90_tail_silence": 0.6, "by_lang": {}}
     assert runlog._duration_gates([old, ck])["ck"]["tail_silence"]
     assert runlog._duration_gates([old]) == {}
+
+
+def test_metric_gates_respect_decimal_boundaries():
+    from voxft.train import runlog
+
+    for baseline_tail, candidate_tail in ((0.18, 0.28), (0.20, 0.30)):
+        base = _dur_report("base", audio=6, tail_p90=baseline_tail, speech=0.9, lang="ms")
+        edge = _dur_report("edge", audio=6.6, tail_p90=candidate_tail, speech=0.85, lang="ms")
+        assert all(not rows for rows in runlog._duration_gates([base, edge])["edge"].values())
+        beyond = _dur_report("beyond", audio=6.6001, tail_p90=candidate_tail + 0.0001,
+                             speech=0.8499, lang="ms")
+        assert all(len(rows) == 2 for rows in runlog._duration_gates([base, beyond])["beyond"].values())
+    base = _dur_report("base", cer_nn=0.03)
+    for candidate_cer, should_flag in ((0.04, True), (0.0401, False), (float("nan"), False)):
+        candidate = _dur_report("candidate", audio=2.3, cer_nn=candidate_cer)
+        assert bool(runlog._duration_gates([base, candidate])["candidate"]["duration_inflation"]) == should_flag
+    base = {"label": "base", "by_lang": {"th": {"mean_cer": 0.15}}}
+    for candidate_cer, should_flag in ((0.1999, False), (0.20, False), (0.2001, True)):
+        candidate = {"label": "candidate", "by_lang": {"th": {"mean_cer": candidate_cer}}}
+        assert bool(runlog._regressed([base, candidate])["candidate"]["red"]) == should_flag
 
 
 def test_runlog_puts_newest_record_first(tmp_path, monkeypatch):

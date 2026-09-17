@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import sys
 import time
+import math
+from contextlib import contextmanager
 from uuid import uuid4
 from pathlib import Path
 
@@ -111,9 +113,39 @@ def _gen_kwargs(text: str, ref_audio: str | None, ref_text: str | None,
     return kwargs
 
 
-def _run(model, kwargs: dict) -> tuple[str, float]:
+def validate_lora_strength(strength: float) -> float:
+    strength = float(strength)
+    if not math.isfinite(strength) or not 0 <= strength <= 1:
+        raise ValueError("LoRA strength 必须为 0–1 之间的有限数")
+    return strength
+
+
+@contextmanager
+def scaled_lora(model, strength: float):
+    """临时缩放已严格加载的适配器；异常或 A/B 切换后恢复原状态。"""
+    strength = validate_lora_strength(strength)
+    modules = list(model.tts_model._iter_lora_modules())
+    if not modules:
+        raise ValueError("模型没有已加载的 LoRA，不能设置 strength")
+    original = [module.scaling.detach().clone() for module in modules]
+    try:
+        with torch.no_grad():
+            for module in modules:
+                module.scaling.fill_(module._base_scaling * strength)
+        yield
+    finally:
+        with torch.no_grad():
+            for module, scaling in zip(modules, original):
+                module.scaling.copy_(scaling)
+
+
+def _run(model, kwargs: dict, *, lora_strength: float | None = None) -> tuple[str, float]:
     t0 = time.time()
-    wav = model.generate(**kwargs)
+    if lora_strength is None:
+        wav = model.generate(**kwargs)
+    else:
+        with scaled_lora(model, lora_strength):
+            wav = model.generate(**kwargs)
     out = CHECKPOINT_DIR / "auditions" / f"audition_{uuid4().hex}.wav"
     out.parent.mkdir(parents=True, exist_ok=True)
     import soundfile as sf
