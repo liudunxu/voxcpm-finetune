@@ -1,41 +1,36 @@
 # TODO：三个微调目标的执行顺序
 
-## 当前待办（2026-09-16，r8 转正后）
+## 当前待办（2026-09-17，r9 不通过后）
 
-1. ~~r6/r7~~ **已裁定不通过**：nat 探针崩溃归因为 `_tc` 尾裁数据 + cv22/yodas2 新源
-   （r6 证明非 cv22_id、r7 证明非单纯 _tc-id）。
-2. ~~r8~~ **已转正（2026-09-16）**：r2 原配方（全非 _tc，yodas_th 取前 2500 条对齐 r2 规模）
-   用当前代码重建，joint_omni8 32,307 条/75.2h，2020 步，v2 集 910 条验收全语种通过
-   （总体 CER 0.0568→0.0423，漏尾 3.85%→1.32%，ms 0.068→0.012；zh 回放 +0.020 未触红线）。
-   **用户决定跳过盲听**。已 merge 并上传生产仓库 `FrankLiuDundun/voxcpm-finetune-lora`
-   （替换 r2；文件清单已核对：完整模型 + lora/ 双文件 + training_config.yaml + r8 模型卡）。
-3. **同说话人语料调研（2026-09-16 已完成，结论见下）**——为 ref 配对（→`enable_proj` 修音色）找现货：
-   - **th ✅ 三样全占**：Common Voice th（CC0 + client_id，fsicoli 镜像直拉即可，项目 cv22
-     下载器已支持）：validated 148,585 条 / 6,507 人，≥100 条的 134 人、≥500 条 28 人
-   - **id ✅**：Common Voice id（CV26 @MDC 671 人 33.8h validated，或 fsicoli CV22 镜像 639 人，CC0）
-   - **ms ⚠️ 新发现但量小**：ms 自 CV23 起已进入 Common Voice（**AGENTS.md「ms 不在 CV」已过时**）——
-     CV26 scripted 29 人 3.65h（validated 仅 0.06h）+ Spontaneous Speech 4.0 Bahasa Malay
-     24 人 6.19h（CC0，MDC 注册后 SDK 下载）；悬念：BabelSpeech 50h Malay/Indonesian
-     （Apache-2.0 但 manual gated，speaker 字段待确认）
-   - **vi ❌**：最接近 PhoAudiobook（941h / 735 个真实 speaker，gated:auto，**缺许可声明**，
-     可邮件向作者要授权）；次选 CV vi fsicoli 镜像（320 人但中位仅 5 条/人，太薄）
-   - **tl ❌**：filipinospeechcorpus（125 人）许可自相矛盾（tag MIT vs 正文 research use），
-     pld（980 人 / fil 52h）明示 research-only；仍是 BigFTagaCSC 询价或自建 drama_tl
-   - ⚠️ CV 条款禁止"识别说话人真实身份"与再分发数据本身；用 client_id 做匿名分组键不冲突
-   - ⚠️ client_id 是众包自报身份：按现行纪律只作分组键，是否标 speaker_verified 需要重新评估
-4. **下一步候选（按杠杆率）**：
-   a. 用 CV th/id（+ 可能的 BabelSpeech ms）的 client_id 做同说话人 ref 配对 →
-      ref 覆盖率 0%→30-50% → r9 开 `enable_proj=true` 修音色贴合度（0.91 vs 天花板 0.997）
-   b. drama 五语种成片上传远端（表演/情绪语料的唯一来源，等用户提供文件）
-   c. yodas2_ms 口音抽听（马来西亚母语者；注意 CV Spontaneous Malay 也是 ms 新来源）
-   d. Nexdata 200h ms（SKU 1280）/ 621h th 对话（622 人带 speaker ID）询价
-   e. PhoAudiobook 作者邮件要许可（vi 唯一接近现货的 941h/735 人）
-5. **r4 母语盲听**（仍挂着，优先级低）：A=`base_1759722cf7884b88bf66c32f06dd1d66`，
+**生产模型 = r8**（HF `FrankLiuDundun/voxcpm-finetune-lora`），r9 未动生产。
+
+1. ~~r9~~ **已裁定不通过（2026-09-17）**：`enable_proj=true` + cv22_th6/cv22_id6
+   （50% 配对，全局 ref 覆盖 10.2%，2249 人）修音色的假设**被证伪**——
+   speaker_sim 0.9121→0.9074（en ref 0.8272→0.8159 跌破基座），且 cv22 把
+   id/vi 的漏尾/多读带回来了（id ΔCER +0.0435 逼近红线，漏尾 0.075、多读 0.031）。
+   唯一亮点：zh 0.0775→0.0494（修复 r8 的回放漂移）、th 略好、ms 保持 0.0115。
+   变量混淆：cv22 加入同时 gs2_th 9→5、gs2_id 10→7 被挤占，退化归因未分离。
+   教训：**众包朗读 ref + 10% 覆盖教不会配音场景的音色融合**。
+2. **drama 五语种成片上传远端（最高优先，等用户文件）**：ref 配对与情绪语料的
+   唯一没被打脸的路线。要求：先给 1 集 BGM 最轻的、确认配音轨在音轨第一位、
+   连台词本+字幕一起传到 `/root/autodl-tmp/drama/<语种>/`；
+   链路：Demucs 分离 → ingest 切分转写 → diarization 出簇 → 人工确认说话人。
+3. **可选的 cv22 路线最后一次重试**（预期不高）：配对率拉 100% + cv22 份额压小
+   （不挤占 gs2），若 speaker_sim 仍不动就彻底放弃这条路线。
+4. **ms 数据跟进**：CV26 scripted（29 人 3.65h）+ Spontaneous Malay（24 人 6.19h）
+   需注册 MDC 下载；BabelSpeech 50h Malay/Indonesian（Apache-2.0，manual gated，
+   申请后先确认 `audio_info.json` 有无 speaker 字段）；yodas2_ms 口音抽听
+   （马来西亚母语者，6006 页面）。
+5. **vi/tl 同说话人语料**：PhoAudiobook（941h/735 人，缺许可）给作者发邮件；
+   tl 仍是 BigFTagaCSC 询价或 drama_tl 自建。
+6. **Nexdata 询价**（待用户决定）：200h ms（SKU 1280）/ 621h th 对话（622 人带 ID）。
+7. **r4 母语盲听**（仍挂着，优先级低）：A=`base_1759722cf7884b88bf66c32f06dd1d66`，
    B=`lora_omni5_r4_latest_0859d1d75d6f46c99e3efb735dd21800`。
 
-已完成（2026-09-15/16）：r5 全流程与裁定；r6/r7 训练与不通过裁定；r8 复现 r2 配方成功并转正；
-eval `--shard/--merge` 并行 + 字符串 case_id；`--mix` 重复参数修复；eval 逐条进度回调；
-生产 HF 仓库已更新为 r8。
+已完成（2026-09-15~17）：r5-r7 裁定；r8 复现 r2 配方成功并转正生产仓库；
+r9 训练+验收（不通过，runlog 已归档）；eval `--shard/--merge` 并行；
+`--mix` 重复参数修复；`repair_refs` 重配对工具；cv22 client_id 身份上调为可信
+（r9 实验证明可用作配对机制，但数据源本身对质量有副作用）。
 
 ---
 
