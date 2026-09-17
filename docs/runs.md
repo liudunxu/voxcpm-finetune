@@ -5,6 +5,79 @@
 
 用途：下一轮微调的起点参照、周报汇总、以及「这个结论是哪一轮、用什么数据得出的」回溯。
 
+## lora_omni5_r9
+
+- 生成时间：2026-09-17 10:39:12
+- 结论：**不通过：一等指标 speaker_sim 没升反降（0.9121→0.9074，en ref 0.8272→0.8159 低于基座）；id ΔCER +0.0435 逼近红线且漏尾 0.075/多读 0.031（r8 为 0.006/0.000），vi 同向恶化——cv22 把 r5 时代的韵律毛病带回来了；唯一亮点 zh 0.0775→0.0494、th 略好、ms 保持 0.0115**
+- 下一步：生产保持 r8。ref 配对路线要么 cv22 100% 配对率+小份额重试，要么等 drama 真实同人语料；enable_proj 在 10% 覆盖+众包朗读 ref 下证伪
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/True |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0 / 3130 |
+| warmup / weight_decay / max_grad_norm | 313 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/joint_omni9/train.jsonl |
+| 样本数 / 语种条数 | 50067 / {"en": 2313, "id": 10722, "ms": 6136, "th": 11379, "tl": 5366, "vi": 9640, "zh": 4511} |
+| val loss 首→末 | 1.0491 (step 0) → 0.9733 (step 3129)，最优 0.8922 |
+
+### 数据配比（按时长）
+
+- 总时长 **107.6708 h** / 50067 条，max_repeat=3.0
+- 带 ref_audio：5104，带控制前缀：0
+- max_exposure：3
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.05 | 5.3848 |
+| id | 0.17 | 0.17 | 18.3054 |
+| ms | 0.17 | 0.17 | 18.3032 |
+| th | 0.17 | 0.17 | 18.3047 |
+| tl | 0.17 | 0.17 | 18.3014 |
+| vi | 0.17 | 0.17 | 18.304 |
+| zh | 0.1 | 0.1 | 10.7673 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、182 个 case × seed = 910 条样本
+
+| 语种 | base CER | lora_omni5_r9_latest CER |
+|---|---|---|
+| en | 0.015 (WER 0.0248) | 0.0168 (WER 0.0308) |
+| id | 0.023 (WER 0.0958) | 0.0665 (WER 0.1414) |
+| ms | 0.0681 (WER 0.1146) | 0.0115 (WER 0.0443) |
+| th | 0.1142 | 0.0895 |
+| tl | 0.0184 (WER 0.0742) | 0.0132 (WER 0.0766) |
+| vi | 0.073 (WER 0.0926) | 0.0965 (WER 0.1136) |
+| zh | 0.058 | 0.0494 |
+| **总体** | 0.0568 | 0.053 |
+| 疑似漏尾 | 0.0385 | 0.0363 |
+
+退化语种（红线阈值 ΔCER > 0.005；任一语种触发即整轮不通过）：
+- `lora_omni5_r9_latest` 红线：id 0.0230→0.0665；vi 0.0730→0.0965
+  - 噪声级（未触发红线，照实记录）：en 0.0150→0.0168
+
+时长类门禁（audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r9_latest`：id p90尾静音 0.180→0.300s（+0.120s）；ms p90尾静音 0.180→0.300s（+0.120s）；th p90尾静音 0.180→0.280s（+0.100s）；tl p90尾静音 0.180→0.300s（+0.120s）；vi p90尾静音 0.180→0.300s（+0.120s）；id speech_ratio 0.902→0.826（-0.076）
+
+报告文件：`base_8de890a3af74491b948c1ae0449967b0.json`、`lora_omni5_r9_latest_a2f9e99f614245f0842c37a076c381bf.json`
+
+### 人工盲听
+
+（在 6006「盲听评估」Tab 做完后把分语种 B 胜/平/负 与要点粘到这里；**指标与盲听冲突时以盲听为准**）
+
+enable_proj=true + cv22_th6/cv22_id6（50% 配对，全局 ref 覆盖 10.2%，2249 人）；变量混淆提示：cv22 加入的同时 gs2_th 9→5、gs2_id 10→7 被挤占，id/vi 退化是 cv22 还是 gs2 份额下降所致未分离
+
+---
+
 ## lora_omni5_r8
 
 - 生成时间：2026-09-16 19:41:11
