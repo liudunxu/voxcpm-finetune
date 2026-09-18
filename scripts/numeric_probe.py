@@ -34,7 +34,7 @@ def collect(work):
     spec.loader.exec_module(normalizer)
     reports = {}
     for arm, cases in plan["arms"].items():
-        report = json.loads((work / f"{arm}_report.json").read_text())
+        report = json.loads((work / f"{arm}_report.json").read_text(encoding="utf-8"))
         expected = {(case["case_id"], seed): case for case in cases for seed in plan["seeds"]}
         rows = {(row["case_id"], row["seed"]): row for row in report["items"]}
         if len(rows) != len(report["items"]) or rows.keys() != expected.keys():
@@ -81,7 +81,7 @@ def collect(work):
 def run(work):
     if (work / "plan.json").exists():
         raise FileExistsError("Run already frozen; inspect status instead of restarting")
-    specification = json.loads((work / "inputs.json").read_text())
+    specification = json.loads((work / "inputs.json").read_text(encoding="utf-8"))
     if (specification["seeds"] != [42, 43, 44, 45, 49]
             or {arm: len(cases) for arm, cases in specification["arms"].items()}
             != {"raw": 12, "words": 12, "legacy_ms": 1}):
@@ -89,7 +89,7 @@ def run(work):
     if shutil.disk_usage(work).free < 2 * 1024**3:
         raise RuntimeError("Need at least 2GiB free")
     runtime_environment(work / "runtime")
-    source = json.loads((work / "source_identity.json").read_text())
+    source = json.loads((work / "source_identity.json").read_text(encoding="utf-8"))
     for filename, digest in source["artifact_sha256"].items():
         if sha256(work / filename) != digest:
             raise ValueError(f"Transferred artifact changed: {filename}")

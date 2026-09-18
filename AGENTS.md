@@ -4,7 +4,21 @@
 VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/马来语高质量语料的下载与加工、跨语言（中文→目标语言）混合微调、LoRA/全量训练管理、wandb 监控、LoRA merge、HuggingFace 同步。**目标是五语种（th/tl/vi/id/ms）联合微调：一个 LoRA 同时提升这几种语言的配音质量，但验收必须分语种做**。Gradio 页面端口 **6006**。
 
 ## 当前执行边界（2026-09-17 用户更正）
-- **2026-09-18最新状态：r11在10:20:18完成全部990条评测，未得到明确收益，不转正、不扩训**。
+- **2026-09-18最新状态：r8数字输入125/125及16次MS ASR诊断均已完成，不是r12**。
+  分别于11:05:09、11:08:34结束；20/20非数字控制WAV与ASR一致，125WAV已本机备份并验SHA。
+  共同CER raw→words：TH .053480→.046337、VI .421026→.049487、ID 0→0、MS .172332→.302217；
+  每语种仅2独立数字文本，5seed不扩独立样本量。MS同8WAV换ASR语言提示后5条转写变化，
+  其中2条RM→Rp；不据此判串语种/实际币种念错，也不能排除内容风险。
+  冻结MS词化器对`Rp45,000`会部分展开，空格影响共同CER；不改旧评分器或挑低分覆盖报告。
+  下一项只做未知币种/分隔符独立版本的纯文本回归，不扩TTS/ASR网格或加训，保持r8与既有参数。
+  两仓重复币种输入修复DIS `1a1e309`、OmniVoice `ac1e51d`仅本地提交，未push/部署；
+  该修复不证明音频重复词消失，语言质量仍未验证。
+  原任务60条后遇默认ASCII读取JSON失败，只恢复65条；原报告/60WAV与失败证据保留。
+  两脚本7处读取已显式UTF-8，回归先失败后通过；本机相关28项、远端全套143项通过。
+  完成后才同步源码修复；原源码在`frozen_sources/`，映射`postrun_source_archive.json`，
+  完成前85输入/61保留文件/125输出校验见`closure.json`。不能改旧plan凑哈希或重跑run/collect。
+  详情见`docs/numeric_probe_20260918.md`；实际在线权重身份仍待可核验服务，不伪报部署完成。
+- **r11在2026-09-18 10:20:18完成全部990条评测，未得到明确收益，不转正、不扩训**。
   短句840+五语种冒烟150、六份完整报告均已校验；两个控制器均退出，
   不要恢复旧PID13835或重跑训练/评测。接管记录`overlap_schedule.json`与旧失败证据保留。
   配对结果为恢复目录`paired_results.json`，入口`scripts/short_cue_results.py`；
@@ -195,9 +209,12 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/�
 ### 长任务：一律 nohup 落日志，别占着 SSH
 - 下载/加工/训练/eval 都可能几十分钟，SSH 断了任务就没了。固定写法：
   ```bash
-  /tmp/rsh 'rm -f /tmp/x.log; nohup stdbuf -oL -eL uv run python -u -m <模块> ... > /tmp/x.log 2>&1 & echo started'
+  /tmp/rsh 'nohup stdbuf -oL -eL uv run python -X utf8 -u -m <模块> ... > /root/autodl-tmp/<本轮唯一日志>.log 2>&1 & echo started'
   ```
-  然后**另起命令**轮询 `tail /tmp/x.log`。`python -u` + `stdbuf -oL` 缺一不可，否则日志憋在缓冲区里看着像卡死。
+  然后**另起命令**轮询该日志。`python -u` + `stdbuf -oL` 缺一不可，否则日志憋在缓冲区里看着像卡死。
+- **多语种JSON读写显式`encoding="utf-8"`，长任务同时加`-X utf8`**：
+  本轮原任务完成60条后默认编码变成ASCII，再读泰文plan失败；改变locale的来源未知，不猜测第三方库。
+  共享`check_inputs`及本轮入口已修复，保留哈希守卫；不得跳过校验、覆盖成功报告或重跑已完成音频。
 - **绝对不要把长任务管道给 `tail -N`**：`cmd | tail -25` 会等进程结束才输出，中途完全看不到进度——本轮因此误判过"下载没动静"。
 - 多步循环写成一个脚本 `scp` 上去再 `nohup bash /tmp/x.sh`，比在 ssh 命令串里塞 `for` 循环可靠得多。
 

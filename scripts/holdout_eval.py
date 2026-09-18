@@ -19,7 +19,7 @@ from ref_ab_diagnostics import paired_summary
 
 
 def check_inputs(work):
-    plan = json.loads((work / "plan.json").read_text())
+    plan = json.loads((work / "plan.json").read_text(encoding="utf-8"))
     for path, expected in plan["inputs_sha256"].items():
         if sha256(path) != expected:
             raise ValueError(f"Frozen input changed: {path}")
@@ -27,7 +27,7 @@ def check_inputs(work):
 
 
 def prepare(work, texts):
-    source = json.loads((texts / "plan.json").read_text())
+    source = json.loads((texts / "plan.json").read_text(encoding="utf-8"))
     cases = _read_manifest(texts / "cases.jsonl")
     if (sha256(texts / "cases.jsonl") != source["cases_sha256"]
             or Counter(row["lang"] for row in cases) != Counter({lang: 30 for lang in TARGET_LANGS})
@@ -45,7 +45,7 @@ def prepare(work, texts):
     for path in paths:
         if source["inputs_sha256"].get(str(path)) != sha256(path):
             raise ValueError(f"Holdout exclusion/reference audit needs refresh: {path}")
-    old_plan = json.loads((CHECKPOINT_DIR.parent / "ref_ab_20260917/plan.json").read_text())
+    old_plan = json.loads((CHECKPOINT_DIR.parent / "ref_ab_20260917/plan.json").read_text(encoding="utf-8"))
     base = Path(old_plan["base_path"])
     r8 = CHECKPOINT_DIR / "lora_omni5_r8/latest"
     for filename in ("lora_config.json", "lora_weights.safetensors"):
@@ -103,7 +103,8 @@ def collect(work):
     from voxft.train import runlog
 
     plan = check_inputs(work)
-    reports = {model: json.loads((work / f"{model}_report.json").read_text()) for model in plan["targets"]}
+    reports = {model: json.loads((work / f"{model}_report.json").read_text(encoding="utf-8"))
+               for model in plan["targets"]}
     expected = {(row["case_id"], seed): row
                 for row in _read_manifest(work / "cases.jsonl") for seed in plan["evaluation_seeds"]}
     for model, report in reports.items():

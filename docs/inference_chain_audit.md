@@ -4,8 +4,12 @@
 
 初始只读检查以下两个本机checkout；下列HEAD/干净状态与源码哈希为审计起点。
 后续OmniVoice最小改动见「最终采样参数追踪」「数字词化透传修复」，均已push、未部署。
-随后数字输入实测发现重复币种词，已在DIS/OmniVoice两侧本机修复并启动独立r8诊断；
+随后数字输入实测发现重复币种词，已在DIS/OmniVoice两侧本机修复，
+独立r8诊断125/125及追加16次ASR复核均于2026-09-18完成；
 见`numeric_probe_20260918.md`，不把初始只读状态当当前状态。
+重复币种修复提交DIS `1a1e309`、OmniVoice `ac1e51d`尚未push或部署；
+20/20非数字控制WAV一致，VI有局部改善信号，MS受币种转写与共同评分边界混淆，
+不能据此确认退化或正确发音。不是HTTP端到端或完整语言验收，不改指定r8或追加训练。
 
 - OmniVoice：`/Users/dunxu.liu/workspace/others/OmniVoice`，
   HEAD `b92fb28f894071f0bf06ffe1e13bab4654c30a28`，工作区干净。

@@ -49,3 +49,23 @@ def test_holdout_collection_requires_frozen_complete_conditions(monkeypatch, tmp
     cases_path.write_text("changed")
     with pytest.raises(ValueError, match="Frozen input"):
         module.check_inputs(tmp_path)
+
+
+def test_frozen_plan_uses_utf8_after_runtime_locale_changes(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    from holdout_eval import check_inputs, sha256
+
+    source = tmp_path / "case.json"
+    source.write_text('{"text": "ราคาตั๋ว"}', encoding="utf-8")
+    plan = {"text": "ราคาตั๋ว", "inputs_sha256": {str(source): sha256(source)}}
+    (tmp_path / "plan.json").write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+    read_text = Path.read_text
+
+    def ascii_default(path, encoding=None, **kwargs):
+        return read_text(path, encoding=encoding or "ascii", **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", ascii_default)
+    assert check_inputs(tmp_path) == plan
+    source.write_text("changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="Frozen input"):
+        check_inputs(tmp_path)
