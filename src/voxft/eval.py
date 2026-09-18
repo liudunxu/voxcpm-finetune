@@ -209,6 +209,8 @@ def seed_stability(items: list[dict]) -> dict:
 
 def _report_metrics(items: list[dict]) -> dict:
     """top-level 聚合 + by_lang；evaluate 与 merge_reports 共用，保证口径一致。"""
+    if any(item.get("review_only") for item in items):
+        raise ValueError("仅供试听的拼接音频不能作自动指标汇总")
     overall = _agg(items)
     by_lang = {lang: _agg([i for i in items if i["lang"] == lang])
                for lang in sorted({i["lang"] for i in items})}

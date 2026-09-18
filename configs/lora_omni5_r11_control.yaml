@@ -1,0 +1,30 @@
+pretrained_path: /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915
+train_manifest: /root/autodl-tmp/short_cue_ab_20260918/control/train.jsonl
+val_manifest: /root/autodl-tmp/short_cue_ab_20260918/validation.jsonl
+sample_rate: 16000
+out_sample_rate: 48000
+batch_size: 2
+grad_accum_steps: 8
+num_workers: 8
+num_iters: 322
+log_interval: 10
+valid_interval: 250
+save_interval: 250
+weight_decay: 0.01
+warmup_steps: 32
+max_batch_tokens: 8192
+max_grad_norm: 1.0
+learning_rate: 0.0001
+lora:
+  enable_lm: true
+  enable_dit: true
+  enable_proj: false
+  r: 64
+  alpha: 64
+  dropout: 0.05
+max_steps: 322
+save_path: /root/autodl-tmp/voxft_ckpt/lora_omni5_r11_control
+tensorboard: /root/autodl-tmp/voxft_ckpt/lora_omni5_r11_control/logs
+lambdas:
+  loss/diff: 1.0
+  loss/stop: 1.0

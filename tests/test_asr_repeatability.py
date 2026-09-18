@@ -82,3 +82,45 @@ def test_alignment_changes_only_word_timestamps_and_preserves_originals(monkeypa
     assert source.read_bytes() == original
     with pytest.raises(FileExistsError):
         module.align_vi(tmp_path)
+
+
+def test_random_controls_keep_frozen_selection_and_reject_missing_strata(monkeypatch, tmp_path):
+    import soundfile
+
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    monkeypatch.syspath_prepend(str(scripts))
+    spec = importlib.util.spec_from_file_location("asr_controls", scripts / "asr_repeatability.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    (tmp_path / "done").touch()
+    selection = tmp_path / "diagnostic_sample/plan.json"
+    selection.parent.mkdir()
+    audio = tmp_path / "test.wav"
+    audio.touch()
+    rows = [{"case_id": f"{lang}_{ref}", "lang": lang, "ref_lang": ref, "seed": 42,
+             "text": "unchanged", "wav": str(audio), "cer": 0.9}
+            for lang in ("th", "tl", "vi", "id", "ms") for ref in ("zh", "en", "tl")]
+    controls = [{key: row[key] for key in ("case_id", "seed")} for row in reversed(rows)]
+    hashes = {}
+    for model in ("base", "r8"):
+        source = tmp_path / f"{model}_report.json"
+        source.write_text(model)
+        hashes[model] = module.sha256(source)
+    plan = {"samples": {"random_control": controls, "diagnostic": controls[:1]},
+            "source_reports_sha256": hashes}
+    selection.write_text(json.dumps(plan))
+    originals = selection.read_bytes()
+    monkeypatch.setattr(soundfile, "info", lambda path: SimpleNamespace(duration=12.0))
+    index = {(row["case_id"], row["seed"]): row for row in rows}
+    monkeypatch.setattr(module.evaluation, "_review_reports", lambda *args: (
+        {who: {"asr_model": "large-v3"} for who in ("a", "b")},
+        {who: index for who in ("a", "b")}))
+    result = module.prepare(tmp_path, random_controls=True)
+    assert result["sample_group"] == "random_control" and len(result["samples"]) == 30
+    assert [row["case_id"] for row in result["samples"]] == [row["case_id"] for row in controls] * 2
+    assert selection.read_bytes() == originals
+    assert all(row["source_audio_sec"] == 12 for row in result["samples"])
+    plan["samples"]["random_control"][-1] = controls[0]
+    selection.write_text(json.dumps(plan))
+    with pytest.raises(ValueError, match="15 target/ref-language"):
+        module.prepare(tmp_path, random_controls=True)

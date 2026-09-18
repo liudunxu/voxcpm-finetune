@@ -1,0 +1,17 @@
+{
+  "gpus": 1,
+  "epochs": null,
+  "num_iters": 322,
+  "effective_batch": 16,
+  "train_manifest": "/root/autodl-tmp/short_cue_ab_20260918/control/train.jsonl",
+  "train_samples": 5164,
+  "langs": {
+    "en": 262,
+    "id": 972,
+    "ms": 668,
+    "th": 1091,
+    "tl": 583,
+    "vi": 1085,
+    "zh": 503
+  }
+}

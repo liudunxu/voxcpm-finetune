@@ -1,4 +1,4 @@
-"""Compare default and zero-temperature ASR on six frozen WAVs; never regenerate TTS."""
+"""Compare default and zero-temperature ASR on frozen WAVs; never regenerate TTS."""
 import argparse
 from dataclasses import asdict
 from importlib.metadata import version
@@ -47,16 +47,27 @@ def summarize(items, samples):
     return summaries
 
 
-def prepare(work):
+def prepare(work, random_controls=False):
+    import soundfile
+
     if not (work / "done").is_file():
         raise ValueError("Wait for the original evaluation to finish")
-    previous = json.loads((work / "diagnostic_sample/plan.json").read_text())
-    selected = [row for row in previous["samples"]["diagnostic"]
-                if any(reason["metric"] == "cer" for reason in row["reasons"])][:3]
-    if len(selected) != 3:
+    selection_path = work / "diagnostic_sample/plan.json"
+    previous = json.loads(selection_path.read_text())
+    selected = (previous["samples"]["random_control"] if random_controls else
+                [row for row in previous["samples"]["diagnostic"]
+                 if any(reason["metric"] == "cer" for reason in row["reasons"])][:3])
+    if not random_controls and len(selected) != 3:
         raise ValueError("Expected three frozen CER diagnostic cases")
     reports, indices = evaluation._review_reports(str(work / "base_report.json"),
                                                  str(work / "r8_report.json"))
+    if random_controls:
+        strata = {(indices["a"][row["case_id"], row["seed"]]["lang"],
+                   indices["a"][row["case_id"], row["seed"]]["ref_lang"]) for row in selected}
+        if (len(selected) != 15 or any(row["seed"] != 42 for row in selected)
+                or strata != {(lang, ref) for lang in ("th", "tl", "vi", "id", "ms")
+                              for ref in ("zh", "en", "tl")}):
+            raise ValueError("Expected the frozen 15 target/ref-language controls at seed42")
     samples = []
     for who, model in (("a", "base"), ("b", "r8")):
         path = work / f"{model}_report.json"
@@ -67,13 +78,19 @@ def prepare(work):
         for selection in selected:
             row = indices[who][selection["case_id"], selection["seed"]]
             samples.append({
-                **{key: row[key] for key in ("case_id", "seed", "lang", "text", "wav")},
+                **{key: row[key] for key in ("case_id", "seed", "lang", "ref_lang", "text", "wav")},
                 "model": model, "original_cer": row["cer"], "audio_sha256": sha256(row["wav"]),
+                "source_audio_sec": soundfile.info(row["wav"]).duration,
             })
     return {
         "samples": samples, "profiles": PROFILES, "repeats": 3,
         "source_reports_sha256": previous["source_reports_sha256"],
-        "note": "Six outcome-selected WAVs, not a random quality sample. Same model/VAD/language; "
+        "selection_plan_sha256": sha256(selection_path),
+        "sample_group": "random_control" if random_controls else "diagnostic",
+        "note": ("Thirty WAVs from the prior frozen metadata-only controls; no reselection or "
+                 "diagnostic-overlap exclusion. " if random_controls else
+                 "Six outcome-selected WAVs, not a random quality sample. ") +
+                "Same model/VAD/language; "
                 "only temperature differs. Repeat order forward/reverse/forward. No TTS, "
                 "no training, no score replacement or automatic ASR-default change. "
                 "Three identical decodes do not establish accuracy or universal determinism. "
@@ -82,14 +99,15 @@ def prepare(work):
     }
 
 
-def run(work):
+def run(work, random_controls=False):
     from faster_whisper import WhisperModel
     from faster_whisper.utils import download_model
 
-    output = work / "asr_repeatability"
+    output = work / ("asr_repeatability_random" if random_controls else "asr_repeatability")
     if output.exists():
         raise FileExistsError(output)
-    plan = prepare(work)
+    plan = prepare(work, random_controls)
+    total = len(plan["samples"]) * len(PROFILES) * plan["repeats"]
     if os.environ.get("VOXFT_WHISPER_MODEL_LARGE"):
         raise ValueError("Custom ASR override needs a separate frozen model audit")
     model_path = Path(download_model("large-v3", local_files_only=True))
@@ -109,7 +127,7 @@ def run(work):
     result = {"items": [], "complete": False, "plan_sha256": sha256(output / "plan.json")}
     try:
         write_json(output / "status.json", {"stage": "loading_asr", "time": time.time()})
-        print("Frozen six WAVs; loading cached ASR for 36 decodes", flush=True)
+        print(f"Frozen {len(plan['samples'])} WAVs; loading cached ASR for {total} decodes", flush=True)
         whisper = _whisper_model("th", str(model_path))
         result["device"] = getattr(whisper.model, "device", None)
         result["compute_type"] = getattr(whisper.model, "compute_type", None)
@@ -128,6 +146,7 @@ def run(work):
                                                          vad_filter=True, **overrides)
                     segments = [asdict(segment) for segment in segments]
                     hyp = " ".join(segment["text"].strip() for segment in segments)
+                    end = max((segment["end"] for segment in segments), default=0)
                     result["items"].append({
                         **sample, "profile": profile, "repeat": repeat, "hyp": hyp, "segments": segments,
                         "cer": round(evaluation._error_rate(evaluation._norm(hyp),
@@ -135,10 +154,13 @@ def run(work):
                         "transcription_options": asdict(info.transcription_options),
                         "vad_options": asdict(info.vad_options) if info.vad_options is not None else None,
                         "duration_after_vad": info.duration_after_vad,
+                        "detected_language": info.language, "language_probability": info.language_probability,
+                        "asr_end_sec": end,
+                        "timestamp_overrun_sec": round(max(0, end - sample["source_audio_sec"]), 6),
                         "seconds": round(time.monotonic() - started, 3),
                     })
                     write_json(output / "results.json", result)
-                    print(f"ASR repeatability {len(result['items'])}/36 {profile} "
+                    print(f"ASR repeatability {len(result['items'])}/{total} {profile} "
                           f"{sample['model']} {sample['case_id']} repeat={repeat}", flush=True)
         for path, expected in {**plan["source_sha256"], **plan["asr_model_sha256"]}.items():
             if sha256(path) != expected:
@@ -210,6 +232,11 @@ def align_vi(work):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, default=CHECKPOINT_DIR.parent / "holdout_eval_20260917")
-    parser.add_argument("--align-vi", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--align-vi", action="store_true")
+    mode.add_argument("--random-controls", action="store_true")
     args = parser.parse_args()
-    (align_vi if args.align_vi else run)(args.work)
+    if args.align_vi:
+        align_vi(args.work)
+    else:
+        run(args.work, args.random_controls)
