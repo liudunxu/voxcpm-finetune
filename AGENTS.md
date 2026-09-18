@@ -207,6 +207,15 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/�
 - **本轮上下游工程保护已本地回归，不冒充模型收益。** DIS已保护低置信/文本不匹配的尾裁，要求独立边缘发声事件；成功裁边后更新时长和时间坐标、保留原WAV、拒用旧不可信裁切缓存。OmniVoice与DIS已补时间戳置信标记全链路。自动cue合并统一守角色ID/换人边界，译文拼接不按中文源文重复造标点；E2E manifest保留解析后的稳定角色ID。自动选音色已有身份/混声/人工选择保护，本轮未改阈值。DIS功能回归771项、OmniVoice33项通过，另2项DIS既有代码规范检查失败已在HEAD复现；详见主调方 `docs/reviews/2026-09-18-salju-chain-regression.md`。尚未部署或听评，也未证明旧视频经由此次修复的E2E构建器；句中加词、原声节奏、弱参考仍待对照，不能据此宣称r8已解决基座投诉。
 - **收到合成成片不等于拿到可训练的drama原声。** 本视频是模型输出，不能抽它补真人训练语料、伪造同人ref或混入验证集；原声/原始take目前未取得。可先登记带时间点和反馈来源的开发坏例，保留“语言质量未全面验证”；拿到可追溯原始素材后再做重放或数据实验，不恢复“必须交drama才能推进”的旧阻塞。
 
+## SRT语言与ID/MY韵律反馈（2026-09-18）
+
+- 用户已切生产r8；旧Salju反馈视频为未微调基座，不可反推当前r8口音。ID“像MY”先区分字幕误判/译文、参考音与prompt对应、后处理和模型韵律，不能直接开训。
+- DIS本地已对EN/ID/MS/TL/VI/PT高置信上传SRT增加对比复核和原文引文验证；不确定不免翻译，字幕源语与音频源语分开。PH→tl、MY→ms是应用别名约定，不是新增模型语言槽。OmniVoice语言字段用于TN/QC，模型生成不接收语种条件，不能声称改language参数即修好口音。
+- 英语源/目标生产配置补齐不改变本项目五语种目标；en仍作既有回放/评测。新增 `eval_cases/id_ms_prosody_probe.jsonl` 是10条待验证文本，不是已确认失败集；共享ID/MS短句只能作合成条件对照，不充当字幕分类真值。
+- 先冻结实际投诉输入、同文本/ref/seed基座/r8对照，再决定ID数据质量或份额单变量LoRA实验，不同时改模型、参考人、CFG与文本。参考语种对照若换了说话人须披露混杂；没有drama仍可离线实验。母语口音未评保持未验证，CER或Whisper的id/ms标签不能作为口音门禁。本轮未开GPU、未训练、未部署。
+- 跨仓实现、回归结果与剩余非CJK字幕/prompt对应风险见DIS
+  `docs/reviews/2026-09-18-language-detection-and-id-prosody.md`；下一步以 `TODO.md` 新反馈专题为准。
+
 ## 环境
 - Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检 + PyAV 视频解码）。
 - torch 平台分流（见 pyproject `[tool.uv.sources]`）：macOS → PyPI 轮子（CPU/MPS）；Linux → pytorch-cu124 index（CUDA 12.4）。训练只在 Linux GPU 机执行。

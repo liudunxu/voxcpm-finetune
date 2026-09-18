@@ -1,0 +1,10 @@
+{"case_id":"id_ms_shared_id","lang":"id","text":"Saya tidak tahu.","note":"2026-09-18 ID像MY反馈的待验证诊断。共享短句，lang是合成请求条件，不是SRT分类真值；不可仅据此判口音。"}
+{"case_id":"id_ms_help","lang":"id","text":"Tolong aku.","note":"旧Salju反馈出现的文本；本次只作超短句韵律诊断，未证明r8复现旧视频异常。"}
+{"case_id":"id_ms_colloquial","lang":"id","text":"Aku nggak tahu kenapa kamu datang terlambat.","note":"手工构造的ID口语与从句待验证样本；非实际投诉原句，非母语验收真值。"}
+{"case_id":"id_ms_negation","lang":"id","text":"Aku belum menandatangani kontrak itu, jadi jangan pergi dulu.","note":"手工构造，检查否定/体标记与谓语、从句边界；不得为时长删词。"}
+{"case_id":"id_ms_questions","lang":"id","text":"Kamu mau ke mana? Kenapa kamu tidak menungguku?","note":"手工构造，检查双问句韵律；裸合成与cue合并/变速后音频分开评估。"}
+{"case_id":"id_ms_formal","lang":"id","text":"Bu, saya belum menerima surat yang Ibu kirim kemarin.","note":"手工构造的ID敬称语体对照，不强制改成Jakarta口语；自然度待合格评审。"}
+{"case_id":"id_ms_shared_ms","lang":"ms","text":"Saya tidak tahu.","note":"与id_ms_shared_id同字文本的MS请求条件；模型无language槽，同ref/seed未必出现任何输出差异。不是可强行判别的分类样本。"}
+{"case_id":"id_ms_malay_control","lang":"ms","text":"Saya belum menerima surat yang puan hantar semalam.","note":"手工构造的MS语体对照，待验证；不用于声称ID问题已归因于MS训练份额。"}
+{"case_id":"id_ms_tagalog_control","lang":"tl","text":"Hindi ko alam kung nasaan siya.","note":"手工构造的PH/TL诊断对照；不代表全TL回归或语言自然度验收。"}
+{"case_id":"id_ms_english_control","lang":"en","text":"I don't know where he went.","note":"英语回放/源语兼容对照；不把en加入第六个联合微调目标。"}
