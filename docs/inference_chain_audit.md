@@ -3,7 +3,7 @@
 ## 范围与结论
 
 初始只读检查以下两个本机checkout；下列HEAD/干净状态与源码哈希为审计起点。
-后续OmniVoice本机最小改动见「最终采样参数追踪」，未部署；DIS仍未修改。
+后续OmniVoice最小改动见「最终采样参数追踪」「数字词化透传修复」，均已push、未部署；DIS仍未修改。
 
 - OmniVoice：`/Users/dunxu.liu/workspace/others/OmniVoice`，
   HEAD `b92fb28f894071f0bf06ffe1e13bab4654c30a28`，工作区干净。
@@ -81,7 +81,7 @@
   DIS原有`server_generation`保留完整`adaptive_params`，无需改代码；已直接执行其原始
   字典表达式验证新字段保留、旧响应不补值。此检查不是在线端到端请求。
 - 不改变CFG、步数、seed策略、候选评分、重试预算或缓存键，不加载模型、不改r8。
-  `number_verbalization`透传缺口与模型权重身份仍未解决，不混入本次记录改动。
+  当时没有把`number_verbalization`透传或模型身份混入记录改动；前者后续单独修复，后者仍未验证。
 
 验证：
 
@@ -95,8 +95,35 @@ OmniVoice改动限定`api.py`、两份既有测试和接口文档。
 2026-09-18按用户要求提交并push到`origin/master`：`30211d9`；
 整合远端已有的两条ASR提交，没有覆盖或强推。整合后相关66项测试通过。
 该仓库master push触发既有GPU镜像构建流程，**不等于部署到GPU服务或已在线验收**；
-没有启动/替换实例，生产指定模型仍为r8。数字开关透传缺口留作随后单独修复。
+没有启动/替换实例，生产指定模型仍为r8。数字开关透传随后单独提交，见下一节。
 本机补丁与测试记录归档至`inference_tracking/`，只作证据备份，不安装到微调服务。
+
+## 数字词化透传修复：26829e1，已push、未部署
+
+2026-09-18先完成两仓已有改动的push，再继续该已定位契约缺口。
+根因不止HTTP `gen_kwargs`丢字段：prompt缓存构建也没有传数字覆盖值，
+voice注册表的prompt缓存参数亦未区分该开关。只补HTTP一行会留下续写路径错误。
+
+- 请求`number_verbalization`按既有布尔解析统一为true/false/null，透传目标文本与续写prompt；
+  缓存与非缓存生成走同一normalizer约定，切换开关不会复用另一种数字读法的prompt缓存。
+- 只影响`normalize=true`下vi/th/id/ms的现有数字词化开关；省略/null仍沿用normalizer配置，
+  zh/en/tl规则不改。`spoken_text_normalized=true`仍不再改目标文本，不能撤销DIS已做的词化；
+  prompt仍正常归一化。`normalize=false`不执行该步骤。
+- 结果缓存算法版本8→9，隔离修复前忽略开关生成的音频；没有删除旧产物或更换seed作伪对照。
+- 被接纳take的`effective_generation`追加`number_verbalization`与`spoken_text_normalized`；
+  null表示沿用normalizer默认，不是false，也不冒充实际词化执行证明。
+- 不改变默认CFG/步数/seed/候选选择，不改DIS，不加载真实模型或启动训练。
+
+先补失败回归，修复前已实测vi/th显式true被丢弃、输出仍是原始数字。
+修复后17项定向检查通过；扩展合成/locale/身份/缓存/契约集**223项通过**。
+其中16种组合覆盖四语种、缓存/非缓存与两种默认配置，每组覆盖true/false/字符串false/null/省略，
+核对目标/续写实际模型输入、开关回显、prompt缓存切换与结果缓存复用。
+使用真实normalizer与模型替身，不是GPU音质、数字发音或母语验收。
+
+修复已到OmniVoice `origin/master`，提交`26829e1`。既有镜像构建流程会触发，
+没有部署到Vast/AutoDL服务，也没有核验线上实际权重或效果；生产指定基线保持r8。
+后续若验证线上数字A/B，仍须先对齐实际部署、是否上游已词化、同次输入/ref和采样参数，
+不能仅传此开关便宣称完成端到端声音对照。
 
 ## 旧归档不能拼成D03单变量对照
 

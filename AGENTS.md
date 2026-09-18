@@ -30,7 +30,12 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/�
   推理身份/在线追踪是独立配套，不阻塞离线实验；旧“不启动r11”的状态以本条和TODO顶部为准。
 - **runs.md已补齐r10/r11（2026-09-18）**：来源/许可/条数/小时、配比/超参/步数/损失、
   分语种CER/WER/疑似漏尾及不晋级结论均已记录；历史r9及更早记录中的过时门槛/下一步不覆盖当前约定。
-  下一步仅修已定位的数字词化HTTP透传契约，不追加训练、不自动部署。
+  与全部本轮代码/测试/配置一起push到`origin/main`：`4d8e092`；不含密钥、权重或音频。
+- **数字词化契约修复已push，未部署**：OmniVoice `26829e1`补齐`number_verbalization`的
+  HTTP→目标/续写normalizer→prompt缓存参数→最终take记录，结果缓存版本8→9隔离旧错误结果。
+  省略/null沿用normalizer默认；仅影响normalize开启时vi/th/id/ms既有开关，不改zh/en/tl规则，
+  不撤销DIS已经词化的目标文本。修前失败已复现，修后17项定向、223项扩展检查通过；
+  是模型替身/真实normalizer的契约测试，不是GPU质量或母语验收。生产保持r8，不追加训练。
 - **最终采样参数追踪已在OmniVoice提交推送，未部署**：`30211d9`已到`origin/master`，
   保留远端两条ASR提交，整合后相关66项测试通过；master push会触发既有镜像构建，不代表实例部署。
   新增响应
@@ -54,7 +59,8 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/�
 - **当前推理源码口径不能再沿用旧归档推断**：两仓只读核查见 `docs/inference_chain_audit.md`。
   DIS已对vi/th/id/ms数字词化；首轮请求10步带auto，服务端可能升步，不能当实际10步；
   自适应CFG只降不升；可能使用前一条成功take续写，不是始终reference-only。
-  HTTP遗漏`number_verbalization`透传仍未修；最终参数已新增独立字段，旧回显保留兼容，尚未部署。
+  HTTP的`number_verbalization`透传及prompt缓存已修复并push（见上条），尚未部署；
+  最终参数使用新增独立字段，旧回显保留兼容。
   当前checkout不等于线上版本，HF已发布r8不证明实例实际加载r8；不据此改本项目20步或冻结case。
 - **离线声学反馈已归档**：试听包 `dual-4883215cdc38` 的20条反馈为16条无明显异常、
   1条明确异常、3条不确定。**D03-B = r8 / TH / seed44，「模糊」**，同组base无明显异常；
