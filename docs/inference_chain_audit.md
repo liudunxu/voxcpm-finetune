@@ -3,7 +3,9 @@
 ## 范围与结论
 
 初始只读检查以下两个本机checkout；下列HEAD/干净状态与源码哈希为审计起点。
-后续OmniVoice最小改动见「最终采样参数追踪」「数字词化透传修复」，均已push、未部署；DIS仍未修改。
+后续OmniVoice最小改动见「最终采样参数追踪」「数字词化透传修复」，均已push、未部署。
+随后数字输入实测发现重复币种词，已在DIS/OmniVoice两侧本机修复并启动独立r8诊断；
+见`numeric_probe_20260918.md`，不把初始只读状态当当前状态。
 
 - OmniVoice：`/Users/dunxu.liu/workspace/others/OmniVoice`，
   HEAD `b92fb28f894071f0bf06ffe1e13bab4654c30a28`，工作区干净。
