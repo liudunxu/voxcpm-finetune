@@ -197,6 +197,16 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/�
   `duration_inflation` 的时长与CER必须同取非数字样本（新字段 `mean_audio_sec_non_numeric`）；
   旧报告先 `eval --summarize` 另存重算，缺字段是未评不是通过。121项测试已通过。
 
+## 基座成片反馈的归因边界（2026-09-18，Salju / zh→id）
+
+- **新增反馈先排上下游，不自动重开微调。** 用户提供的 `id-11110136-6v3u0-mt6h0lcc9rlv7b.mp4` 渲染于 `2026-09-16T08:18:20Z`（北京时间16:18:20），用户说明及meta配置为基座 `openbmb/VoxCPM2`，没有实际权重SHA。本地证据在 `../dubbing_intelligence_service/work/qc_review_20260918_salju/`；主调方和OmniVoice的 `AGENTS.md` 已分别记录链路/服务端诊断。当前checkout、HF默认模型地址与已push不代表旧产物或线上实例已用r8，不把此次反馈算作r8回归失败。
+- **已证实后处理裁切，尚未逐条证实末音节被哪层删掉。** 本片18条TTS中10条被DIS `clone_take_edge_hygiene` 裁边，cue21「Tolong aku.」服务端1.35s → DIS 0.78s；cue10（37–40秒）经1.5倍变速仍超窗，最终强制containment且 `content_fit.complete=false`。词时间戳来自Whisper、warning为空不等于可靠强制对齐；RMS有能量也不能证明是多余非词发声。先比较同take服务端输出/客户端裁边/变速/最终segment，不能把渲染删尾直接写成模型生成漏尾或训练数据问题。
+- **“同角色音色不稳”先验证身份链是否真的同一条。** cue10的Salju有 `c_7dda53`、锚点cue15；cue13虽也显示Salju，却是另一个speaker key、缺character_id、锚点cue24，并带内心独白控制。cue12「Botolnya saja jutaan.」在meta中是Kakak Salju，还换成了reference-only。不同ref/身份/模式不是模型A/B；先核对原声和绑定，不能仅按同名强并，也不凭这组现象推定LoRA克隆能力不足。
+- **覆盖率、ASR与local反馈各守边界。** cue15的ASR已记两处额外 `ah`，仍因18→20 token未越长句过读门而pass，说明coverage=1不排除句中加词；重复逗号是已见输入问题，不是已证实的插词原因。cue20末尾比cue窗早1.256s不证明整体起点提前同样时长。静电音/中文口音按local反馈保留，不以F0、相似度或ASR语言替代语言听评，更不能扩大成五语种验收结论。
+- **先修可定位链路，再决定是否需要训练。** 待办顺序：裁切可信度与裁前裁后证据 → 角色ID/ref一致性 → 插词及多分句节奏诊断 → 同条件base/r8局部对照。低SNR自动denoise已请求，需核对服务端是否实际执行；keep-best带severe出片不算质量通过。只有问题在冻结输入/有效推理参数且排除上述混淆后稳定复现，才立新的单变量训练假设；本节不代表已重渲或听评改善，不变更r8或离线冻结参数，不自动启动GPU任务。
+- **本轮上下游工程保护已本地回归，不冒充模型收益。** DIS已保护低置信/文本不匹配的尾裁，要求独立边缘发声事件；成功裁边后更新时长和时间坐标、保留原WAV、拒用旧不可信裁切缓存。OmniVoice与DIS已补时间戳置信标记全链路。自动cue合并统一守角色ID/换人边界，译文拼接不按中文源文重复造标点；E2E manifest保留解析后的稳定角色ID。自动选音色已有身份/混声/人工选择保护，本轮未改阈值。DIS功能回归771项、OmniVoice33项通过，另2项DIS既有代码规范检查失败已在HEAD复现；详见主调方 `docs/reviews/2026-09-18-salju-chain-regression.md`。尚未部署或听评，也未证明旧视频经由此次修复的E2E构建器；句中加词、原声节奏、弱参考仍待对照，不能据此宣称r8已解决基座投诉。
+- **收到合成成片不等于拿到可训练的drama原声。** 本视频是模型输出，不能抽它补真人训练语料、伪造同人ref或混入验证集；原声/原始take目前未取得。可先登记带时间点和反馈来源的开发坏例，保留“语言质量未全面验证”；拿到可追溯原始素材后再做重放或数据实验，不恢复“必须交drama才能推进”的旧阻塞。
+
 ## 环境
 - Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检 + PyAV 视频解码）。
 - torch 平台分流（见 pyproject `[tool.uv.sources]`）：macOS → PyPI 轮子（CPU/MPS）；Linux → pytorch-cu124 index（CUDA 12.4）。训练只在 Linux GPU 机执行。
