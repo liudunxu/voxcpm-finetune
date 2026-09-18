@@ -10,6 +10,10 @@
 重复币种修复提交DIS `1a1e309`、OmniVoice `ac1e51d`尚未push或部署；
 20/20非数字控制WAV一致，VI有局部改善信号，MS受币种转写与共同评分边界混淆，
 不能据此确认退化或正确发音。不是HTTP端到端或完整语言验收，不改指定r8或追加训练。
+后续币种/分隔符边界修复也已本地提交：DIS `9a961b2`、OmniVoice `88d9dd2`，
+均未push或部署。两侧原21项输入各19失败，修后全过；扩展198/254项通过。
+旧29条payload只有`id_digit_3`停止局部词化`06.15`，不是正确时钟发音的证明；
+原125条报告/音频及冻结评分器未改，没有重评分。工程与数据证据见同一诊断文档。
 
 - OmniVoice：`/Users/dunxu.liu/workspace/others/OmniVoice`，
   HEAD `b92fb28f894071f0bf06ffe1e13bab4654c30a28`，工作区干净。
