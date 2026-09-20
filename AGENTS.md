@@ -216,6 +216,46 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/�
 - 跨仓实现、回归结果与剩余非CJK字幕/prompt对应风险见DIS
   `docs/reviews/2026-09-18-language-detection-and-id-prosody.md`；下一步以 `TODO.md` 新反馈专题为准。
 
+## 2026-09-20成片：1:50同角色音色差异
+
+- 新视频 `mtbtg7qhj9j529` 内嵌时间 `2026-09-20T01:56:08Z`；用户报告1:50附近音色稍有不同，
+  对应cue22内部，不是已确认的换cue点。cue19/22/23同ID/ref签名；cue22重试同时换seed/CFG/步数，
+  仍带severe并由keep-best出片，不能单独归因某参数或立刻归因r8训练不足。
+- **提前判退但最终可能出片的候选也要有完整观测。** 已CPU复现DIS长句
+  `output_vocalization` 提前返回，未调用后面的pitch检查；cue22缺 `local_pitch`，
+  角色音高报告随之漏掉。缺失不是稳定通过，服务器其他F0估计不可直接混入本地口径。
+- **本轮DIS补测仅用本地音区算法，不额外触发远端性别确认。** keep-best评分/快照前和
+  缓存take后处理入口补观测，结果（含测不出）复用，沿用8秒上限；原问题与重试预算不变。
+  本机新take/已有参考约149ms，均未测约296ms，复用约0.007ms；不外推Linux或E2E时延。
+  共用HTTP前另拦空/全声道峰值≤−120dBFS的条件音频，按内容缓存、不误杀弱/反相双声道，
+  未知解码交原服务端验证。识别/ASR/LLM无新增请求，不改r8/采样档位，不立即开训。
+- 元数据 `voxcpm.model` 是DIS客户端配置，不是加载证明。本次只读查询服务返回已加载微调仓库；
+  只有当前地址/加载状态，仍无渲染时权重SHA或部署commit。新尾裁保护/有效参数有产物标记，
+  不外推全部最新代码部署。新旧视频不是同素材，不按cue编号作A/B。
+- 详情 `docs/video_review_20260920.md`；证据/用户原话/混音上下文在ignored
+  `checkpoints/video_review_20260920/`，开发文本在 `eval_cases/production_timbre_regression_20260920.jsonl`。
+  原始ref/take未取得，不拿成片混音做训练或冒充裸输出；未重合成、未训练、未部署。
+  现有`CUE_AUDIO_BUNDLE`包含已采纳raw/segment，不包含全部被拒候选/ref；
+  本机无该包描述符或SPEX查询配置，取回仍待完成，不猜HTTP路径。
+
+## 2026-09-20新增ID/VN：优先修链路，不立即加训
+
+- ID `mtbup5vzqs5d4a`末句**已有译文**，超读take最终双ASR失败才保留原声；
+  共用分类漏`extraneous tail speech`使超读候选少罚400分，冻结QC已复现并修复。
+  较完整候选仍有发声风险，不能承诺换排名就能通过。37秒用户男变女反馈保持；
+  采纳take性别未知，被拒重试才有高置信female标签，短弱ref/无合格锚点不等于LoRA失败。
+- VN `mtbv0gkefabl3c`14条全TTS、无硬裁记录，但4条带severe、7条待复核。
+  14.68–19.34秒共用弱ref，65.16秒先拒音区冲突锚点又借回同speaker源片；
+  DIS弱参考救援已补身份风险保护，不将F0判别当真实性别或声学验收。
+- **锚点缓存不能早于元数据/分句/安全窗准备。** DIS原预处理读到目标SRT和临时speaker，
+  没有源文/风险标记；已后移既有三次预处理。控制指令160字符预算同时改为完整短语。
+  VN音频源语配置en与12条中文source_text需核对，不能直接强改zh；
+  meta参考文字错误也不证明VoxCPM真实prompt错配。
+- 本轮新增旧代码6失败/2健康对照通过，修后通过；完整证据/回归见
+  `docs/video_review_20260920_id_vn.md`及DIS同日ID/VN报告。视频/meta留ignored目录，
+  不作真人训练语料。没有原始ref/take/任务音频包描述符，不猜内部HTTP路径或任意ref重抽。
+  保留r8，不加重试/ASR预算、不改全局阈值、不部署；语言质量未验证。
+
 ## 环境
 - Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检 + PyAV 视频解码）。
 - torch 平台分流（见 pyproject `[tool.uv.sources]`）：macOS → PyPI 轮子（CPU/MPS）；Linux → pytorch-cu124 index（CUDA 12.4）。训练只在 Linux GPU 机执行。
