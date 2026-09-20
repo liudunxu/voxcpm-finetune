@@ -4,6 +4,39 @@
 VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/马来语高质量语料的下载与加工、跨语言（中文→目标语言）混合微调、LoRA/全量训练管理、wandb 监控、LoRA merge、HuggingFace 同步。**目标是五语种（th/tl/vi/id/ms）联合微调：一个 LoRA 同时提升这几种语言的配音质量，但验收必须分语种做**。Gradio 页面端口 **6006**。
 
 ## 当前执行边界（2026-09-17 用户更正）
+- **2026-09-20调用方最终候选/裁后证据/缩译发布已push，未执行部署**：
+  DIS功能提交`e5377d6`，保留远端识别修复`2ba92b7`后，以`07d3c45`
+  推至`origin/feat/recognition-generation-mainline`；合并后551项回归通过，无强推。
+  DIS恢复仍存的源身份与稀疏窗复核，风险bool独立挡干净缓存；
+  最终文本失败才回看最多一条既有候选，正常cue不追加ASR/TTS，不增加生成预算。
+  salvage与edge hygiene共用可信全文/词边界保护，保留原WAV/QC、失效旧整take指标；
+  原severe仍待核验，裁后必须最终文本QC，不把有能量等同有人声或通过。
+  字幕封装移到既有refit结束后只执行一次，任务审计记录跳过/失败/完成及残留，
+  成功发布时透传`result.refit`，重渲失败仍走task error；
+  不增加缩译轮数或改0.15秒门。21新回归旧代码失败，修后扩展531通过；
+  仅本地记账开销约0.0004ms/cue，不是生产E2E。旧VN锁定脚本不自动修改。
+  真实早期候选/ref未取得，不拿成片混音伪造因果A/B、不宣称听感改善，保持r8、不训练。
+  详情见DIS `docs/reviews/2026-09-20-selected-take-and-refit.md`及本项目对应TH/VN复盘后记。
+- **2026-09-20 TH新片`mtc8im7`已见最佳TTS策略标记，不等于质量通过**：
+  ID CDN的实际目标是th，与旧TH片15条脚本一致；23秒cue3从失败原声回退变为保留1.74秒TTS，
+  `critical_mismatch/fail`及`batch_best_effort_retained`并存。最终重试已换seed，不再是同seed伪重试。
+  cue8/11的18.8/17.84秒原take被salvage成0.94/0.8秒，原severe/F0不冒充裁后音质；
+  无content_fit硬裁不等于没有salvage裁切。cue6脏参考、cue10内容/refit仍待核验。
+  2次局部ASR不是母语结论或全TH后端选型证据；先核对已有候选/音频，不改长度门或开训。
+  详见`docs/video_review_20260920_th_mtc8im7.md`；实际渲染权重SHA仍未知。
+- **2026-09-20 VN新片`mtc7xi1`已复盘，先修源时间轴/参考，不开训**：
+  14条源译文和时间窗沿用审核27/90旧片；cue2不再硬裁，cue13出现
+  `unverified_sparse_source_window`，但65.16–73.32秒长源窗未改，保护不等于自动对齐。
+  新片该段3次无提示ASR均为空，不能当静音、正确发音或母语通过证据；旧源词边界约73秒。
+  cue12的speaker_assignment_risk仍true但复核原因被清空，当前清理逻辑可复现此类漏标；
+  cue4/14仍refit，后续取已有take/voice-only及新脚本局部修正，不扩ASR网格或微调。
+  详情`docs/video_review_20260920_vn_mtc7xi1.md`；没有本轮新TTS、训练、部署或线上编辑。
+- **2026-09-20新增四地区短剧来源线索，尚非可训练语料**：用户提供ID/VN/TH/PH的
+  YouTube剧集链接，唯一登记处为`docs/corpus_sourcing.md`，对应候选语言id/vi/th/tl；
+  实际音轨语言、真人/合成来源、训练授权及质量均未核验，本批无MS来源。
+  本轮只记录，不下载/入库/加训，保持r8。后续需要微调时先核验授权与小样本质量，
+  仅在远端下载，按原音频/session/已知身份隔离split，不把角色名当配音员身份；
+  现有同源ref配对限制不变。旧“没有drama”现应理解为尚无已核验可训练素材，不再重复索要来源链接。
 - **2026-09-20相关修复已push，未部署**：DIS功能提交`79b7af4`，保留远端6条
   识别/发声事件提交后，以合并提交`3dc9477`推至`origin/feat/recognition-generation-mainline`；
   合并后343项相关回归通过，无强推。包含最佳TTS不回原声、真实重试/择优及稀疏源时间窗保护。
@@ -212,7 +245,7 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/�
   **该限制已于18:38撤销**；恢复原CPU集合后约50秒推进到850条，不再照抄8核限制。
   调度与撤销记录分别为新任务的 `cpu_scheduling.json` / `cpu_scheduling_restore.json`；
   没改线程数、训练/推理参数或重启任务。GPU占用高不等于CPU并行调度已经优化。
-- **用户目前没有 drama 素材，也不能做五语种母语评审**；可确认爆音、金属感、异常娃娃音、明显音色跳变等声学 badcase，不确定可留空。不要再以交成片或完成母语评分阻塞离线实验。
+- **用户已有四地区短剧来源链接，但尚无已核验可训练素材，也不能做五语种母语评审**；可确认爆音、金属感、异常娃娃音、明显音色跳变等声学 badcase，不确定可留空。不要再以交成片或完成母语评分阻塞离线实验。
 - 当前优先级见 `TODO.md`：明确坏例定位 → 验收口径/稳定性 → r8 LoRA 强度 → CFG/步数/ref 单变量对照 → 现有单人录音切片配 ref 小实验。生产保持 r8，新路线未验收不自动升级。
 - **工程检查与语言验收分开**：用户只评明确异常；CER/WER/疑似漏尾等做分语种诊断。没有合适母语评审时，口音/语言自然度/情绪标「未验证」，不把自动分数或非母语听感写成完整验收通过。具体规则见 `docs/qc_gates.md`。
 - **drama 不是硬依赖，enable_proj=true 也不是必经步骤**。r9 同时改了源、gs2 份额、投影层和训练步数，只能否定当轮组合，不能判死全部 ref 路线。先保持投影关闭，数据有效后再单独对照。
@@ -483,7 +516,7 @@ OmniVoice 是 GPU 侧合成服务；配音编排在另一个仓库 `dubbing_inte
 - **万级转写必须能断点续跑**：每 300 条及退出时原子保存完整原清单（包括坏例、尚未处理的行），重跑跳过已转写行。WhisperModel.transcribe 不接受 `batched`；ndarray 输入先转 16k。推理异常必须中止，不可当语料坏例吞掉。`--max-items` 试跑不回写原清单
 - **数据源首选**：泰语 `thai_ser` 仅 impro / 审核后 `yodas_th`；Tagalog 自有真人 `drama_tl`；`filipino_emotion` 仅待审候选。`filswitch` 是新闻朗读，仅低比例补 Taglish 发音。越南语/印尼语表现力只有自建 `drama_vi` / `drama_id`，公开自然口语锚点首选 `gigaspeech2_vi/id`（Apache-2.0，**形态已核实可用，见下条**），`fleurs_*` 只当发音补充。马来语表现力同样只有自建 `drama_ms`，`fleurs_ms`（config `ms_my`）只当发音补充——**ms 的自然口语：yodas2_ms 已修复可下**（见下条②，YouTube 自发口语 + Sidon 降噪，CC-BY-3.0）——但口音必须抽听验证（可能是印尼内容互串）；自建 `drama_ms` 仍是表演档唯一解。中英文回放 `aishell3` / `fleurs_zh` / `fleurs_en` / 自备 `replay_en`。不能把朗读数据当去念稿感主力
 - **自然口语源可用性实测（本轮逐个撞过，别重复调研）**：① **`gigaspeech2` 只有 th/vi/id**（cardData configs 就这三个，ms/tl/fil 全 400），gated:auto 需在页面同意条款；**它的 `refs/convert/parquet` 分支不存在**，但 parquet 索引 API 照样返回 200 和一串 URL，`_resolve_parquet_ref` 解析后下载必 404——真实布局是 `data/<lang>/<split>.tar.gz`（**每条一个 wav，不是长音频+时间戳**，早先的担心不成立）+ 同名 `.tsv`（`id\t全大写文本`），已加 `kind="hf_tar"` 走 `_download_hf_tar`。**dev 分片约 1GB/语种（8-9h）就够，train 单片 vi 3.4GB×240 / th 6.6GB×193 / id 1.7GB×592**；tsv 全大写要靠 `Source.sentence_case` 转句首大写（`.lower()` 对越南语变音符号安全，代价是句内英文专有名词被小写）。实测时长分布 **p50 只有 4.2-6.2s、vi 有 77% 落在 3-8s**，是五语种里最贴近线上 cue 长度的现货。session 数是 YouTube 视频 ID（dev 分片 vi 30 个 / th 21 个 / id 52 个），已按它做 train/val 隔离；② **`yodas2_ms` 已修复可下（2026-09-15）**：早先「`refs/convert/parquet` 404 = 不可用」是路径错了——该仓库根本没有这个分支，真正的自动转换 parquet 走 **`/api/datasets/sarulab-speech/yodas2_sidon/parquet/<config>/train/<n>.parquet`** 端点（ms000 6 片、vi000 4 片、id000 5 片，每片 ≤500MB，实测 Range 206 可下），`_download_parquet` 已加 404→API URL 直链回退。⚠️ 转换出的 parquet 列是 WebDataset 原样成员（`flac`/`metadata.json`/`__key__`/`__url__`），不是 audio/text 列；全量是 WebDataset tar（vi000/id000 各约 335GB），试跑取 1-2 片 parquet 就够。ms 自然口语因此从零变为有现货（YouTube + Sidon 降噪 + ASR 文本，CC-BY-3.0 需署名）；③ **`cv22_*` 已修复复活（2026-09-15，th 实测下载 100 条成功）**：早先「流式路径失效」的真相是加载脚本把数据 URL 硬编码到 huggingface.co（远端直连不通），仓库本身完好、镜像 `raw/main/n_shards.json` 200。已改为新 `kind="cv22"`：绕开脚本，按镜像 tree API 布局直拉 `transcript/<lang>/<split>.tsv` + `audio/<lang>/<split>/*.tar`（48kHz mp3，libsndfile 直接解码），**`client_id` 写进 speaker+session；r9 起重新评估为账号级持久身份（非聚类猜测），`has_speaker=True`、标 speaker_verified 并参与 ref 配对——只做匿名分组，不识别真人（CV 条款禁止 determine identity 与再分发数据本身）**。规模（release_stats 核实）：**th validated 173h / 7973 人、条均 4.19s（正对短 cue 分布）**，id validated 33.5h / 639 人，vi 6.3h / 354 人，全 CC0；tl/fil/ms 依旧没有。**`client_id` 配 ref 的路重新通了**（聚类仅供审计的纪律不变）；④ `filipino_speech`（MIT，有 `speaker_id`）能下但**行过滤后产出率约 1%**（首个分片扫 1813 行只写出 20 条），139 分片 5.8GB 换一两千条短切片，不值
-- **自建短剧素材的备选处理路线（2026-09-17 更正：用户目前没有素材）**：将来有授权素材时，可用于补表演、短对白和同人 ref；并非减少声学坏例或构造可信 ref 的唯一途径。若拿到的是成品混音，须先分离并审核，不能把 BGM 与音效当目标语音学习。
+- **自建短剧素材的备选处理路线（2026-09-20：已有链接，授权与质量待核验）**：将来有授权素材时，可用于补表演、短对白和同人 ref；并非减少声学坏例或构造可信 ref 的唯一途径。若拿到的是成品混音，须先分离并审核，不能把 BGM 与音效当目标语音学习。
   ① **分离**：用 **Demucs `htdemucs`**（Meta，MIT，pip 可装，4090 上 GPU 加速）。这是从混音内容建 TTS 语料的业界标准做法——Emilia 那套 in-the-wild 管线就是「Demucs 分离 → VAD 切分 → ASR → DNSMOS 过滤」，与本项目 `ingest` 的流程一一对应。**分离不替代逐条试听**：分离会留伪影（频谱空洞、水声/相位感），仍要淘汰 BGM 泄漏严重的片段；分离也**解决不了混响**（配音通常干声录制、混音时按场景加混响，分离出的人声仍带场景混响，而 OmniVoice 对 ref 是做 WPE 去混响的）——混响重不重要先分离一集试听再决定。注意 OmniVoice 里那个 ModelScope ZipEnhancer 是**降噪不是分离**，压 BGM 不够用。
   ② **交付格式**：`ingest` 走 PyAV，mp4/mkv/mov/wav/mp3/m4a/flac 都行。⚠️ `decode_to_wav` **只取 `streams.audio[0]`**——配音视频常同时带原声轨与配音轨，给错整集白解，要么只给配音轨要么先说明音轨顺序。有台词本或带时间轴的字幕就一起给：演员实际念的台词本才是权威文本（不吃 ASR 错误），字幕时间轴还比 VAD 给出更准的 cue 边界。
   ③ **speaker 标注**：`pair_references` 只认 `speaker_verified=True`，可信身份可以来自可靠元数据或人工确认，不要求一定来自 drama。成片可用「自动 diarization 出候选簇 → 人工确认 → 6006 标注」辅助；**自动聚类、同角色名都不能单独证明同人**。跨集已确认的同一演员用同一个 ID，用户不懂的情绪标签不要求其填写。
