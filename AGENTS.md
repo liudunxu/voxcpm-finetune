@@ -256,6 +256,28 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/越南语/印尼语/�
   不作真人训练语料。没有原始ref/take/任务音频包描述符，不猜内部HTTP路径或任意ref重抽。
   保留r8，不加重试/ASR预算、不改全局阈值、不部署；语言质量未验证。
 
+## ASR QC选型边界（2026-09-20）
+
+- **Whisper GPU故障不等于需要微调或切CPU。** 指定服务请求`41dd386a`在
+  faster-whisper延迟迭代的encode报`cudaErrorInvalidDevice`，不是只在词对齐报错。
+  OmniVoice已修复并push `7f678b4`：共享门禁、取消等待、匹配CUDA缓存剔除及尾部补转吞错；
+  15项回归通过、旧源码12项失败；全量530通过，5项既有缺fixture错误。未部署，
+  尚未证明底层CUDA恢复，不默认CPU、不重置设备、不降级依赖，不启动训练。
+  两条CPU转写只用于TH裁尾诊断；当前分语种对照在首次GPU失败后停止。
+- **TH新片仍有后处理风险。** `mtbwhene6sjnb1`于北京时间11:26:31生成，
+  cue10/12硬裁后QC失效；本机refit检测能识别这两条，须查实际任务的执行/验收日志，
+  不能声称无refit消费者或用裁前pass覆盖裁后风险。其他自动severe/身份标签不算人耳确认；
+  细节见`docs/video_review_20260920_th.md`。合成片不能当真人训练数据，保持r8。
+- 生产不是全程固定Qwen3：OmniVoice合成文本QC默认Qwen3，DIS可疑最终片段显式切另一个
+  后端复核；词时间戳按aligner支持回退。本项目离线评测仍为Whisper large-v3，
+  不因线上选型覆盖旧评分。详见`docs/asr_qc_routing_20260920.md`。
+- 分语种首选需要同WAV、同语言提示模式、无期望台词提示的对照；衡量误拒/漏检及QC总耗时，
+  不凭CER最低或模型支持列表指定赢家。泰语已有05-A额外尾音被Qwen记录、Whisper漏转的反例，
+  不支持直接全量切Whisper，也不证明Qwen普遍更好。当前没有新的分语种ASR A/B结论。
+- `model=large-v3`不等于切后端；现有转写端点可显式传`asr_backend`做对照。
+  合成内置Whisper路径目前带期望文本initial_prompt，不能和无提示Qwen分数直接比；
+  先复用无提示端点评估，不为此改生产、每句双跑或新增训练。
+
 ## 环境
 - Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检 + PyAV 视频解码）。
 - torch 平台分流（见 pyproject `[tool.uv.sources]`）：macOS → PyPI 轮子（CPU/MPS）；Linux → pytorch-cu124 index（CUDA 12.4）。训练只在 Linux GPU 机执行。
