@@ -8,6 +8,7 @@ __pycache__/
 data/raw/
 data/processed/
 checkpoints/
+/work/video_review/
 wandb/
 logs/
 *.wav
