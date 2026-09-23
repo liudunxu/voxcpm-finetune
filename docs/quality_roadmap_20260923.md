@@ -88,6 +88,9 @@ DIS推送前保留远端新停顿合并保护及Config Center并发配置，reba
 
 ### 4. 当地语言韵律
 
+用户随后补充“部分片段像读稿子、AI味太重”。具体分层策略与最小对照见
+`docs/natural_dialogue_strategy_20260923.md`；此次是总体反馈，未指定的新片段不冒充已定位坏例。
+
 OmniVoice的language用于TN，未作为独立语言条件送入模型generate；指定`id`不是印尼口音保证。
 DIS已有目标语本地化与ID/MS句法提示，远端新停顿合并保护也已保留，不重复造语言路由。
 须分别检查译文语体/语义分组、reference/prompt音文匹配、cue停顿合并、强制变速及模型裸输出。
