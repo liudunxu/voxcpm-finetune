@@ -10,6 +10,7 @@ data/processed/
 checkpoints/
 /work/video_review/
 /work/audio_ab/
+/work/for_train/
 wandb/
 logs/
 *.wav

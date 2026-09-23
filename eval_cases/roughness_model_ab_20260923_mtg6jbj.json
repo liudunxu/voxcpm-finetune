@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-23",
+  "scope": "Two additional VI user-reported development cases from mtg6jbj, base vs verified r8 adapter only. Shared raw client reference with unresolved source-quality risks; no API denoise/level/cleanup or DIS postprocessing. Not production replay, not language acceptance, not training data. The earlier twelve-output plan is unchanged.",
+  "generation_count": 12,
+  "retry_badcase": false,
+  "base_revision": "32279effe8c19989596f05d353d1447f51d9e915",
+  "base_sha256": {
+    "audiovae.pth": "94b5d51e107e0507d4acc976cfdadb64edd6fd06d1f751dadbf2fd1594274bf1",
+    "config.json": "405f0dcd92f7feba6011ed4eac5c8d4f74cba9712f07fd5cfa3063bbdd95402c",
+    "model.safetensors": "f7f964cfa9da23653baec6e6f7750719977ad944ed9f95fe52fe3a620506891d",
+    "special_tokens_map.json": "068594063e37662c02b21acf42ebb334ef6a74fb810e68a2368f88f08351de76",
+    "tokenization_voxcpm2.py": "84489ea32b6ee0cae22ed5480cacb6df85c46624c3119be9a2021c3649a12729",
+    "tokenizer.json": "f8984687e4a92a3503d521396d454b7d68e9fdaab2a0288eb3536c7c1aa4bc20",
+    "tokenizer_config.json": "e78a3ebb48a0b9437efd1823b6b726c823da89e49dd8bcc90c02419d9baa772b"
+  },
+  "lora_sha256": {
+    "lora_weights.safetensors": "148509bb4571ffa60798d0079a154adbaedccf6f188402d9924880ca9983f16c",
+    "lora_config.json": "bb0d33fede7c0f40960f493da0c30d455415ccd5b72a0aed659b0d024e79b456",
+    "training_state.json": "56a1c077c0c70caf1b1bf04fc75d970ed79dad8c286fe0552eda218ff86c2a20"
+  },
+  "cases": [
+    {
+      "case_id": "vi_mtg6jbj_cue15",
+      "lang": "vi",
+      "text": "Để tôi ra ngoài!",
+      "source_video_sha256": "ff4078a215a533e908e2f24fa8e8ecc32e49c24911573749f0dfc3a12e9400c8",
+      "source_cue_index": 15,
+      "reference": "audio/shared_reference.wav",
+      "reference_sha256": "315f69f37a30ec92576f8686d69f1177d1b68a1f3a231074143b627978e604cb",
+      "cfg_value": 1.5,
+      "inference_timesteps": 22,
+      "control": "openly angry, subtly as a sharp but controlled outburst, while preserving the reference speaker's natural pitch and core timbre, with restrained pitch movement",
+      "seed": 709426392,
+      "seeds": [
+        709426392,
+        709426393,
+        709426399
+      ],
+      "production_postprocessing_reproduced": false,
+      "production_weights_sha256": null,
+      "reference_clean_single_speaker_verified": false
+    },
+    {
+      "case_id": "vi_mtg6jbj_cue25",
+      "lang": "vi",
+      "text": "Hôm nay tốt nhất hãy giết tôi đi.",
+      "source_video_sha256": "ff4078a215a533e908e2f24fa8e8ecc32e49c24911573749f0dfc3a12e9400c8",
+      "source_cue_index": 25,
+      "reference": "audio/shared_reference.wav",
+      "reference_sha256": "315f69f37a30ec92576f8686d69f1177d1b68a1f3a231074143b627978e604cb",
+      "cfg_value": 1.5,
+      "inference_timesteps": 28,
+      "control": "",
+      "seed": 455751961,
+      "seeds": [
+        455751961,
+        455751962,
+        455751968
+      ],
+      "production_postprocessing_reproduced": false,
+      "production_weights_sha256": null,
+      "reference_clean_single_speaker_verified": false
+    }
+  ]
+}
