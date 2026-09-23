@@ -60,3 +60,20 @@ emotion两侧明确异常，虽偏好B也不纳入正常候选。
 
 `work/for_train/`已gitignore，候选音频/本地证据不随push发布；推送导出脚本、测试与此状态文档。
 本轮导出器回归及微调仓全套153项通过；备料池自检核实10条候选、已批准训练音频0。
+
+## 参考音持久化（同日后续要求）
+
+有必要连参考保存，否则未来容器/voice_id过期就丢失克隆条件。导出器已补充逐包`conditioning.jsonl`，
+保存原请求base64解码后的ref/prompt WAV（不重采样/去噪）、SHA、声道/采样率/时长、请求白名单参数、
+control/prompt文字及服务器报告的参考处理信息。已有目标标注和试听包不覆盖，密钥/base64不进标注。
+GPU处理后的实际波形仍未取得，`replay_complete=false`，不能把客户端输入叫作模型最终参考。
+
+- 正常候选：10/10实际ref持久化，去重2个WAV/428,218字节；这批原请求没有prompt音频，明确记未提供。
+- 回归坏例：16条中9条找到与记录SHA一致的ref，去重7个WAV/1,988,194字节，记录于`badcase_assets.jsonl`。
+  其余7条没有可信SHA或字节，不能拿同名文件替代；raw/segment本轮未归档，缺失状态不隐藏。
+- 可复跑本地恢复：`python work/for_train/archive_regression_assets.py`；`validate.py`同时验证
+  目标/参考字节SHA、sidecar关联与不可训练边界。此脚本与音频仍是ignored本地工作材料。
+- 目标语文本、ref身份/授权、训练split门仍各自核验；恢复参考不等于获得真人训练授权或同人证据。
+
+整体质量/混音/采样率/当地语韵律与r8实验的ROI路线见`docs/quality_roadmap_20260923.md`。
+参考侧录追加后全套离线回归154通过（12.75s），备料池SHA/关联自检通过；未新生成试听音频。

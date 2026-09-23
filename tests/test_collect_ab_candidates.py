@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import json
 from pathlib import Path
 
@@ -24,7 +25,10 @@ def test_ab_candidates_preserve_evidence_and_never_become_training_rows(tmp_path
             sf.write(audio, [0.1, -0.1] * 8, 16000)
             request = pack / "evidence" / f"{code}-request.json"
             request.write_text(json.dumps({"text": "Bukas na natin ito pag-usapan.", "language": "tl",
-                                           "api_key": "DO_NOT_EXPORT", "reference_audio_base64": "DO_NOT_EXPORT"}),
+                                           "api_key": "DO_NOT_EXPORT",
+                                           "reference_audio_base64": base64.b64encode(audio.read_bytes()).decode(),
+                                           "prompt_audio_base64": base64.b64encode(audio.read_bytes()).decode(),
+                                           "prompt_text": "原参考转写", "control_instruction": "calm"}),
                                encoding="utf-8")
             for path in (audio, request):
                 feedback["frozen_artifacts_sha256"][str(path.relative_to(pack))] = module.sha256(path)
@@ -40,7 +44,16 @@ def test_ab_candidates_preserve_evidence_and_never_become_training_rows(tmp_path
     assert all(row["language_quality"] == "unverified" and "audio" not in row and "text" not in row for row in rows)
     assert [row["candidate_status"] for row in rows] == ["acoustics_only", "needs_qc_review", "needs_qc_review"]
     assert rows[2]["pair_preference"] == "A 更好"
-    assert len(list(output.rglob("*.wav"))) == len(list(output.rglob("annotations.jsonl"))) == 1
+    assert len(list(output.rglob("annotations.jsonl"))) == 1
+    assert len(list((output / "audio").glob("*.wav"))) == 1
+    assert len(list((output / "conditioning").glob("*.wav"))) == 1
+    conditions = [json.loads(line) for line in next(output.rglob("conditioning.jsonl")).read_text(encoding="utf-8").splitlines()]
+    assert len(conditions) == len(rows)
+    assert all(row["reference"] == row["prompt"] and row["training_eligible"] is False for row in conditions)
+    assert all(row["gpu_preprocessed_audio_persisted"] is False and row["replay_complete"] is False for row in conditions)
+    assert conditions[0]["requested_parameters"]["prompt_text"] == "原参考转写"
+    assert (output / conditions[0]["reference"]["clip"]).read_bytes() == (pack / "audio/C01-A.wav").read_bytes()
+    assert "DO_NOT_EXPORT" not in json.dumps(conditions) and "audio_base64" not in json.dumps(conditions)
     assert "DO_NOT_EXPORT" not in json.dumps(rows)
     assert module.collect(pack, output) == rows
     request = pack / "evidence/C01-A-request.json"
@@ -52,3 +65,25 @@ def test_ab_candidates_preserve_evidence_and_never_become_training_rows(tmp_path
     feedback_path.write_text(json.dumps(feedback), encoding="utf-8")
     with pytest.raises(ValueError, match="Invalid or duplicate"):
         module.collect(pack, output)
+
+
+def test_voice_id_only_does_not_fabricate_a_reference(tmp_path):
+    script = Path(__file__).resolve().parents[1] / "scripts/collect_ab_candidates.py"
+    spec = importlib.util.spec_from_file_location("collect_ab_candidates", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    pack = tmp_path / "pack"
+    (pack / "audio").mkdir(parents=True)
+    (pack / "evidence").mkdir()
+    audio = pack / "audio/C01-A.wav"
+    sf.write(audio, [0.1, -0.1] * 8, 16000)
+    request = pack / "evidence/C01-A-request.json"
+    request.write_text(json.dumps({"text": "Hi", "language": "en", "voice_id": "expired-cache-key"}))
+    feedback = {"pack_id": "missing", "frozen_artifacts_sha256": {
+        str(path.relative_to(pack)): module.sha256(path) for path in (audio, request)},
+        "cases": [{"code": "C01", "takes": {"A": {"status": "无明显异常", "audio_sha256": module.sha256(audio)}}}]}
+    (pack / "feedback.json").write_text(json.dumps(feedback))
+    module.collect(pack, tmp_path / "out")
+    record = json.loads(next((tmp_path / "out").rglob("conditioning.jsonl")).read_text())
+    assert record["reference"]["status"] == record["prompt"]["status"] == "voice_id_only_not_restored"
+    assert not (tmp_path / "out/conditioning").exists()
