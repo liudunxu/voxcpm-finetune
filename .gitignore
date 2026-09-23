@@ -9,6 +9,7 @@ data/raw/
 data/processed/
 checkpoints/
 /work/video_review/
+/work/audio_ab/
 wandb/
 logs/
 *.wav
