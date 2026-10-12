@@ -59,6 +59,30 @@
 
 ## 当前待办（按顺序执行）
 
+### 2026-10-12：差参考音鲁棒性（分阶段，先本地后GPU）
+
+用户 2026-10-12 提出：传入差参考音（多人声串入/发闷频带受限）时仍保持输出质量，
+允许牺牲部分参考一致性换差参考下的输出质量（speaker_sim 全量记录、放宽门禁）。
+只动模型侧数据增强，不改推理链路。冻结口径见 `docs/ref_robustness_plan_20261012.md`。
+
+- [x] 阶段 0（本地 CPU）完成：确定性降质器 `src/voxft/data/ref_degrade.py`
+  （5 个冻结 profile：babble_sir15/babble_sir8/lowpass4k/lowpass3k/combo_babble8_lp3k，
+  含 CLI 与 sidecar）、评测集构建 `scripts/build_degraded_ref_cases.py`、
+  6 个条件文件 `eval_cases/refrob_20261012_*.jsonl`（30 case，case_id 跨条件相同）、
+  训练侧 50% ref 降质脚本 `scripts/degrade_train_refs.py`、测试 `tests/test_ref_degrade.py`
+  （10 项，全套 164 通过）。降质 wav 不落本仓，待远端生成。
+- [ ] 阶段 1（GPU 基线量化，**等独立 GPU 入口、用户确认后执行**）：远端生成 12 条被引用
+  ref × 5 个降质档；base/r8 × 6 条件 × 3 seed（42/43/44，cfg 1.8/20 步/禁重试）跑
+  `eval_cases/refrob_20261012_*.jsonl`，按 condition × lang 透视 CER/漏尾/多读/尾静音
+  /speaker_sim（SIM 对原始干净 ref 计算），写 `docs/ref_robustness_baseline_<date>.md`。
+  **闸门：降质 ref 下 base/r8 无可测退化则停止并向用户报告，不进入训练。**
+- [ ] 阶段 2/3（A/B 训练验收，用户确认基线证据后执行）：基于 r8 同源配比生成
+  `<name>_refrob`（唯一变量 = 50% ref 降质）；A 组干净 ref 同预算重跑 r8 配方、
+  B 组 50% ref 降质，两组同预算从官方基座新训（**不续训 r8**），r8 作额外参照。
+  干净回归走完整 v2 分语种红线（ΔCER>0.05、盲听负−胜≥2 且负≥3，任一语种退化即整轮
+  不通过）；降质套件看内容指标改善为主目标；允许牺牲部分 speaker_sim 但全量记录，
+  干净条件下 SIM 回退超 run 间噪声（±0.009）须写进结论。不通过则保持 r8、归档不改写。
+
 ### 2026-09-24：CFG 1.8 / 1.6 与同角色跨句稳定性
 
 - [x] 用户确认优化目标：优先降低明显声学坏例、保持同ref/同说话人产出一致，不追求高度复刻原片音色。
