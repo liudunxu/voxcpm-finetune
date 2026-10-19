@@ -22,13 +22,12 @@ from .paths import CHECKPOINT_DIR
 SAMPLE_BY_LANG = infer.SAMPLE_TEXTS
 EVAL_DIR = CHECKPOINT_DIR / "eval"
 
-# Taglish 句内英文多，强制单一语言解码会给出失真的转写；th/vi/id/ms 都是 Whisper
-# 标准语种，强制解码让 CER 在不同 checkpoint 之间可比。
+# Taglish 句内英文多，强制单一语言解码会给出失真的转写；th/id 都是 Whisper 标准语种，
+# 强制解码让 CER 在不同 checkpoint 之间可比。
 AUTO_DETECT_LANGS = frozenset({"tl"})
 
-# 按空格切词有意义的语种才算 WER。vi 正字法以音节为单位空格分隔，它的 WER 是音节级
-# 错误率，与 tl/en/id/ms 的词级不同量纲，别横向比；th 词间根本没有空格，只有 CER。
-WER_LANGS = frozenset({"tl", "en", "vi", "id", "ms"})
+# 按空格切词有意义的语种才算 WER。th 词间根本没有空格，只有 CER。
+WER_LANGS = frozenset({"tl", "en", "id"})
 
 
 def _transcribe(model, wav_path: str, lang: str) -> str:
@@ -146,7 +145,7 @@ _REPORT_NOTE = (
     "ASR/漏尾均为诊断；F0 不作通过门限，也不能直接判娃娃音。"
     "声学异常可单独盲听；没有合格母语评分时，口音/语言自然度/情绪保持未验证。"
     "工程检查通过不等于完整语言验收通过。"
-    "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id/ms 词级），不横向比。"
+    "rate 的量纲随语种不同（th 字符/秒、tl/en/id 词级），不横向比。"
     "suspected_truncation=少读/漏尾，over_read=多读/跑飞（>1.4× 参考长度）。"
     "mean_cer_non_numeric 剔除了含阿拉伯数字的 case——那一类的 CER 会被 Whisper "
     "自身的数字归一化污染，只能靠盲听。metallic 与 low_snr 阈值移植自 OmniVoice "

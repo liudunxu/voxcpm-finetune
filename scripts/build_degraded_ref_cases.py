@@ -1,6 +1,6 @@
 """Build the 6-condition degraded-reference eval suites from omnivoice_prod_v2.jsonl.
 
-按语种分层抽 6 条 × {th,tl,vi,id,ms} = 至多 30 条 case；条件矩阵 = clean（对照）+ 5 个
+按语种分层抽 6 条 × {th,tl,id} = 至多 18 条 case；条件矩阵 = clean（对照）+ 5 个
 降质 profile，每个条件写一份独立 JSONL（case_id 与原 case 相同，跨条件靠报告间配对）。
 本脚本只写 JSONL，不要求降质 wav 存在——wav 之后在远端用
 `python -m voxft.data.ref_degrade` 生成（CPU 即可）。
@@ -15,7 +15,7 @@ from voxft.data.ref_degrade import PROFILES
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "eval_cases" / "omnivoice_prod_v2.jsonl"
-LANGS = ("th", "tl", "vi", "id", "ms")
+LANGS = ("th", "tl", "id")
 CONDITIONS = ("clean", *PROFILES)
 PER_LANG = 6
 SEED = 42

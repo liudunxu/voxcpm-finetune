@@ -572,9 +572,9 @@ def _download_hf(source: Source, dest: Path, max_samples: int | None,
 def _sentence_case(text: str) -> str:
     """全大写转写 → 句首大写。
 
-    gigaspeech2 的 tsv 是全大写，而线上送进模型的是句首大写的原始台词。越南语/印尼语的
-    大小写不参与语法，str.lower() 对变音符号是安全的；代价是句内英文专有名词会被小写，
-    没有真实大小写恢复器之前先接受这个损失。
+    gigaspeech2 的 tsv 是全大写，而线上送进模型的是句首大写的原始台词。泰语没有大小写、
+    印尼语的大小写不参与语法，str.lower() 对变音符号是安全的；代价是句内英文专有名词会被
+    小写，没有真实大小写恢复器之前先接受这个损失。
     """
     t = text.strip()
     return t[:1].upper() + t[1:].lower() if t else t

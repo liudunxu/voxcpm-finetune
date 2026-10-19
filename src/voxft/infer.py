@@ -21,9 +21,7 @@ _MODEL_KEY = None
 SAMPLE_TEXTS = {
     "th": "สวัสดีค่ะ ยินดีต้อนรับสู่ระบบสังเคราะห์เสียง",
     "tl": "Magandang araw! Maligayang pagdating sa aming sistema.",
-    "vi": "Xin chào, chào mừng bạn đến với hệ thống tổng hợp giọng nói.",
     "id": "Halo, selamat datang di sistem sintesis suara kami.",
-    "ms": "Selamat datang ke sistem sintesis suara kami.",
     "zh": "你好，欢迎使用语音合成系统。",
     "en": "Are you okay? I was worried about you.",
 }

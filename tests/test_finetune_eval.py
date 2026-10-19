@@ -50,15 +50,15 @@ def test_plan_records_langs_and_run_name(tmp_path, monkeypatch):
     wav.write_bytes(b"fake")
     train = tmp_path / "train.jsonl"
     rows = ([{"audio": str(wav), "text": "t", "lang": "th"}] * 2
-            + [{"audio": str(wav), "text": "t", "lang": lang} for lang in ("ms", "tl", "vi", "id")]
+            + [{"audio": str(wav), "text": "t", "lang": lang} for lang in ("tl", "id")]
             + [{"audio": str(wav), "text": "t"}])       # 没标 lang 的行归 unknown，不许吞掉
     train.write_text("".join(json.dumps(r) + "\n" for r in rows))
     config = builder.build_yaml("joint", "", str(train), epochs=1)
     plan = json.loads(config.with_suffix(".plan.json").read_text())
-    assert plan["langs"] == {"id": 1, "ms": 1, "th": 2, "tl": 1, "unknown": 1, "vi": 1}
-    assert plan["train_samples"] == 7
+    assert plan["langs"] == {"id": 1, "th": 2, "tl": 1, "unknown": 1}
+    assert plan["train_samples"] == 5
     name = builder.default_run_name("lora", str(train))
-    assert name.startswith("lora_joint6_") and "/" not in name and name not in ("", ".", "..")
+    assert name.startswith("lora_joint4_") and "/" not in name and name not in ("", ".", "..")
     assert builder.default_run_name("lora").startswith("lora_")   # 没给清单时退回时间戳
 
 
@@ -135,9 +135,9 @@ def test_eval_shard_and_merge_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(evaluation, "_acoustics", lambda *a: {
         "f0_std_st": 1.0, "audio_sec": 2.0, "chars_per_sec": 5.0, "metallic": False,
         "low_snr": False, "speaker_sim": 0.9})
-    cases = [{"text": "Saya tidak tahu", "lang": "ms"} for _ in range(7)]
-    full = evaluation.evaluate("base", "ms", cases, seeds=[42])
-    shards = [evaluation.evaluate("base", "ms", cases, seeds=[42], shard=(k, 3))
+    cases = [{"text": "Saya tidak tahu", "lang": "id"} for _ in range(7)]
+    full = evaluation.evaluate("base", "id", cases, seeds=[42])
+    shards = [evaluation.evaluate("base", "id", cases, seeds=[42], shard=(k, 3))
               for k in range(3)]
     ids = [i["case_id"] for s in shards for i in s["items"]]
     assert sorted(map(int, ids)) == list(range(7))         # 并集全覆盖且 case_id 是原始序号
@@ -159,9 +159,9 @@ def test_eval_shard_and_merge_roundtrip(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="口径不一致"):
         evaluation.merge_reports([shards[0]["report_path"], str(bad_path)])
     with pytest.raises(ValueError, match="0 <= k < n"):
-        evaluation.evaluate("base", "ms", cases, seeds=[42], shard=(3, 3))
+        evaluation.evaluate("base", "id", cases, seeds=[42], shard=(3, 3))
     with pytest.raises(ValueError, match="没有分到"):
-        evaluation.evaluate("base", "ms", cases[:1], seeds=[42], shard=(2, 3))
+        evaluation.evaluate("base", "id", cases[:1], seeds=[42], shard=(2, 3))
 
 
 def test_eval_shard_with_string_case_ids(tmp_path, monkeypatch):
@@ -178,18 +178,18 @@ def test_eval_shard_with_string_case_ids(tmp_path, monkeypatch):
     monkeypatch.setattr(evaluation, "_acoustics", lambda *a: {
         "f0_std_st": 1.0, "audio_sec": 2.0, "chars_per_sec": 5.0, "metallic": False,
         "low_snr": False, "speaker_sim": 0.9})
-    cases = [{"text": "Saya tidak tahu", "lang": "ms", "case_id": f"ms_nat_{i:02d}"}
+    cases = [{"text": "Saya tidak tahu", "lang": "id", "case_id": f"id_nat_{i:02d}"}
              for i in range(7)]
     seen = []
-    full = evaluation.evaluate("base", "ms", cases, seeds=[42], progress=seen.append)
-    assert len(seen) == 7 and seen[0].startswith("[1/7] ms_nat_00 seed=42")
-    shards = [evaluation.evaluate("base", "ms", cases, seeds=[42], shard=(k, 3))
+    full = evaluation.evaluate("base", "id", cases, seeds=[42], progress=seen.append)
+    assert len(seen) == 7 and seen[0].startswith("[1/7] id_nat_00 seed=42")
+    shards = [evaluation.evaluate("base", "id", cases, seeds=[42], shard=(k, 3))
               for k in range(3)]
     assert sorted(i["case_id"] for s in shards for i in s["items"]) == \
         sorted(i["case_id"] for i in full["items"])
     merged = evaluation.merge_reports([s["report_path"] for s in shards])
     assert merged["mean_cer"] == full["mean_cer"] and len(merged["items"]) == 7
-    assert [i["case_id"] for i in merged["items"]] == [f"ms_nat_{i:02d}" for i in range(7)]
+    assert [i["case_id"] for i in merged["items"]] == [f"id_nat_{i:02d}" for i in range(7)]
 
 
 def test_every_registry_lang_has_eval_channel():
@@ -199,12 +199,12 @@ def test_every_registry_lang_has_eval_channel():
     assert not missing, f"registry 里有语种没有验收通道: {missing}"
     assert set(TARGET_LANGS) <= set(evaluation.SAMPLE_BY_LANG)
     assert evaluation.AUTO_DETECT_LANGS == {"tl"}
-    # ms/id/tl/en 词间有空格 → 词级 WER；vi 是音节级；th 词间无空格只有 CER
-    assert set(evaluation.WER_LANGS) == {"tl", "en", "vi", "id", "ms"}
+    # id/tl/en 词间有空格 → 词级 WER；th 词间无空格只有 CER
+    assert set(evaluation.WER_LANGS) == {"tl", "en", "id"}
 
 
-def test_eval_computes_cer_and_wer_for_vi_id_and_ms(tmp_path, monkeypatch):
-    """vi 正字法按音节空格分隔，WER 有值但是音节级口径；id/ms 是词级。"""
+def test_eval_computes_cer_and_wer_for_id_and_tl(tmp_path, monkeypatch):
+    """id 与 tl 都是词级 WER；tl 走自动语种检测，报告里要如实记 auto_detect_langs。"""
     from voxft.data import pipeline
     monkeypatch.setattr(evaluation, "CHECKPOINT_DIR", tmp_path)
     monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path)
@@ -212,8 +212,7 @@ def test_eval_computes_cer_and_wer_for_vi_id_and_ms(tmp_path, monkeypatch):
     monkeypatch.setattr(infer, "get_model", lambda *args: object())
     monkeypatch.setattr(infer, "_run", lambda model, kw: ("fake.wav", 0.1))
     monkeypatch.setattr(evaluation, "_acoustics", lambda *a: {"f0_std_st": 1.0, "audio_sec": 1.0, "chars_per_sec": 5.0, "metallic": False, "low_snr": False, "speaker_sim": 0.9})
-    for lang, text in (("vi", "Tôi không biết"), ("id", "Saya tidak tahu"),
-                       ("ms", "Saya tidak tahu")):
+    for lang, text in (("id", "Saya tidak tahu"), ("tl", "Hindi ko alam")):
         monkeypatch.setattr(evaluation, "_transcribe", lambda *a, text=text: text)
         report = evaluation.evaluate("base", lang, [{"text": text, "lang": lang}])
         item = report["items"][0]
@@ -360,18 +359,18 @@ def test_eval_aggregates_duration_and_spectral_metrics(tmp_path, monkeypatch):
         "low_snr": False, "speaker_sim": 0.9, "speech_ratio": 0.9,
         "head_silence_sec": 0.1, "tail_silence_sec": 0.2,
         "spectral_rolloff_99": 7300.0, "band_ratio_2_8k": 0.16})
-    report = evaluation.evaluate("base", "ms", [{"text": "Saya tidak tahu", "lang": "ms"}],
+    report = evaluation.evaluate("base", "id", [{"text": "Saya tidak tahu", "lang": "id"}],
                                  seeds=[42, 43])
     assert report["mean_audio_sec"] == 2.0
     assert report["mean_audio_sec_non_numeric"] == 2.0
-    assert report["by_lang"]["ms"]["mean_audio_sec_non_numeric"] == 2.0
+    assert report["by_lang"]["id"]["mean_audio_sec_non_numeric"] == 2.0
     assert report["mean_head_silence"] == 0.1
     assert report["mean_tail_silence"] == 0.2
     assert report["p90_tail_silence"] == 0.2
     assert report["mean_spectral_rolloff_99"] == 7300.0
     assert report["mean_band_ratio_2_8k"] == 0.16
-    assert report["by_lang"]["ms"]["p90_tail_silence"] == 0.2
-    assert report["by_lang"]["ms"]["mean_head_silence"] == 0.1
+    assert report["by_lang"]["id"]["p90_tail_silence"] == 0.2
+    assert report["by_lang"]["id"]["mean_head_silence"] == 0.1
 
 
 def _dur_report(label, *, audio=2.0, cer_nn=0.003, tail_p90=0.10, speech=0.94,

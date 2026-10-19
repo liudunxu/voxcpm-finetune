@@ -36,10 +36,13 @@ def prepare(work):
     output = work / "acoustic_sample"
     output.mkdir(exist_ok=False)
     cases = _read_manifest(work / "cases.jsonl")
+    case_ids = select_cases(cases)
     write_json(output / "plan.json", {
-        "case_ids": select_cases(cases), "seeds": [42, 43], "selection_seed": 20260917,
+        "case_ids": case_ids, "seeds": [42, 43], "selection_seed": 20260917,
         "source_cases_sha256": sha256(work / "cases.jsonl"),
-        "note": "15 cases x 2 seeds = 30 pairs, stratified by target/ref language. "
+        # 条数从实际抽样结果推，不写死——目标语种清单变过之后写死的数字会静默失真
+        "note": f"{len(case_ids)} cases x 2 seeds = {len(case_ids) * 2} pairs, "
+                "stratified by target/ref language. "
                 "Selection uses frozen case metadata only, not A/B outcome scores. "
                 "Acoustic abnormalities only; native ratings may remain empty. "
                 "Not an online badcase-rate estimate, not full stability/native validation.",

@@ -1,5 +1,31 @@
 # 马来语(MS) 接入：设计依据、语料核实状态与流程差异
 
+> ## ⚠️ 存档声明（2026-10-19）
+>
+> **ms 已退出目标语种。** 用户决定不再微调马来语（ms / MY）与越南语（vi / VN），
+> 微调目标收缩为 **th / tl / id** + zh/en 防遗忘回放。本文自此转为**接入调研存档**，
+> **不再代表现行口径**：文中「五语种联合」「`--lang` 支持 ms」「ms 纳入配比 17%」等
+> 一律**不再生效**（逐处已标注）。registry 里的 3 个 ms 源（`drama_ms` / `yodas2_ms` /
+> `fleurs_ms`）已删除，eval 语种白名单已不含 ms ⇒ **含 ms 行的 case 文件再跑会直接
+> `ValueError`，已归档不可复跑**。调研过程、核实状态标记（✅/~/❌）与 Nexdata 询价
+> **原样保留**，将来重启 ms 时直接用，不要重做调研。
+>
+> **以下四条红线永久有效，与 ms 是否为目标语种无关，任何语种/任何轮次都适用：**
+>
+> 1. **命名陷阱**：FLEURS 的马来语 config 是 **`ms_my`**，结尾 `my` 是**国家码马来西亚**，
+>    **不是缅甸语**（Burmese 的 ISO 码才是 `my`）。
+> 2. **`mesolitica/Malaysian-TTS` 禁用**：是 **F5-TTS 合成**语音（数据卡原文
+>    「Malaysian **Synthetic** TTS dataset. Generate using Malaysian-F5-TTS-v2」），
+>    违反「不用模型合成语音补量」，且含名人音色（额外声音权风险）。
+> 3. **`mesolitica`（Malaysia-AI）全线无许可声明** ⇒ 拿到书面授权前一律不得使用。
+>    **无声明 ≠ 开放，默认全权保留。**
+> 4. **CV22 与 gigaspeech2 都没有 ms**：`fsicoli/common_voice_22_0` 东南亚只有
+>    `id / lo / th / vi`，`speechcolab/gigaspeech2` 的 configs 只有 `['th','id','vi']`
+>    ⇒ 别再去找 `cv22_ms` / `gigaspeech2_ms`。
+>
+> 另有一条**通用教训**（原 ms 条目，已上提到 AGENTS.md）：**互通语种之间口音判定必须找该语种
+> 母语者，ASR/Whisper 的语种标签不能当口音门禁，也不能拿近亲语种听感代替**（当年是 id/ms）。
+
 **2026-09 接入。** 核实标记沿用 [corpus_sourcing.md](corpus_sourcing.md)：`✅` = 拉到了本地文件/页面/API 原文；`~` = 只有间接线索，未二次核实，**不要写进采购单或对外承诺**；`❌` = 核实后确认不可用。
 
 > 命名提醒：FLEURS 的马来语 config 叫 **`ms_my`**，结尾的 `my` 是**国家码马来西亚**，不是缅甸语（Burmese 的 ISO 码才是 `my`）。本轮就因为这个栽过一次，写代码/查数据时都注意。
@@ -7,8 +33,8 @@
 ## 0. 一句话结论
 
 - **基座本来就支持 ms，这不是「教模型一门新语言」。** VoxCPM2 官方 30 语种含 Malay（`README.md:57`），内部基准 **ms WER 1.75%** ✅。
-- **但 ms 是五个目标语种里唯一一个基座输给竞品的**：同一张表里 Fish S2-Pro 是 **1.41%**，比 VoxCPM2 好（对比 id 1.36 vs 1.68、vi 1.56 vs 5.56、tl 2.63 vs 4.00，其余三个都是基座赢）✅。**这正好意味着 ms 的提升空间最大**，是联合微调里最值得投入的语种。
-- **submodule 零改动**，全部工作在外层工作台 ✅。ms 是纯 ASCII 拉丁正字法，tokenizer 实测 **0.394 tok/char、0 UNK、0% byte-fallback**，与印尼语同档，是五个语种里文本侧最轻的。
+- **但 ms 是当年五个目标语种里唯一一个基座输给竞品的**（**存档口径**，现为 th/tl/id 三语种）：同一张表里 Fish S2-Pro 是 **1.41%**，比 VoxCPM2 好（对比 id 1.36 vs 1.68、vi 1.56 vs 5.56、tl 2.63 vs 4.00，其余三个都是基座赢）✅。**这正好意味着 ms 的提升空间最大**，当年判断它是联合微调里最值得投入的语种。
+- **submodule 零改动**，全部工作在外层工作台 ✅。ms 是纯 ASCII 拉丁正字法，tokenizer 实测 **0.394 tok/char、0 UNK、0% byte-fallback**，与印尼语同档，是当年五个语种里文本侧最轻的。
 - **表现力语料仍然是唯一真缺口**，ms 与 tl/vi/id 处境相同：本轮**没有核实到任何**可商用的开源真人情感/表演语料 ❌。首轮表演档为 0%，验收目标必须降级（见 §5）。
 - **许可干净但有坑**：本轮注册的 ms 源是 CC-BY-3.0 + CC-BY-4.0 + 自有授权，**没有 CC-BY-SA 红线** → 权重原则上可对外分发。但马来西亚最大的语料方 `mesolitica`（Malaysia-AI）**全线没有许可声明**，且其 `Malaysian-TTS` 是 **F5-TTS 合成的**，两者都不能用（见 §3.1）。
 
@@ -44,7 +70,9 @@
 
 ---
 
-## 2. 本轮注册进来的源
+## 2. 本轮注册进来的源（**已于 2026-10-19 从 registry 删除**，表格存档）
+
+⚠️ 下面 3 个 ms 源（`drama_ms` / `yodas2_ms` / `fleurs_ms`）**已不在 `src/voxft/data/registry.py` 里**（现存 22 个源，全部是 th/tl/id/zh/en）。表格与核实状态原样保留，重启 ms 时按它重新注册。
 
 `src/voxft/data/registry.py`。加进 registry 即自动生效：下载分派、`options_for()` 的加工分流（首尾裁切方式、控制前缀比例）、ingest 的 `--source` choices、UI 下拉与【首选】标记。
 
@@ -58,12 +86,14 @@
 
 ### 2.1 code-switch 策略（`Source.languages()`）
 
+⚠️ **存档**：现行 `CODE_SWITCH_ACCEPT` 只剩 `{"tl": ("tl","en"), "id": ("id","en")}`，ms 与 vi 两行**已不生效**（源已删）。
+
 | 语种 | 转写/质检放行 | 理由 |
 |---|---|---|
-| tl | `(tl, en)` | Taglish |
-| id | `(id, en)` | 印尼语日常口语混英文程度接近 Taglish |
-| **ms** | **`(ms, en)`** | **Manglish**：马来西亚口语与短剧台词句内混英文极普遍，只认 ms 会误杀最该保留的样本 |
-| vi | `(vi,)` 从严 | 混英以词内借词为主 |
+| tl | `(tl, en)` | Taglish（**现行**） |
+| id | `(id, en)` | 印尼语日常口语混英文程度接近 Taglish（**现行**） |
+| **ms** | **`(ms, en)`** | **Manglish**：马来西亚口语与短剧台词句内混英文极普遍，只认 ms 会误杀最该保留的样本（**已失效**） |
+| vi | `(vi,)` 从严 | 混英以词内借词为主（**已失效**） |
 
 `fleurs_ms` 用 `accept_langs=("ms",)` **覆盖掉**英文放行：它是有权威文本的朗读语料，语种检测不符意味着错行，不是 code-switch。`yodas2_ms` 不覆盖（YouTube 自发口语，Manglish 是常态）。
 
@@ -150,28 +180,31 @@ curl -s "https://huggingface.co/api/datasets/<repo>/parquet" | python -c "import
 - **不要把 Manglish 当脏数据清洗掉**。线上短剧台词本来就是这个形态，洗干净了反而不像。
 - 但 `yodas2_ms` 的 YouTube 来源里可能混入纯英文内容被误标成 ms，这类要靠试听淘汰，不能靠语种过滤（它本来就被放行了）。
 
-### 4.5 验收口径
+### 4.5 验收口径（**已不再生效**，存档）
 
-`voxft.eval` 的 `--lang` 现在支持 `th/tl/vi/id/ms/zh/en`。
+⚠️ **2026-10-19 起本小节全部失效**：`voxft.eval` 的 `--lang` 现在是 `th/tl/id/zh/en`（**不含 ms/vi**），
+`WER_LANGS = {tl, en, id}`（**不含 ms**）。含 ms 行的 case 文件再跑会直接 `ValueError`。
+下面是当时的口径，只为读旧报告与将来重启时留档：
 
+- 当时 `--lang` 支持 `th/tl/vi/id/ms/zh/en`。
 - ms 是 Whisper large-v3 标准语种，**强制指定解码语种**（`AUTO_DETECT_LANGS` 只有 `tl`），让 CER 在不同 checkpoint 之间可比。
-- **ms 词间用空格分隔，词级 WER 有意义**，所以 `WER_LANGS` 含 ms（与 id/tl/en 同量纲，可以横向比）。这与 th（词间无空格，只有 CER）和 vi（音节级 WER）不同。
-- 联合 run 必须看报告的 **`by_lang`** 段：逐语种与 `eval base` 的同一份 case 对比，**任一语种退化即算失败**。
-- ms 不是声调语言，但 `f0_std_st` 依然**不作通过门限**（AGENTS.md 铁律），自然度只能盲听。
+- **ms 词间用空格分隔，词级 WER 有意义**，所以当年 `WER_LANGS` 含 ms（与 id/tl/en 同量纲，可以横向比）。这与 th（词间无空格，只有 CER）和 vi（音节级 WER）不同。
+- 联合 run 必须看报告的 **`by_lang`** 段：逐语种与 `eval base` 的同一份 case 对比，**任一语种退化即算失败**（现行红线只判 th/tl/id）。
+- ms 不是声调语言，但 `f0_std_st` 依然**不作通过门限**（AGENTS.md 铁律，这条与语种无关，仍生效），自然度只能盲听。
 
 ### 4.6 许可：ms 没有 SA 红线
 
-本轮注册的 ms 源：CC-BY-3.0（`yodas2_sidon`）+ CC-BY-4.0（FLEURS）+ 自有授权（`drama_ms`）。**没有 CC-BY-SA，没有 NC/ND** → 不触发 [corpus_sourcing.md §3.1](corpus_sourcing.md) 那条「含 SA 数据的权重不得对外分发」红线。
+当年注册的 ms 源（**已于 2026-10-19 从 registry 删除，此处为存档结论**）：CC-BY-3.0（`yodas2_sidon`）+ CC-BY-4.0（FLEURS）+ 自有授权（`drama_ms`）。**没有 CC-BY-SA，没有 NC/ND** → 不触发 [corpus_sourcing.md §3.1](corpus_sourcing.md) 那条「含 SA 数据的权重不得对外分发」红线。
 
-两条仍然成立：① 后续若核实进任何 SA/NC/ND 源，红线立刻恢复；② **`mesolitica` 那批「无许可声明」的源在拿到书面授权前一律不得使用**——无声明不等于开放，默认是全权保留。CC-BY-3.0 还要求署名，交付文档里要写清上游来源。
+两条**永久成立**（与 ms 是否为目标语种无关）：① 后续若核实进任何 SA/NC/ND 源，红线立刻恢复；② **`mesolitica` 那批「无许可声明」的源在拿到书面授权前一律不得使用**——无声明不等于开放，默认是全权保留。CC-BY-3.0 还要求署名，交付文档里要写清上游来源。
 
 ---
 
 ## 5. 首轮配比与降级后的验收目标
 
-ms 现在纳入**五语种联合微调**（`th / tl / vi / id / ms`），配比见 [finetune_playbook.md 的「五语种联合首轮配比」](finetune_playbook.md)：每个目标语种各 17%，中文回放 10%、英文回放 5%。
+⚠️ **本节的配比口径已不再生效**（ms 2026-10-19 退出目标语种）。当时 ms 纳入**五语种联合微调**（`th / tl / vi / id / ms`），配比见 [finetune_playbook.md 的「三语种联合首轮配比」](finetune_playbook.md)（原「五语种联合首轮配比」）：每个目标语种各 17%，中文回放 10%、英文回放 5%。现行口径是 **th/tl/id 各 ≈28.3 分（`(100−15)/3`）+ 中文 10 + 英文 5**，ms 不占份额。
 
-ms 那 17% 内部的拆分（首轮，无自建素材时）：
+ms 那 17% 内部的拆分（首轮，无自建素材时；**存档**）：
 
 | 数据角色 | MS 占比 | 说明 |
 |---|---:|---|
@@ -192,16 +225,20 @@ LoRA 预设不变（`r=64 / alpha=64 / dropout=0.05`、lr `1e-4`、`enable_dit=t
 
 ---
 
-## 6. 落地检查清单
+## 6. 落地检查清单（**存档，命令已失效**）
+
+⚠️ 下面所有命令在 2026-10-19 之后**都会失败**：`drama_ms` / `yodas2_ms` / `fleurs_ms` 已从
+registry 删除（`download` / `ingest` 的 choices 不再含它们），`--lang ms` 已退出 eval 白名单
+（现为 `{th,tl,id,zh,en}`）。清单原样保留，只在重启 ms 时按新 registry 重新落地。
 
 ```bash
-# 本地（不触网、不下载语料）
+# 本地（不触网、不下载语料）——存档时的输出，现已不含 ms
 uv run pytest                                      # 72 passed
-uv run python -m voxft.data.download --help         # choices 含 drama_ms/yodas2_ms/fleurs_ms
-uv run python -m voxft.data.ingest --help           # --source 含 drama_ms
-uv run python -m voxft.eval --help                  # --lang {th,tl,vi,id,ms,zh,en}
+uv run python -m voxft.data.download --help         # choices 曾含 drama_ms/yodas2_ms/fleurs_ms（已删）
+uv run python -m voxft.data.ingest --help           # --source 曾含 drama_ms（已删）
+uv run python -m voxft.eval --help                  # --lang 曾为 {th,tl,vi,id,ms,zh,en}，现 {th,tl,id,zh,en}
 
-# 远程（逐步放量，先确认 config 名与字段形态再全量）
+# 远程（逐步放量，先确认 config 名与字段形态再全量）——存档命令，源已删，勿执行
 uv run python -m voxft.data.download --source fleurs_ms --max-samples 50
 uv run python -m voxft.data.download --source yodas2_ms --max-samples 20
 uv run python -m voxft.data.pipeline --source fleurs_ms --out fleurs_ms_v1 --max-items 50

@@ -62,8 +62,7 @@ def metadata_rejection(row, protected_keys, excluded_texts):
 def prepare(output, experiment):
     output.mkdir(parents=True, exist_ok=False)
     recipe = json.loads((DATA_PROCESSED / "joint_omni8/mix.json").read_text())
-    sources = sorted({name for name, _ in recipe["parts"]} |
-                     {"cv22_th", "cv22_id", "cv22_vi", "yodas2_ms"})
+    sources = sorted({name for name, _ in recipe["parts"]} | {"cv22_th", "cv22_id"})
     manifests, inputs = {}, {}
     for source in sources:
         if get_source(source).license not in {"CC0", "CC-BY-3.0", "CC-BY-4.0", "Apache-2.0"}:
@@ -140,8 +139,7 @@ def prepare(output, experiment):
             "unmatched_training_memberships": {
                 name: sum(not memberships([row]) & used for row in kept)
                 for name, used in history.items()},
-            "status": ("separate_source_experiment_only" if source in ("cv22_vi", "yodas2_ms")
-                       else "candidate_pool_not_a_training_recipe"),
+            "status": "candidate_pool_not_a_training_recipe",
         }
         all_summary[source] = summary
         write_json(directory / "summary.json", summary)
@@ -158,7 +156,6 @@ def prepare(output, experiment):
                 "Ref candidates use verified identities/different origins/different texts, same split. "
                 "Ratio 1 enumerates a candidate inventory, NOT a proposed training ref ratio. "
                 "No new identity/control labels, no synthetic audio, no model training/promotion. "
-                "CV22 VI remains unverified identity; YODAS MS locale remains unverified. "
                 "Membership counts include audio/identity/session, not proof of novel text/speaker. "
                 "Input count != novel audio count; no new hours are claimed.",
     })

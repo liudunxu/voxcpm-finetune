@@ -174,7 +174,9 @@ def test_diagnostic_export_preserves_sources_and_independent_controls(monkeypatc
     module.collect(tmp_path)
     saved = json.loads((tmp_path / "diagnostic_sample/reports.json").read_text())
     metadata = json.loads((tmp_path / "diagnostic_sample/plan.json").read_text())
-    assert len(metadata["overlap_case_ids"]) == 10
+    # 报告刻意保留 vi/ms 行（它们是已退出目标语种的历史产物）：诊断排序要能读旧报告，
+    # 而随机对照只从当前 TARGET_LANGS 的分层里抽。
+    assert len(metadata["overlap_case_ids"]) == 7
     for group, paths in saved.items():
         session = evaluation.review_session(paths["base"], paths["r8"])
         assert len(session) == len(selected[group])

@@ -212,7 +212,7 @@ def test_cli_pool_required_and_same_speaker_rejected(tmp_path):
 def test_build_degraded_ref_cases(tmp_path):
     mod = _load_script("build_degraded_ref_cases.py")
     rows = []
-    for lang, n in (("th", 8), ("tl", 7), ("vi", 6), ("id", 5), ("ms", 6)):
+    for lang, n in (("th", 8), ("tl", 7), ("id", 5)):
         for i in range(n):
             rows.append({"case_id": f"{lang}_{i:02d}", "lang": lang,
                          "text": f"{lang} 文本 {i}",
@@ -223,9 +223,9 @@ def test_build_degraded_ref_cases(tmp_path):
     src.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
                    encoding="utf-8")
     warnings = []
-    summary = mod.build(src, tmp_path / "out", stamp="20261012", progress=warnings.append)
-    assert set(summary) == {f"refrob_20261012_{c}.jsonl" for c in ("clean", *PROFILES)}
-    assert all(n == 29 for n in summary.values())  # id 不足 6 条全取，已警告
+    summary = mod.build(src, tmp_path / "out", stamp="20261019", progress=warnings.append)
+    assert set(summary) == {f"refrob_20261019_{c}.jsonl" for c in ("clean", *PROFILES)}
+    assert all(n == 17 for n in summary.values())  # id 不足 6 条全取，已警告
     assert any("id" in w for w in warnings)
     out = tmp_path / "out"
 
@@ -234,9 +234,8 @@ def test_build_degraded_ref_cases(tmp_path):
                 (out / name).read_text(encoding="utf-8").splitlines()]
 
     orig = {r["case_id"]: r for r in rows}
-    clean = read("refrob_20261012_clean.jsonl")
-    assert Counter(r["lang"] for r in clean) == {"th": 6, "tl": 6, "vi": 6,
-                                                 "id": 5, "ms": 6}
+    clean = read("refrob_20261019_clean.jsonl")
+    assert Counter(r["lang"] for r in clean) == {"th": 6, "tl": 6, "id": 5}
     for row in clean:  # clean 与原 case 逐字段一致，仅追加两个新字段
         original = orig[row["case_id"]]
         assert row["ref_audio_original"] == original["ref_audio"]
@@ -245,7 +244,7 @@ def test_build_degraded_ref_cases(tmp_path):
                 if k not in ("ref_audio_original", "ref_degradation")} == original
     ids = {r["case_id"] for r in clean}
     for cond in PROFILES:
-        degraded = read(f"refrob_20261012_{cond}.jsonl")
+        degraded = read(f"refrob_20261019_{cond}.jsonl")
         assert {r["case_id"] for r in degraded} == ids  # case_id 集合跨条件不变
         assert any(r.get("numeric") is True for r in degraded)
         for row in degraded:
@@ -258,13 +257,13 @@ def test_build_degraded_ref_cases(tmp_path):
             for key in ("text", "lang", "seed", "note", "ref_lang"):
                 assert row[key] == original[key]
     # 幂等重跑（内容一致跳过）；抽样与字节跨进程确定
-    assert mod.build(src, out, stamp="20261012") == summary
-    mod.build(src, tmp_path / "out2", stamp="20261012")
-    assert (tmp_path / "out2/refrob_20261012_clean.jsonl").read_bytes() == \
-           (out / "refrob_20261012_clean.jsonl").read_bytes()
-    (out / "refrob_20261012_clean.jsonl").write_text("{}\n", encoding="utf-8")
+    assert mod.build(src, out, stamp="20261019") == summary
+    mod.build(src, tmp_path / "out2", stamp="20261019")
+    assert (tmp_path / "out2/refrob_20261019_clean.jsonl").read_bytes() == \
+           (out / "refrob_20261019_clean.jsonl").read_bytes()
+    (out / "refrob_20261019_clean.jsonl").write_text("{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="不覆盖旧产物"):
-        mod.build(src, out, stamp="20261012")
+        mod.build(src, out, stamp="20261019")
 
 
 def _fake_processed_dataset(tmp_path):

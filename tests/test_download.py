@@ -193,9 +193,9 @@ def test_fleurs_prefers_verbatim_over_normalized_text():
     assert _detect_cols(row, get_source("fleurs_tl"))[1] == "raw_transcription"
 
 
-def test_sentence_case_keeps_vietnamese_diacritics():
-    """gigaspeech2 的 tsv 整库全大写；.lower() 必须保住越南语变音符号，
-    否则声调信息就没了（vi 是 6 声调语言）。"""
+def test_sentence_case_keeps_diacritics():
+    """gigaspeech2 的 tsv 整库全大写；.lower() 必须保住非 ASCII 变音符号，
+    否则声调/音位信息就没了（用越南语字符串验，vi 已退出目标语种但函数与语种无关）。"""
     from voxft.data.download import _sentence_case
     assert _sentence_case("TRONG MỘT THẾ GIỚI LUÔN THAY ĐỔI") == "Trong một thế giới luôn thay đổi"
     assert _sentence_case("  GIÁ VÉ LÀ 250.000 ĐỒNG ") == "Giá vé là 250.000 đồng"
@@ -213,11 +213,11 @@ def test_hf_tar_reads_webdataset_and_isolates_sessions(tmp_path, monkeypatch):
     from voxft.data import download as dl
     from voxft.data.registry import get_source
 
-    src = get_source("gigaspeech2_vi")
+    src = get_source("gigaspeech2_id")
     assert src.kind == "hf_tar" and src.sentence_case is True
 
     tsv = tmp_path / "dev.tsv"
-    tsv.write_text("7-1\tXIN CHÀO ANH\n7-2\tGIÁ VÉ LÀ 250.000 ĐỒNG\n9-1\tTẠM BIỆT\n",
+    tsv.write_text("7-1\tSELAMAT PAGI\n7-2\tHARGA TIKET ADALAH 250.000 RUPIAH\n9-1\tSAMPAI JUMPA\n",
                    encoding="utf-8")
     tar = tmp_path / "dev.tar.gz"
 
@@ -234,16 +234,17 @@ def test_hf_tar_reads_webdataset_and_isolates_sessions(tmp_path, monkeypatch):
             info.size = len(payload)
             tf.addfile(info, io.BytesIO(payload))
 
-    paths = {"data/vi/dev.tsv": str(tsv), "data/vi/dev.tar.gz": str(tar)}
+    paths = {"data/id/dev.tsv": str(tsv), "data/id/dev.tar.gz": str(tar)}
     monkeypatch.setattr("huggingface_hub.hf_hub_download",
                         lambda filename=None, **kw: paths[filename])
     n = dl._download_hf_tar(src, tmp_path / "out", None, "tok", progress=lambda m: None)
     assert n == 3                      # 7-9 没有转写，必须跳过而不是写成空文本
     rows = [__import__("json").loads(line)
             for line in (tmp_path / "out" / "manifest.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert [r["text"] for r in rows] == ["Xin chào anh", "Giá vé là 250.000 đồng", "Tạm biệt"]
+    assert [r["text"] for r in rows] == ["Selamat pagi", "Harga tiket adalah 250.000 rupiah",
+                                         "Sampai jumpa"]
     assert [r["session"] for r in rows] == ["7", "7", "9"]
-    assert all(r["lang"] == "vi" and r["speaker_verified"] is False for r in rows)
+    assert all(r["lang"] == "id" and r["speaker_verified"] is False for r in rows)
 
     # max_samples 要在写满即止，不能把整片 tar 遍历完
     n2 = dl._download_hf_tar(src, tmp_path / "out2", 2, "tok", progress=None)
@@ -318,6 +319,18 @@ def test_cv22_reads_tsv_and_tar_without_loader_script(tmp_path, monkeypatch):
     assert n2 == 1
 
 
+def _yodas2_sidon_source():
+    """构造式 fixture：yodas2_sidon 的 WebDataset 成员 parquet 形态（2026-09-15 在 ms000 上核实）。
+
+    ms 已退出目标语种、registry 里没有这个形态的源了，但下载器的
+    「404 → 索引 API 直链回退」与「按 utterances 切句」两条路径与语种无关，仍要覆盖。
+    """
+    from voxft.data.registry import Source
+    return Source("yodas2_probe", "ms", "构造式 fixture，不在 registry 里", "hf_dataset",
+                  "sarulab-speech/yodas2_sidon", "ms000", "train", "CC-BY-3.0",
+                  has_speaker=False)
+
+
 def test_parquet_404_falls_back_to_api_url(tmp_path, monkeypatch):
     """仓库没有 refs/convert/parquet 分支时（yodas2_sidon 实测），hf_hub_download 404
     要回退到索引 API 的原始 URL 直链下载；非 404 错误不许回退。"""
@@ -328,9 +341,8 @@ def test_parquet_404_falls_back_to_api_url(tmp_path, monkeypatch):
     import soundfile as sf
     from huggingface_hub.errors import EntryNotFoundError
     from voxft.data import download as dl
-    from voxft.data.registry import get_source
 
-    src = get_source("yodas2_ms")
+    src = _yodas2_sidon_source()
     flac = io.BytesIO()
     sf.write(flac, np.full(160, 0.2, dtype=np.float32), 16000, format="FLAC")
     buf = io.BytesIO()
@@ -352,8 +364,8 @@ def test_parquet_404_falls_back_to_api_url(tmp_path, monkeypatch):
                         lambda **kw: (_ for _ in ()).throw(EntryNotFoundError("no entry")))
     monkeypatch.setattr(dl.time, "sleep", lambda s: None)
     monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.com")
-    api_url = ("https://huggingface.co/api/datasets/sarulab-speech/yodas2_sidon"
-               "/parquet/ms000/train/0.parquet")
+    api_url = (f"https://huggingface.co/api/datasets/{src.repo}"
+               f"/parquet/{src.config}/{src.split}/0.parquet")
     log = []
     n = dl._download_parquet(src, [(api_url, "")], tmp_path / "out", None, "tok", log.append)
     assert n == 1
@@ -382,9 +394,8 @@ def test_wds_member_columns_sliced_by_utterances(tmp_path, monkeypatch):
     import pandas as pd
     import soundfile as sf
     from voxft.data import download as dl
-    from voxft.data.registry import get_source
 
-    src = get_source("yodas2_ms")
+    src = _yodas2_sidon_source()
 
     def _flac(seconds, value):
         buf = io.BytesIO()

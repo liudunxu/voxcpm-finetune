@@ -29,6 +29,12 @@ def check_inputs(work):
 def prepare(work, texts):
     source = json.loads((texts / "plan.json").read_text(encoding="utf-8"))
     cases = _read_manifest(texts / "cases.jsonl")
+    # ⚠️ 本函数是 2026-09-17 那轮「新文本诊断」的冻结跑器（下面写死了 ref_ab_20260917、
+    # training_pool_20260917、lora_omni5_r8 与 5 个 seed），150/750 是那一轮的实际规模。
+    # 2026-10-19 目标语种收缩为 th/tl/id 后，`Counter({lang: 30 ...})` 期望 90 行而下两行
+    # 仍写死 150 ⇒ 这个守卫**必然失败**，这是有意的：它挡住「在语种范围变了之后重跑冻结实验、
+    # 产出一个与 docs/holdout_eval_20260917.md 不可比的结果」。要跑新的三语种留出评测，
+    # 另写一份新 plan 与新跑器，不要把这里的 150 改成 90 来「修好」它。
     if (sha256(texts / "cases.jsonl") != source["cases_sha256"]
             or Counter(row["lang"] for row in cases) != Counter({lang: 30 for lang in TARGET_LANGS})
             or len({row["case_id"] for row in cases}) != 150

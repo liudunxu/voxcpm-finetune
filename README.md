@@ -1,8 +1,8 @@
 # voxft — VoxCPM 2 微调工作台
 
-基于 [VoxCPM 2](https://github.com/OpenBMB/VoxCPM) 的短剧配音微调工作台：中/英文参考音频克隆 → 泰语、Tagalog/Taglish、越南语、印尼语、马来语，结合中英文情绪/语气前缀。**目标是五语种（th/tl/vi/id/ms）联合微调：一个 LoRA 同时提升这几种语言的配音质量，验收按语种分别做。** 涵盖数据加工、混合、LoRA 训练、离线验收、merge 和 HF 同步。
+基于 [VoxCPM 2](https://github.com/OpenBMB/VoxCPM) 的短剧配音微调工作台：中/英文参考音频克隆 → 泰语、Tagalog/Taglish、印尼语，结合中英文情绪/语气前缀。**目标是三语种（th/tl/id）联合微调：一个 LoRA 同时提升这几种语言的配音质量，验收按语种分别做。**（越南语 vi 与马来语 ms 已于 2026-10-19 退出目标语种，源、评测白名单与 case 集同步收缩，接入依据转为存档。）涵盖数据加工、混合、LoRA 训练、离线验收、merge 和 HF 同步。
 
-开发约定见 [AGENTS.md](AGENTS.md)，通用流程见 [docs/finetune_playbook.md](docs/finetune_playbook.md)，越南语/印尼语的接入依据与语料核实状态见 [docs/vi_id_support.md](docs/vi_id_support.md)，马来语见 [docs/ms_support.md](docs/ms_support.md)。本轮只调整微调数据、配置及离线评测，不调整翻译或生产配音链路。
+开发约定见 [AGENTS.md](AGENTS.md)，通用流程见 [docs/finetune_playbook.md](docs/finetune_playbook.md)，印尼语的接入依据与语料核实状态见 [docs/vi_id_support.md](docs/vi_id_support.md)（其中 vi 部分已存档），马来语存档见 [docs/ms_support.md](docs/ms_support.md)。本轮只调整微调数据、配置及离线评测，不调整翻译或生产配音链路。
 
 ## 环境与启动
 
@@ -45,11 +45,11 @@ FilSwitch 的转换 parquet 可能只是小体积元数据：下载器会继续�
 |---|---|---|
 | `thai_ser` | 泰语表演/即兴情绪对白 | 仅保留 `turn_type=impro`、agreement ≥ 0.7；保留 actor、强度、轮次元数据；无正文时 large-v3 转写后人工校对 |
 | `yodas_th` | 经人工抽检的泰语自然语流 | 视频 ID 不等于真实说话人；默认不配 ref、不合成音量标签、不拼接短句 |
-| `drama_tl` / `drama_th` / `drama_vi` / `drama_id` | 自有授权、真人短剧对白主力 | JSONL 导入；要求核实身份、转写、标签和来源，不用模型合成语音补量 |
+| `drama_tl` / `drama_th` / `drama_id` | 自有授权、真人短剧对白主力 | JSONL 导入；要求核实身份、转写、标签和来源，不用模型合成语音补量 |
 | `filswitch` | 低比例 Taglish 发音/切换补充 | **新闻朗读**，不是自然对话或情绪主力；许可另行核实 |
 | `filipino_emotion` | 待审候选 | 缺文本、可靠身份及完整来源信息；不再列为表现力首选，默认不生成可信控制/refs |
-| `gigaspeech2_vi` / `gigaspeech2_id` | VI/ID 自然口语锚点 | Apache-2.0，许可最干净；`gated` 需 HF_TOKEN 并同意条款；**字段形态与规模未核实**，先 `--max-samples 20` 试跑，若是 `path`+`start`+`end` 长音频切片形态则本源不可用 |
-| FLEURS / CV22 / Porjai | 小比例发音补充 | 朗读风格，不宜充当去念稿感主力；身份未知者不配 ref。VI/ID 侧的 `fleurs_vi/id`、`cv22_vi/id` 小时数未核实 |
+| `gigaspeech2_id` | ID 自然口语锚点 | Apache-2.0，许可最干净；`gated` 需 HF_TOKEN 并同意条款；形态已核实为 `data/id/<split>.tar.gz` + 同名 tsv（`kind=hf_tar`），dev 分片 944MB≈8.2h |
+| FLEURS / CV22 / Porjai | 小比例发音补充 | 朗读风格，不宜充当去念稿感主力；身份未知者不配 ref。ID 侧的 `fleurs_id` 小时数未核实 |
 | `aishell3` | 中文多说话人回放 | 约 85h；清除原始正文中交错的拼音，仅保留汉字 |
 | `replay_en` | 英文多说话人回放 | 自备审核 JSONL，例如经授权核验的 VCTK；不是跨语言同人 ref 的替代品 |
 
@@ -57,19 +57,21 @@ FilSwitch 的转换 parquet 可能只是小体积元数据：下载器会继续�
 
 ### 首轮配比（实验起点，不是已验证最优值）
 
-按**过滤后训练音频时长**计算。**联合微调是目标**：五个目标语种各占 17 分、中文回放 10、英文回放 5（回放全局共享，不按语种各配一份）；语种内部再按下表的角色比例拆。下表是「单语种」视角的比例，联合权重的具体写法见 [playbook §2.1.1](docs/finetune_playbook.md)。
+按**过滤后训练音频时长**计算。**联合微调是目标**：三个目标语种等权各占 28.3 分（`(100−15)/3`）、中文回放 10、英文回放 5（回放全局共享，不按语种各配一份）；语种内部再按下表的角色比例拆。下表是「单语种」视角的比例，联合权重的具体写法见 [playbook §2.1.1](docs/finetune_playbook.md)。
 
-| 数据角色 | TH | TL | VI | ID | MS |
-|---|---:|---:|---:|---:|---:|
-| 真人短剧/即兴表演 | 45%（THAI-SER impro + 自有对白） | 45%（自有真人对白） | **0%**（待自建 `drama_vi`） | **0%**（待自建 `drama_id`） | **0%**（待自建 `drama_ms`） |
-| 自然口语 | 35%（审核后的 YODAS） | 30%（自有自然 TL/Taglish） | 75%（`gigaspeech2_vi`） | 75%（`gigaspeech2_id`） | 76%（`yodas2_ms`） |
-| 发音补充 | 5% | 10%（FilSwitch 等） | 10%（`fleurs_vi` + `cv22_vi`） | 10%（`fleurs_id` + `cv22_id`） | 9%（`fleurs_ms`） |
-| 中文回放 | 10% | 10% | 10% | 10% | 10% |
-| 英文回放 | 5% | 5% | 5% | 5% | 5% |
+| 数据角色 | TH | TL | ID |
+|---|---:|---:|---:|
+| 真人短剧/即兴表演 | 45%（THAI-SER impro + 自有对白） | 45%（自有真人对白） | **0%**（待自建 `drama_id`） |
+| 自然口语 | 35%（审核后的 YODAS） | 30%（自有自然 TL/Taglish） | 75%（`gigaspeech2_id`） |
+| 发音补充 | 5% | 10%（FilSwitch 等） | 10%（`fleurs_id` + `cv22_id`） |
+| 中文回放 | 10% | 10% | 10% |
+| 英文回放 | 5% | 5% | 5% |
 
-**VI/ID/MS 的表演档为 0 是事实，不是待填的空格**：本轮没有核实到任何可商用的开源真人情感/表演语料，不伪造、也不用 TTS 合成补量（`mesolitica/Malaysian-TTS` 看着对口，实为 F5-TTS 合成，禁用）。因此这三语种首轮的验收目标**必须降级**——只能声称发音准确度、口语韵律、克隆能力不退化、指令跟随不劣化，**不能声称情绪表现力有改善或去念稿感达成**。表演档的上限要等自建素材到位后开第二轮，届时回到 TH/TL 的形态。**数据准备顺序建议 TH → TL → ID → VI → MS**（这是准备顺序不是训练顺序，联合模型一次训全部；id 基座基线最好、正字法纯 ASCII、许可最干净，ms 数据最薄放最后）。ms 值得特别投入：基座 WER 1.75% 是五语种里**唯一输给竞品**的（Fish S2-Pro 1.41%），提升空间最大；但 `gigaspeech2` 与 Common Voice 22 都**没有 ms**，自然口语只剩 `yodas2_ms` 一个候选，且 ms/id 高度互通、**盲听必须由马来西亚母语者做**。逐项依据见 [docs/vi_id_support.md](docs/vi_id_support.md) 与 [docs/ms_support.md](docs/ms_support.md)。
+**ID 的表演档为 0 是事实，不是待填的空格**：本轮没有核实到任何可商用的开源真人情感/表演语料，不伪造、也不用 TTS 合成补量。因此 id 首轮的验收目标**必须降级**——只能声称发音准确度、口语韵律、克隆能力不退化、指令跟随不劣化，**不能声称情绪表现力有改善或去念稿感达成**。表演档的上限要等自建素材到位后开第二轮，届时回到 TH/TL 的形态。**数据准备顺序建议 TH → TL → ID**（这是准备顺序不是训练顺序，联合模型一次训全部；id 基座基线最好、正字法纯 ASCII、许可最干净）。逐项依据见 [docs/vi_id_support.md](docs/vi_id_support.md)。
 
-TL 先补 5–10h 干净真人对白做试验，覆盖多名女声、男声和年龄段；重点补质疑、克制愤怒、担心、讽刺、哭腔、带笑说话与自然停顿，避免某种情绪只来自某一名演员。每条必须是完整、单人、可听清的 3–30s 语流，不把孤立词或无真实连续时间关系的句子拼成长音频。VI/ID 的自建录制直接复用 [docs/corpus_sourcing.md](docs/corpus_sourcing.md) §5 的方案（一次录制同时产出目标语料 + 跨语言同人 ref + 固定评测集）。
+> vi/ms 退出前的配比是五语种各 17 分，ms 当年的判断（基座 WER 1.75% 是唯一输给竞品的、`gigaspeech2` 与 CV22 都没有 ms、盲听必须由马来西亚母语者做）已随语种一起存档在 [docs/ms_support.md](docs/ms_support.md)；`mesolitica/Malaysian-TTS` 是 F5-TTS 合成、`mesolitica` 全线无许可声明，**两条禁用红线与语种是否为目标无关，永久有效**。
+
+TL 先补 5–10h 干净真人对白做试验，覆盖多名女声、男声和年龄段；重点补质疑、克制愤怒、担心、讽刺、哭腔、带笑说话与自然停顿，避免某种情绪只来自某一名演员。每条必须是完整、单人、可听清的 3–30s 语流，不把孤立词或无真实连续时间关系的句子拼成长音频。ID 的自建录制直接复用 [docs/corpus_sourcing.md](docs/corpus_sourcing.md) §5 的方案（一次录制同时产出目标语料 + 跨语言同人 ref + 固定评测集）。
 
 混合器按时长采样，每条原始目标音频最多 3 次曝光（嵌套混合也检查），验证集不重复。小源不足时不强凑配比，`mix.json` 记录请求时长、实际时长占比、唯一目标/ref 数、各自最大曝光、control/ref 联合覆盖。3× 上限针对训练目标，ref 复用另行统计。**目标重复 3× 再训练 3 epoch，相当于最多约 9 次曝光**，因此先跑 1 epoch。
 
@@ -98,10 +100,10 @@ uv run python -m voxft.data.pipeline --source thai_ser --out thai_ser_v2
 uv run python -m voxft.data.pipeline --source drama_tl --manifest /path/to/acted_tl.jsonl --out drama_tl_v2
 uv run python -m voxft.data.pipeline --source drama_tl --manifest /path/to/natural_tl.jsonl --out natural_tl_v2
 uv run python -m voxft.data.pipeline --source replay_en --manifest /path/to/replay_en.jsonl --out replay_en_v2
-# VI/ID：公开源先小样本试跑，确认 config 名与字段形态（gigaspeech2 尤其要看时长分布）再全量
+# ID：公开源先小样本试跑，确认 config 名与字段形态（gigaspeech2 尤其要看时长分布）再全量
 uv run python -m voxft.data.download --source gigaspeech2_id --max-samples 20
-uv run python -m voxft.data.download --source fleurs_vi --max-samples 50
-uv run python -m voxft.data.pipeline --source drama_vi --manifest /path/to/acted_vi.jsonl --out drama_vi_v1
+uv run python -m voxft.data.download --source fleurs_id --max-samples 50
+uv run python -m voxft.data.pipeline --source drama_id --manifest /path/to/acted_id.jsonl --out drama_id_v1
 # 下列名称均需先完成加工；页面也支持逐行填写相同多源配比。
 uv run python -m voxft.data.pipeline --mix drama_tl_v2=45 natural_tl_v2=30 filswitch_v2=10 aishell3_v2=10 replay_en_v2=5 --out tl_drama_v2
 uv run python -m voxft.data.pipeline --mix gigaspeech2_id_v1=75 fleurs_id_v1=5 cv22_id_v1=5 aishell3_v2=10 replay_en_v2=5 --out id_anchor_v1
@@ -111,7 +113,7 @@ uv run python -m voxft.data.pipeline --mix gigaspeech2_id_v1=75 fleurs_id_v1=5 c
 
 ### 成片素材导入（切分 → 转写 → 试听标注 → 追加）
 
-素材是成片视频或音轨时，用「素材导入」页（或 CLI）代替手工切片：PyAV 解码 → Whisper VAD 定边界（medium）→ 隔 ≤0.7s 的相邻区间合并成 3–30s 候选（超长的在最安静的一帧切开，不切在词中间）→ large-v3 逐条转写并按语种过滤（tl / id 源放行 `en`，Taglish 与印尼语混英不会被误杀；vi 默认从严，实测 `drop_lang` 误杀再给该源加 `accept_langs`）→ 页面逐条试听、标说话人/情绪、判定保留或丢弃 → 追加进 `data/raw/<source>/manifest.jsonl`，可选自动重新加工。
+素材是成片视频或音轨时，用「素材导入」页（或 CLI）代替手工切片：PyAV 解码 → Whisper VAD 定边界（medium）→ 隔 ≤0.7s 的相邻区间合并成 3–30s 候选（超长的在最安静的一帧切开，不切在词中间）→ large-v3 逐条转写并按语种过滤（tl / id 源放行 `en`，Taglish 与印尼语混英不会被误杀；有权威文本的朗读源用 `accept_langs` 收紧到单一语种，语种不符就是错行不是 code-switch）→ 页面逐条试听、标说话人/情绪、判定保留或丢弃 → 追加进 `data/raw/<source>/manifest.jsonl`，可选自动重新加工。
 
 ```
 data/raw/drama_tl/manifest.jsonl        # 追加目标，加工读它
@@ -180,7 +182,7 @@ uv run pytest
 
 建议每个目标语言先固定 80–100 条：覆盖中/英文 ref、无前缀/有前缀、女主/其他女声/男声、普通口语/强情绪/Taglish/长短句，并加中英文回放回归。保留用户反馈里的难词及漏尾句，但先让母语者确认台词与预期读法；翻译改写不是本轮训练标签自动修复项。
 
-报告保存逐条条件、CER、适用语言的 WER、疑似漏尾、音频路径与待填 `human_review`；多次运行不覆盖。`--lang` 支持 `th/tl/vi/id/ms/zh/en`；只有 Taglish 走自动语种检测（`AUTO_DETECT_LANGS`），th/vi/id/ms 强制指定解码语种让 CER 在不同 checkpoint 间可比。**vi 正字法按音节空格分隔，它的 WER 是音节级错误率**，不与 id/tl/ms/en 的词级 WER 横向比；**th 词间无空格，只有 CER**。`--texts-file` 的逐 case `lang` 可以混多语种，报告里的 **`by_lang`** 段给出分语种 CER/WER/漏尾——**联合 run 必须逐语种与 `eval base` 的同一份 case 对比，任一语种退化即算失败，不许用「平均变好」掩盖**。ASR 无法代替母语发音判定，泰语与越南语的声调组合符都保留，F0/能量仅描述，不是越高越好（越南语 6 声调，`f0_std_st` 同样不代表自然度）。
+报告保存逐条条件、CER、适用语言的 WER、疑似漏尾、音频路径与待填 `human_review`；多次运行不覆盖。`--lang` 支持 `th/tl/id/zh/en`；只有 Taglish 走自动语种检测（`AUTO_DETECT_LANGS`），th/id 强制指定解码语种让 CER 在不同 checkpoint 间可比。**th 词间无空格，只有 CER**；id/tl/en 词间有空格才算词级 WER。（历史上 vi 的正字法按音节空格分隔、WER 是音节级，不与词级横比——vi 已于 2026-10-19 退出白名单，含 vi/ms 行的旧 case 集不再可跑。）`--texts-file` 的逐 case `lang` 可以混多语种，报告里的 **`by_lang`** 段给出分语种 CER/WER/漏尾——**联合 run 必须逐语种与 `eval base` 的同一份 case 对比，任一语种退化即算失败，不许用「平均变好」掩盖**。ASR 无法代替母语发音判定，泰语的声调组合符保留，F0/能量仅描述，不是越高越好。
 
 验收由至少两名母语评审随机盲听同条件 A/B：自然度、情绪匹配、清晰度、克隆音色分别评分，标记真实截断/噪声/发音错。分 ref 语言、角色及情绪查看结果；目标是自然度/情绪改善且清晰度与音色不退化。自动报告不生成“通过”结论。
 

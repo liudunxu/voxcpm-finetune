@@ -57,7 +57,8 @@ def test_acoustic_sample_is_fixed_and_does_not_rewrite_reports(monkeypatch, tmp_
     saved = json.loads((tmp_path / "acoustic_sample/reports.json").read_text())
     assert all("cohorts" not in json.loads(Path(path).read_text()) for path in saved.values())
     session = evaluation.review_session(saved["off"], saved["on"])
-    assert len(session) == 30 and {row["seed"] for row in session} == {42, 43}
+    # 3 个目标语种 × 3 个 ref 语种 = 9 个分层，各抽 1 条 × 2 seed
+    assert len(session) == 18 and {row["seed"] for row in session} == {42, 43}
     assert all(not row["review_1"] and not row["review_2"] for row in session)
     assert all(path.read_bytes() == contents for path, contents in originals.items())
     with pytest.raises(FileExistsError):
@@ -100,6 +101,6 @@ def test_holdout_preparation_preserves_multiple_existing_references(monkeypatch,
     module.prepare(tmp_path / "output", experiment)
     plan = json.loads((tmp_path / "output/plan.json").read_text())
     cases = module._read_manifest(tmp_path / "output/cases.jsonl")
-    assert len(cases) == 150 and all(row["selected"] == 30 for row in plan["by_lang"].values())
+    assert len(cases) == 90 and all(row["selected"] == 30 for row in plan["by_lang"].values())
     assert {row["ref_audio"] for row in cases} == {row["ref_audio"] for row in references}
     assert plan["evaluated"] is False and plan["evaluation_seeds"][-1] == 49

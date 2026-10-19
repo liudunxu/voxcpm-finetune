@@ -6,15 +6,15 @@
 **当前仅登记链接，不代表可训练、已获授权或确认真人配音；未下载、未入库、未启动训练。**
 页面访问未取得可用内容，标题、频道、时长、实际音轨语言及许可均未核验。
 
-| 用户标记地区 | 候选目标语言（待核验音轨） | YouTube视频ID | 原始链接 |
-|---|---|---|---|
-| ID | 印尼语 `id` | `vRfou8f4ldc` | `https://www.youtube.com/watch?v=vRfou8f4ldc` |
-| VN | 越南语 `vi` | `chUbzBi7uCU` | `https://www.youtube.com/watch?v=chUbzBi7uCU` |
-| TH | 泰语 `th` | `azjRlQB3TU0` | `https://www.youtube.com/watch?v=azjRlQB3TU0` |
-| PH | Tagalog/Filipino `tl` | `YD1rU72MN4E` | `https://www.youtube.com/watch?v=YD1rU72MN4E` |
+| 用户标记地区 | 候选目标语言（待核验音轨） | YouTube视频ID | 原始链接 | 状态 |
+|---|---|---|---|---|
+| ID | 印尼语 `id` | `vRfou8f4ldc` | `https://www.youtube.com/watch?v=vRfou8f4ldc` | 目标语种，待核验 |
+| VN | 越南语 `vi` | `chUbzBi7uCU` | `https://www.youtube.com/watch?v=chUbzBi7uCU` | ⚠️ **仅档案**：vi 已于 2026-10-19 退出目标语种，此链接从未下载/核验，**不要为它启动采集**；行本身保留（用户已提供过的输入，删了下次又要重新索要） |
+| TH | 泰语 `th` | `azjRlQB3TU0` | `https://www.youtube.com/watch?v=azjRlQB3TU0` | 目标语种，待核验 |
+| PH | Tagalog/Filipino `tl` | `YD1rU72MN4E` | `https://www.youtube.com/watch?v=YD1rU72MN4E` | 目标语种，待核验 |
 
 这些是用户提供的地区标签，不是音频语言检测结果；PH还需核对是否Taglish或其它语言。
-本批没有MS来源，不把ID当MS补量，也不把四条链接算成五语种可用语料。
+本批没有MS来源，不把ID当MS补量；ms 与 vi 均已退出目标语种后，**这三条链接（ID/TH/PH）也不等于三个目标语种的已核验可用语料** —— 授权、音轨语言、真人/合成来源与质量全部未核验。
 
 后续启用顺序：
 
@@ -26,7 +26,9 @@
 4. 导入前冻结训练/验证划分，沿用原音频、session、已知说话人及文本去重规则；
    同一原音频不跨split，跨集/跨地区若为同源重传也检查重复。人物角色名不能证明配音员相同。
    同人ref需独立身份依据；现有同源切片配对限制仍有效，不能改名绕过。
-5. 先做小样本数据审计，再决定是否立单变量训练实验；保留五语种分项回归与MS保护，
+5. 先做小样本数据审计，再决定是否立单变量训练实验；保留 th/tl/id 三语种分项回归，
+   以及互通语种的保护口径（口音判定必须找该语种母语者，ASR 语种标签不作口音门禁 ——
+   原 id/ms 条目的通用教训，ms 退出后仍适用于任何近亲语种对），
    不因有新链接就改配比、开GPU或升级r8。母语质量未评仍标未验证。
 
 以下保留历史TH/TL调研；旧配比和规模建议不覆盖当前TODO与AGENTS的执行边界。

@@ -78,13 +78,13 @@ def test_strength_reports_merge_and_reaggregate(tmp_path, monkeypatch):
     monkeypatch.setattr(evaluation, "_transcribe", lambda *args: "test")
     monkeypatch.setattr(evaluation, "_acoustics", lambda *args: {
         "f0_std_st": 1, "audio_sec": 2, "speaker_sim": 0.9})
-    cases = [{"case_id": name, "text": "test", "lang": "ms"} for name in ("one", "two")]
-    full = evaluation.evaluate("/r8/latest", "ms", cases, seeds=[42, 43],
+    cases = [{"case_id": name, "text": "test", "lang": "id"} for name in ("one", "two")]
+    full = evaluation.evaluate("/r8/latest", "id", cases, seeds=[42, 43],
                                cfg_value=1.8, lora_strength=0.5)
     assert full["lora_strength"] == 0.5 and "strength0.5" in full["label"]
     assert all(extra == {"lora_strength": 0.5} and not kwargs["retry_badcase"]
                and kwargs["cfg_value"] == 1.8 for kwargs, extra in calls)
-    shards = [evaluation.evaluate("/r8/latest", "ms", cases, seeds=[42, 43],
+    shards = [evaluation.evaluate("/r8/latest", "id", cases, seeds=[42, 43],
                                  cfg_value=1.8, lora_strength=0.5, shard=(index, 2))
               for index in range(2)]
     merged = evaluation.merge_reports([report["report_path"] for report in shards])
@@ -105,9 +105,9 @@ def test_strength_reports_merge_and_reaggregate(tmp_path, monkeypatch):
     assert summarized["items"][0]["human_review"]["notes"] == "keep this annotation"
     assert summarized["note"] == "legacy measurement description"
     assert summarized["seed_stability"] == full["seed_stability"]
-    assert evaluation.evaluate("base", "ms", cases)["lora_strength"] == 0
+    assert evaluation.evaluate("base", "id", cases)["lora_strength"] == 0
     with pytest.raises(ValueError, match="base"):
-        evaluation.evaluate("base", "ms", cases, lora_strength=0.5)
+        evaluation.evaluate("base", "id", cases, lora_strength=0.5)
 
 
 def test_runlog_cer_default_and_cli_override(monkeypatch):
