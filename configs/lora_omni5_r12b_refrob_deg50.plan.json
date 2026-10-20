@@ -1,0 +1,15 @@
+{
+  "gpus": 1,
+  "epochs": 1,
+  "num_iters": 357,
+  "effective_batch": 16,
+  "train_manifest": "/root/autodl-tmp/voxft_data/processed/r12b_refrob_deg50/train.jsonl",
+  "train_samples": 5705,
+  "langs": {
+    "en": 253,
+    "id": 1852,
+    "th": 2090,
+    "tl": 1001,
+    "zh": 509
+  }
+}
