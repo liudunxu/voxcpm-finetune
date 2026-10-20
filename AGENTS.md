@@ -262,7 +262,7 @@ OmniVoice 是 GPU 侧合成服务；配音编排在另一个仓库 `dubbing_inte
 - **追加素材会让旧验证集泄漏**：`split_records` 的随机分组依赖清单长度，追加后重新加工会把上一轮验证组整体重排进训练集，**已训 run 的评测结论随之作废**。用 `data/raw/<source>/holdout.json` 钉住固定验证集；矛盾组合直接报错，不静默把钉住的数据喂进训练。`ingest` 的 `session` 自动设为素材 ID。
 
 ### 许可红线与禁用语料
-- **泰语源有 CC-BY-SA 红线**（`thai_ser`、`Porjai-central`；Porjai 的 `pattani`/`khummuang` 是 NC-SA 直接排除）。据此定的红线：**含 SA 数据训练的 LoRA 与 merge 后完整模型一律不对外分发**（不传 HF、不随客户交付、不开源），只通过 API 交付合成音频；要对外发布就谈商业授权或只用 Apache-2.0/CC-BY 源。
+- **2026-10-20 用户决定：取消「SA 源权重不对外分发」的限制**，含 thai_ser 训练的权重可直接推 HuggingFace（模型卡按上游许可如实标注即可）。（历史记录：此前红线为 SA 权重只走 API 交付。）
 - **合成语音语料禁止用于补量**：`laion/dramabox-voice-acting-data-annotated`（源头是 `ResembleAI/Dramabox` 与 `gemini-2.5-pro-tts`，文件名里的 seed 就是生成采样；**只有标注 schema 可参考**）、OpenSpeechHub 三个泰语集、`mesolitica/Malaysian-TTS`。
 - **`mesolitica`（Malaysia-AI）全线无许可声明**，拿到书面授权前一律不得使用（**无声明 ≠ 开放，默认全权保留**）。`espnet/floras` 是 3TB 长音频基准不可切分；`disco-eth/WorldSpeech` 与 `MERaLiON/sea_audiobench_*` 是 NC/NC-ND。
 - **Tagalog 无可商用的开源真人表演语料**（已核实，别重复调研）：CV tl `recordedHours=0`、YODAS 无 tl/fil、OpenSLR 无、HF 只有厂商 sample、SEACrowd 全是 text/图像、`yapdo-convo` 无许可声明。⇒ 只能付费或自建 `drama_tl`。
