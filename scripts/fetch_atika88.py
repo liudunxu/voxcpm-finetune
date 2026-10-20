@@ -18,7 +18,9 @@ from pathlib import Path
 import pandas as pd
 
 REPO = "Atika88/Indonesian-ASR-11-Class-Dataset"
-BASE = f"https://hf-mirror.com/datasets/{REPO}/resolve/main"
+# 2026-10-20 实测：hf-mirror 对该仓大文件 ~100KB/s 太慢，改直连 huggingface.co +
+# network_turbo 代理（用户指示）；3 个句型包并行下载。
+BASE = f"https://huggingface.co/datasets/{REPO}/resolve/main"
 CATEGORIES = ["Declarative", "Interrogative", "Exclamatory"]
 OUT = Path("/root/autodl-tmp/voxft_data/raw/atika88_id")
 WORK = Path("/root/autodl-tmp/atika88_tars")
@@ -52,6 +54,20 @@ def main():
         if len(parts) == 2:
             expected[parts[1].lstrip("*")] = parts[0]
 
+    # 3 个句型包并行下（各自一条连接，聚合约 3 倍）
+    tar_procs = []
+    for cat in CATEGORIES:
+        tar = WORK / f"{cat}.tar"
+        if tar.exists() and tar.stat().st_size > 0:
+            continue
+        tar_procs.append((cat, subprocess.Popen(
+            ["curl", "-sL", "--fail", "--retry", "3", "-o", str(tar),
+             f"{BASE}/data/audio_shards/by_category/{cat}.tar"])))
+    for cat, p in tar_procs:
+        if p.wait() != 0:
+            raise SystemExit(f"FATAL: {cat}.tar 下载失败")
+    print("3 个句型包下载完成")
+
     wanted = {}  # tar member 后缀 → 行
     for _, row in real.iterrows():
         wanted[row["audio_path"]] = row
@@ -60,7 +76,7 @@ def main():
     n = 0
     with (OUT / "manifest.jsonl").open("w", encoding="utf-8") as mf:
         for cat in CATEGORIES:
-            tar_path = fetch(f"data/audio_shards/by_category/{cat}.tar", WORK / f"{cat}.tar")
+            tar_path = WORK / f"{cat}.tar"
             key = f"data/audio_shards/by_category/{cat}.tar"
             if key in expected:
                 actual = hashlib.sha256(tar_path.read_bytes()).hexdigest()
