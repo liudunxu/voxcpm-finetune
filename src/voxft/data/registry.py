@@ -215,6 +215,16 @@ SOURCES: list[Source] = [
     ),
     # ---- 印尼语 ----
     Source(
+        "atika88_id", "id", "Atika88 印尼语 ASR-11 类（134h/20 人，11 种句型，16k 棚录）",
+        "local", "", "", "",
+        "CC-BY-4.0",
+        "2026-10-20 联网核实（HF 卡片+元数据 parquet）：真人录音，speaker_id（M1-M12/F1-F8）"
+        "真实说话人标签；均长 ~4.6s 贴近线上 cue；按句型分 11 类。⚠️ 上游混入 132 条 "
+        "Edge-TTS 合成修复行，抓取时必须按 is_synthetic 过滤；209 个模板句文本多样性低，"
+        "当口音/发音锚点，不当泛化主力。下载走 scripts/fetch_atika88.py（tar 分类包）。",
+        has_speaker=True, qc="none", role="anchor", quality=85,
+    ),
+    Source(
         "gigaspeech2_id", "id", "Gigaspeech 2 印尼语（YouTube/播客自然口语）",
         "hf_tar", "speechcolab/gigaspeech2", "id", "dev",
         "Apache-2.0",
