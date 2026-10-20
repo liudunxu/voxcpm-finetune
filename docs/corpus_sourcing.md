@@ -33,6 +33,22 @@
 
 以下保留历史TH/TL调研；旧配比和规模建议不覆盖当前TODO与AGENTS的执行边界。
 
+## 2026-10-20：id/tl 开放语料复查（联网核实到原文，用户要求重搜）
+
+**ID（印尼语）：有新增量，三个合规候选**（许可均核到页面/API 原文）：
+
+| 候选 | 规模 | 许可 | 形态 | 状态 |
+|---|---|---|---|---|
+| **ID2**（[Zenodo 15946165](https://zenodo.org/records/15946165)，印尼本土两所大学） | 7h41m / 10230 条 / 31 人（爪哇/巽他/巴塔克/巴厘/米南 5 族分组，男16女15） | CC-BY-4.0（Zenodo API 原文） | 录音棚真人朗读，手工转写，均长 ~2.7s 贴 cue 长度 | **首选**，对口「地道 id 去 MY 腔」 |
+| [Atika88/Indonesian-ASR-11-Class-Dataset](https://huggingface.co/datasets/Atika88/Indonesian-ASR-11-Class-Dataset) | 134h / 104,368 真人条 / 20 人 | CC BY 4.0（卡片原文） | prompted 朗读，均长 ~4.6s | 备选；**必须过滤 `is_synthetic==True` 的 132 条 Edge-TTS 行**；文本只有 209 模板句 |
+| yodas2_sidon **id000**（[sarulab-speech](https://huggingface.co/datasets/sarulab-speech/yodas2_sidon)） | 1420h（用户字幕档） | CC-BY-3.0 | YouTube 自然口语 | 备选（量大但需抽样审字幕质量）；复用 yodas_th 接入方式，video_id 只是近似身份不配 ref |
+
+id 排除项（带证据）：SEACrowd indspeech 全家 CC-BY-NC-SA；TITML-IDN 学术非商用；MagicHub 两个 id 集为 Magic Data 非商用许可；CoVoST2 CC-BY-NC；Kaggle 印尼口音集 CC-BY-NC；CMU Wilderness 音频是 bible.is 版权；IndoMER（情绪标注独白，本来最贴「表演」需求）**无许可声明+社媒来源** 判死；BabelSpeech 50h 标 Apache 但文件名含 youtube_id（授权链不成立）；OpenSLR 全表无 Bahasa Indonesia（别再去找）。CV27 的 id 相对 CV22 只多 0.79h，不升级。
+
+**TL（塔加洛语）：开放世界依旧无解**（本轮用 2026-09 发布的 CV27/sps-5.0 官方 JSON 复核，仍无 tl locale）。
+新定案：`filipino-emotion-tts` 从待审**移除判死**（无许可+无文本列+YouTube 抓取）；PLD（UP Diliman 454h 学术库）CC-BY-NC 确认（含 2026-03 上架 MDC 的版本）；InfoBayAI 呼叫中心集 8kHz 且 sample-only；SilencioNetwork NC；KarlShane11 只是已知源的过滤重打包无增量。
+付费线索更新：新增 **SpeechDataAI tagalog-conversational-speech**（宣称 2000h 双人自发对话/200 母语者/双声道/签署商用授权，$65/h，2026-10 上架，**厂商真实性未验证**——若走付费先索免费 sample 验真伪），与 MagicHub BigFTagaCSC 1285h 并列登记。**正解仍是 drama_tl 自建。**
+
 ## 历史TH / TL表演语料获取
 
 回答「Tagalog 表演语料只能自建，那我去哪找」。**2026-09 逐项核实**，区分「我拉到了页面/API 确认」和「只是搜索提到」。
