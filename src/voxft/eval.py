@@ -323,7 +323,11 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                 "suspected_truncation": _is_truncated(hyp, case["text"]),   # = 少读/漏尾
                 "over_read": _over_read(hyp, case["text"]),                  # = 多读/跑飞
                 "len_ratio": round(len(h) / len(r), 3) if r else None,
-                **_acoustics(wav_path, case["text"], case.get("ref_audio"), ref_cache),
+                # 声学指标（含 speaker_sim）对原始干净 ref 计算：降质 ref 条件下衡量
+                # 「脏参考下还保住多少身份」，不是对脏参考本身的贴合度。
+                **_acoustics(wav_path, case["text"],
+                             case.get("ref_audio_original") or case.get("ref_audio"),
+                             ref_cache),
                 "wav": wav_path, "gen_sec": gen_sec,
                 "human_review": {"naturalness_1_5": None, "emotion_fit_1_5": None,
                                  "speaker_similarity_1_5": None, "intelligibility_1_5": None,
@@ -627,8 +631,9 @@ def main() -> None:
         path = Path(args.texts_file).resolve()
         texts = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
         for case in texts:
-            if case.get("ref_audio"):
-                case["ref_audio"] = str((path.parent / case["ref_audio"]).resolve())
+            for key in ("ref_audio", "ref_audio_original"):
+                if case.get(key):
+                    case[key] = str((path.parent / case[key]).resolve())
     else:
         texts = [SAMPLE_BY_LANG[args.lang]]
         print("提示：内置单句仅为 smoke test，不能用于微调验收。")

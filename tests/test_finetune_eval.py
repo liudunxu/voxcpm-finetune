@@ -121,6 +121,37 @@ def test_eval_keeps_conditions_thai_marks_and_unique_reports(tmp_path, monkeypat
     assert all(not kw["retry_badcase"] and kw["text"].startswith("(surprised)") for kw in kwargs)
 
 
+def test_eval_scores_speaker_sim_against_original_clean_ref(tmp_path, monkeypatch):
+    """降质 ref 条件：生成用脏 ref（ref_audio），声学指标对原始干净 ref
+    （ref_audio_original）计算——衡量「脏参考下保住多少身份」。"""
+    from voxft.data import pipeline
+    monkeypatch.setattr(evaluation, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
+    monkeypatch.setattr(infer, "get_model", lambda *args: object())
+    gen_kwargs = []
+    monkeypatch.setattr(infer, "_run", lambda model, kw: gen_kwargs.append(kw) or ("fake.wav", 0.1))
+    monkeypatch.setattr(evaluation, "_transcribe", lambda *a: "Saya tidak tahu")
+    seen = []
+    monkeypatch.setattr(evaluation, "_acoustics",
+                        lambda wav, text, ref, cache: seen.append(ref) or {
+                            "f0_std_st": 1.0, "audio_sec": 1.0, "chars_per_sec": 5.0,
+                            "metallic": False, "low_snr": False, "speaker_sim": 0.9})
+    degraded = tmp_path / "degraded.wav"
+    degraded.write_bytes(b"fake")
+    cases = [{"text": "Saya tidak tahu", "lang": "id",
+              "ref_audio": str(degraded), "ref_audio_original": "/orig/clean_ref.wav"}]
+    report = evaluation.evaluate("base", "id", cases, seeds=[42])
+    assert seen == ["/orig/clean_ref.wav"]
+    assert gen_kwargs[0]["reference_wav_path"] == str(degraded)
+    assert report["items"][0]["ref_audio_original"] == "/orig/clean_ref.wav"
+    # 没有 ref_audio_original 的 case（旧报告口径）行为不变：对 ref_audio 本身打分。
+    seen.clear()
+    evaluation.evaluate("base", "id", [{"text": "Saya tidak tahu", "lang": "id",
+                                        "ref_audio": str(degraded)}], seeds=[42])
+    assert seen == [str(degraded)]
+
+
 def test_eval_shard_and_merge_roundtrip(tmp_path, monkeypatch):
     """分片必须保持原始 case_id（否则合出来的报告跟整跑的基线配不上对），
     各片并集等于整跑、交集为空；merge 重算的聚合必须与整跑一致。"""
