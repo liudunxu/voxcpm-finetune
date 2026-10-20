@@ -102,6 +102,8 @@ def main():
                     mf.write(json.dumps({
                         "audio": str(dst), "text": hit["transcript"],
                         "speaker": f"atika88:{hit['speaker_id']}",
+                        # 说话人标签是数据集作者登记的真实身份（非聚类猜测），标记可信
+                        "speaker_verified": True,
                         "session": hit["take_id"], "origin_audio": str(dst),
                         "lang": "id", "category": hit["category"],
                         "source_dataset": REPO, "source_license": "CC-BY-4.0",
