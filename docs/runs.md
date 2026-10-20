@@ -114,6 +114,75 @@ MS重复币种输入修前→修后共同CER .613793→.275862，但转写不直
 本次补录重新校验配置、训练清单及历史基线指纹；结构化抽取备份为大盘
 `runlog_backfill_20260918.json`，原始报告未改。
 
+## lora_omni5_r16_big
+
+- 生成时间：2026-10-20 22:15:58
+- 结论：**不晋级：id 显著退化（ΔCER +0.040 [+0.003,+0.090] vs base，+0.047 vs r13x），疑因 Atika88 模板句过拟合**
+- 下一步：等母语评审口音主门；id 方向再动则减/撤 Atika88 份额
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 2 / 5045 |
+| warmup / weight_decay / max_grad_norm | 504 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/r16_big/train.jsonl |
+| 样本数 / 语种条数 | 40359 / {"en": 961, "id": 18817, "th": 13350, "tl": 5361, "zh": 1870} |
+| val loss 首→末 | 0.9765 (step 0) → 0.9497 (step 3750)，最优 0.9216 |
+
+### 数据配比（按时长）
+
+- 总时长 **77.306 h** / 40359 条，max_repeat=3.0
+- 带 ref_audio：9860，带控制前缀：843
+- max_exposure：3
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.0273 | 0.0288 | 2.2244 |
+| id | 0.3667 | 0.3864 | 29.8682 |
+| th | 0.2757 | 0.2905 | 22.4597 |
+| tl | 0.2757 | 0.2368 | 18.3069 |
+| zh | 0.0546 | 0.0575 | 4.4468 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、118 个 case × seed = 354 条样本
+
+| 语种 | base CER | lora_omni5_r16_big_latest CER |
+|---|---|---|
+| en | 0.0153 (WER 0.0251) | 0.0146 (WER 0.0297) |
+| id | 0.023 (WER 0.0893) | 0.0633 (WER 0.1353) |
+| th | 0.1155 | 0.0928 |
+| tl | 0.0184 (WER 0.0735) | 0.014 (WER 0.0754) |
+| zh | 0.0515 | 0.073 |
+| **总体** | 0.049 | 0.0548 |
+| 疑似漏尾 | 0.0141 | 0.0311 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r16_big_latest` 红线：无
+  - 噪声级（未触发红线，照实记录）：id 0.0230→0.0633；zh 0.0515→0.0730
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r16_big_latest`：id p90尾静音 0.180→0.300s（+0.120s）；th p90尾静音 0.180→0.300s（+0.120s）；id speech_ratio 0.905→0.836（-0.069）；th speech_ratio 0.896→0.845（-0.051）
+
+报告文件：`base_b34db7c942ec4464ae04543c02bb8f9a.json`、`lora_omni5_r16_big_latest_d7bc38b4d45a42f6b246815c32de3e2d.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+全预算 77.3h 轮，训至 3750/5045 步磁盘写满崩（step_* 7G + tar 缓存 5G 未清），保住 latest@3500（1.4 epoch 甜点位）。th −0.023 显著优于基座保持；zh 6% 回放 3ep 下正常（0.073）。大轮预算必须预留 step_* 占地（save_interval × 430M），用完的包缓存立即删。
+
+---
+
 ## lora_omni5_r14_thai_ser
 
 - 生成时间：2026-10-20 18:39:38

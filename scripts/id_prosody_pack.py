@@ -14,7 +14,7 @@ EVAL_DIR = "/root/autodl-tmp/voxft_ckpt/eval"
 SSH = ["ssh", "-p", "51348", "-o", "StrictHostKeyChecking=no",
        "root@connect.bjb1.seetacloud.com"]
 WORK_LOCAL = Path("work/audio_ab/20261020_id_prosody")
-MODELS = ["base", "r8", "r12a", "r13x"]
+MODELS = ["base", "r8", "r13x", "r16big"]
 
 
 def find_probe_reports():
@@ -29,8 +29,8 @@ def find_probe_reports():
                          check=True).stdout.strip()
     by_label = json.loads(raw)
     label_map = {"base": "base", "r8": "lora_omni5_r8_latest",
-                 "r12a": "lora_omni5_r12a_refrob_clean_latest",
-                 "r13x": "lora_omni5_r13x_idemph_3ep_latest"}
+                 "r13x": "lora_omni5_r13x_idemph_3ep_latest",
+                 "r16big": "lora_omni5_r16_big_latest"}
     return {m: by_label[l] for m, l in label_map.items()}
 
 
