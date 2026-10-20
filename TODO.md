@@ -95,7 +95,7 @@ refrob 阶段 0 的 6 份 `refrob_20261012_*.jsonl`（30 case）已删除，重�
   最重 combo：base −0.040 / r8 −0.050）；CER 方向一致为正但 n=18 功效不足；
   串音类条件输出显著变短；单点坏例 r8/lp4k/id_nat_02/seed42 垫 15.16s 尾静音。
   完整数字与阶段 2/3 修订建议见 `docs/ref_robustness_baseline_20261020.md`。
-- [ ] 阶段 2/3（A/B 训练验收）：**2026-10-20 已开训**（用户确认，含配比修订）。
+- [x] 阶段 2/3（A/B 训练验收）：**2026-10-20 完成，B 不晋级，保持 r8**。
   修订：r8 配方（五语种含 ms/vi 各 17%）随 vi/ms 数据删除已不可重建，且实测
   joint_omni8 共 32307 行 **0 条 ref**（B 臂无 ref 可降）⇒ A/B 改用新三语种配比 +
   cv22 可信配对：th/tl/id 各 28.3 分 + zh 10 + en 5（按有效时长、12h 预算、seed 42），
@@ -109,6 +109,13 @@ refrob 阶段 0 的 6 份 `refrob_20261012_*.jsonl`（30 case）已删除，重�
   1 epoch 从官方基座新训（r64/alpha64/dropout0.05/enable_dit/proj 关/lr 1e-4），
   串行执行各带 wandb 桥接（项目 liudunxu22-b/voxcpm-finetune，连通性已实测）。
   构建 `scripts/refrob_stage2_build.py`、驱动 `scripts/refrob_stage2_train.sh`。
+  **验收结果**：v2 红线全过（th/tl/id 相对 base 无退化，干净 SIM 0.921/0.920 ≥ r8 0.918）；
+  但降质套件主目标未达成——B 的 SIM 退缩与 A 同量级（combo −0.059 vs −0.056），
+  仅有局部内容收益（combo ΔCER 从 A 的 +0.045 压回 +0.009、时长退缩最浅）。
+  **阴性结论：当前 ref 覆盖（16.5%，仅 cv22 th/id）下 ref 降质训练不修身份退缩，
+  不据此判死路线但也不扩大重试**；重试前置是把可信 ref 覆盖做上去。
+  全文 `docs/ref_robustness_stage2_20261020.md`；base/r8 的 v2-118×3seed 基线报告
+  已沉淀，后续轮次验收只需跑新候选。
   干净回归走完整 v2（**118 case**）分语种红线（ΔCER>0.05、盲听负−胜≥2 且负≥3，
   **th/tl/id 任一语种退化即整轮不通过**）；降质套件看内容指标改善为主目标；允许牺牲部分
   speaker_sim 但全量记录，干净条件下 SIM 回退超 run 间噪声（±0.009）须写进结论。

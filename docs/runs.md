@@ -114,6 +114,144 @@ MS重复币种输入修前→修后共同CER .613793→.275862，但转写不直
 本次补录重新校验配置、训练清单及历史基线指纹；结构化抽取备份为大盘
 `runlog_backfill_20260918.json`，原始报告未改。
 
+## lora_omni5_r12b_refrob_deg50
+
+- 生成时间：2026-10-20 13:59:28
+- 结论：**不通过：降质下 SIM 退缩未收窄（combo −0.059 vs A −0.056），干净侧与 A 持平，不晋级保持 r8**
+- 下一步：短 cue / 情绪两轮各自冻结单变量方案；refrob 方向如再做需先解决 ref 覆盖（仅 cv22 th/id 16.5%）
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1 / 357 |
+| warmup / weight_decay / max_grad_norm | 35 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/r12b_refrob_deg50/train.jsonl |
+| 样本数 / 语种条数 | 5705 / {"en": 253, "id": 1852, "th": 2090, "tl": 1001, "zh": 509} |
+| val loss 首→末 | 1.0352 (step 0) → 0.9744 (step 356)，最优 0.8687 |
+
+### 数据配比（按时长）
+
+- 总时长 **12.0129 h** / 5705 条，max_repeat=3.0
+- 带 ref_audio：939，带控制前缀：0
+- max_exposure：1
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.0501 | 0.0501 | 0.6017 |
+| id | 0.2833 | 0.2832 | 3.402 |
+| th | 0.2833 | 0.2836 | 3.4066 |
+| tl | 0.2833 | 0.2831 | 3.401 |
+| zh | 0.1001 | 0.1 | 1.2016 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、118 个 case × seed = 354 条样本
+
+| 语种 | base CER | lora_omni5_r12b_refrob_deg50_latest CER |
+|---|---|---|
+| en | 0.0153 (WER 0.0251) | 0.0149 (WER 0.0293) |
+| id | 0.023 (WER 0.0893) | 0.0206 (WER 0.1126) |
+| th | 0.1155 | 0.1011 |
+| tl | 0.0184 (WER 0.0735) | 0.0187 (WER 0.0785) |
+| zh | 0.0515 | 0.0614 |
+| **总体** | 0.049 | 0.0455 |
+| 疑似漏尾 | 0.0141 | 0.0198 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r12b_refrob_deg50_latest` 红线：无
+  - 噪声级（未触发红线，照实记录）：tl 0.0184→0.0187；zh 0.0515→0.0614
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r12b_refrob_deg50_latest`：id 非数字 audio_sec 3.75→4.23s（+13%），ΔCER非数字 -0.0047——非数字音频变长但 CER 近似不变；id p90尾静音 0.180→0.320s（+0.140s）；th p90尾静音 0.180→0.320s（+0.140s）；tl p90尾静音 0.180→0.380s（+0.200s）；id speech_ratio 0.905→0.830（-0.075）；th speech_ratio 0.896→0.838（-0.058）
+
+报告文件：`base_b34db7c942ec4464ae04543c02bb8f9a.json`、`lora_omni5_r12b_refrob_deg50_latest_225ff8ad6d6b499788057e19c4b0e7db.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+refrob 阶段2/3 B 组（50% ref 降质 470 行）。唯一收益：combo 档 CER 爆发从 A 的 +0.045 压到 +0.009、sir8 ΔCER −0.018；但主目标 SIM 保持无改善（combo −0.059，比 A 略差）。干净侧 SIM 0.920 与 A 持平（无牺牲）。结论：当前 ref 覆盖下 ref 降质训练不修身份退缩。
+
+---
+
+## lora_omni5_r12a_refrob_clean
+
+- 生成时间：2026-10-20 13:59:28
+- 结论：**通过（对照组）：三语种红线全过，但这不是目标臂**
+- 下一步：看 r12b 降质套件结论；短 cue 轮次待冻结方案
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1 / 357 |
+| warmup / weight_decay / max_grad_norm | 35 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/r12a_refrob_clean/train.jsonl |
+| 样本数 / 语种条数 | 5705 / {"en": 253, "id": 1852, "th": 2090, "tl": 1001, "zh": 509} |
+| val loss 首→末 | 1.0352 (step 0) → 0.9748 (step 356)，最优 0.8688 |
+
+### 数据配比（按时长）
+
+- 总时长 **12.0129 h** / 5705 条，max_repeat=3.0
+- 带 ref_audio：939，带控制前缀：0
+- max_exposure：1
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.0501 | 0.0501 | 0.6017 |
+| id | 0.2833 | 0.2832 | 3.402 |
+| th | 0.2833 | 0.2836 | 3.4066 |
+| tl | 0.2833 | 0.2831 | 3.401 |
+| zh | 0.1001 | 0.1 | 1.2016 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、118 个 case × seed = 354 条样本
+
+| 语种 | base CER | lora_omni5_r12a_refrob_clean_latest CER |
+|---|---|---|
+| en | 0.0153 (WER 0.0251) | 0.0133 (WER 0.0255) |
+| id | 0.023 (WER 0.0893) | 0.019 (WER 0.0949) |
+| th | 0.1155 | 0.1042 |
+| tl | 0.0184 (WER 0.0735) | 0.019 (WER 0.0809) |
+| zh | 0.0515 | 0.0736 |
+| **总体** | 0.049 | 0.0471 |
+| 疑似漏尾 | 0.0141 | 0.0141 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r12a_refrob_clean_latest` 红线：无
+  - 噪声级（未触发红线，照实记录）：tl 0.0184→0.0190；zh 0.0515→0.0736
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r12a_refrob_clean_latest`：id 非数字 audio_sec 3.75→4.21s（+12%），ΔCER非数字 -0.0075——非数字音频变长但 CER 近似不变；id p90尾静音 0.180→0.340s（+0.160s）；th p90尾静音 0.180→0.340s（+0.160s）；tl p90尾静音 0.180→0.380s（+0.200s）；id speech_ratio 0.905→0.849（-0.056）
+
+报告文件：`base_b34db7c942ec4464ae04543c02bb8f9a.json`、`lora_omni5_r12a_refrob_clean_latest_4fb52fd9285e4878b463f8514e42c920.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+refrob 阶段2/3 A 组（干净 ref，三语种新配比 12h）。v2 118case×3seed：总体 CER base 0.0490→A 0.0471；th −0.011/tl +0.001/id −0.004 区间均跨零或改善；SIM 0.921（r8 0.918）。尾静音 0.223 略高于 r8 0.188。
+
+---
+
 ## r11：lora_omni5_r11_control / lora_omni5_r11_tl_short
 
 - 实验完成：**2026-09-18 10:20:18**；补录：2026-09-18。
