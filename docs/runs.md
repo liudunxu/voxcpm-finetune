@@ -114,6 +114,75 @@ MS重复币种输入修前→修后共同CER .613793→.275862，但转写不直
 本次补录重新校验配置、训练清单及历史基线指纹；结构化抽取备份为大盘
 `runlog_backfill_20260918.json`，原始报告未改。
 
+## lora_omni5_r14_thai_ser
+
+- 生成时间：2026-10-20 18:39:38
+- 结论：**不晋级：与 r13x 打平（th +0.005/id +0.011 均跨零），thai_ser 3/20 份额无可测增量**
+- 下一步：r15_big 全预算放大轮（70.6h/4196 步，2 epoch）
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 3 / 1073 |
+| warmup / weight_decay / max_grad_norm | 107 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/r14_thai_ser/train.jsonl |
+| 样本数 / 语种条数 | 5719 / {"en": 232, "id": 2269, "th": 1848, "tl": 901, "zh": 469} |
+| val loss 首→末 | 1.0425 (step 0) → 0.9771 (step 1072)，最优 0.9225 |
+
+### 数据配比（按时长）
+
+- 总时长 **12.0155 h** / 5719 条，max_repeat=3.0
+- 带 ref_audio：1060，带控制前缀：128
+- max_exposure：1
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.0455 | 0.0455 | 0.5468 |
+| id | 0.3485 | 0.3483 | 4.1846 |
+| th | 0.2575 | 0.2579 | 3.099 |
+| tl | 0.2575 | 0.2574 | 3.0923 |
+| zh | 0.091 | 0.0909 | 1.0928 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、118 个 case × seed = 354 条样本
+
+| 语种 | base CER | lora_omni5_r14_thai_ser_latest CER |
+|---|---|---|
+| en | 0.0153 (WER 0.0251) | 0.0164 (WER 0.0298) |
+| id | 0.023 (WER 0.0893) | 0.0274 (WER 0.1156) |
+| th | 0.1155 | 0.0954 |
+| tl | 0.0184 (WER 0.0735) | 0.0138 (WER 0.0806) |
+| zh | 0.0515 | 0.0703 |
+| **总体** | 0.049 | 0.0456 |
+| 疑似漏尾 | 0.0141 | 0.0169 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r14_thai_ser_latest` 红线：无
+  - 噪声级（未触发红线，照实记录）：en 0.0153→0.0164；id 0.0230→0.0274；zh 0.0515→0.0703
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r14_thai_ser_latest`：id 非数字 audio_sec 3.75→4.27s（+14%），ΔCER非数字 +0.0040——非数字音频变长但 CER 近似不变；id p90尾静音 0.180→0.340s（+0.160s）；th p90尾静音 0.180→0.300s（+0.120s）；tl p90尾静音 0.180→0.300s（+0.120s）；id speech_ratio 0.905→0.833（-0.072）
+
+报告文件：`base_b34db7c942ec4464ae04543c02bb8f9a.json`、`lora_omni5_r14_thai_ser_latest_c57eb28c506a4d1caef238286b8308c3.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+zh/en 回放恢复生效（zh CER 0.070 回到正常，r13 砍半时是 0.234）。情绪前缀 128 条入混但无可测效应。
+
+---
+
 ## lora_omni5_r13x_idemph_3ep
 
 - 生成时间：2026-10-20 17:41:10
