@@ -1,0 +1,15 @@
+{
+  "gpus": 1,
+  "epochs": 3,
+  "num_iters": 1073,
+  "effective_batch": 16,
+  "train_manifest": "/root/autodl-tmp/voxft_data/processed/r14_thai_ser/train.jsonl",
+  "train_samples": 5719,
+  "langs": {
+    "en": 232,
+    "id": 2269,
+    "th": 1848,
+    "tl": 901,
+    "zh": 469
+  }
+}
