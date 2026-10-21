@@ -511,3 +511,15 @@ def test_blind_regression_needs_a_margin_not_a_single_loss():
     assert verdict(0, 12, 3) is True       # 3 负 0 胜，差值 3 >= 2，算
     assert verdict(1, 10, 4) is True       # 4 负 1 胜，差值 3 >= 2，算
     assert verdict(0, 10, 2) is False      # 差值够但负不足 3 条
+
+
+def test_is_numeric_catches_thai_number_words():
+    """泰文数字词同样会被 Whisper 归一成阿拉伯数字，必须与 \d 一样进 numeric 档；
+    显式 numeric 标记优先于一切自动检测。"""
+    assert evaluation._is_numeric({"text": "ค่าเข้าชมห้าสิบบาท"}) is True
+    assert evaluation._is_numeric({"text": "แถวสองแถวหนึ่ง"}) is True
+    assert evaluation._is_numeric({"text": "ลดลงสามสิบเปอร์เซนต์"}) is True
+    assert evaluation._is_numeric({"text": "สวัสดีครับวันนี้อากาศดีมาก"}) is False
+    assert evaluation._is_numeric({"text": "Terkima kasih banyak"}) is False
+    assert evaluation._is_numeric({"text": "อากาศดี", "numeric": True}) is True
+    assert evaluation._is_numeric({"text": "ห้าคน", "numeric": False}) is False

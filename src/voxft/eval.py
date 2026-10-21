@@ -70,13 +70,22 @@ def _over_read(hyp: str, ref: str) -> bool:
     return bool(r) and len(h) > 1.4 * len(r)
 
 
+# Whisper 会把口播的泰文数字词归一成阿拉伯数字（"แถวสอง" → "แถว 2"），与阿拉伯数字
+# 同理污染 CER，但 \d 检测抓不到——v2 的 32 条 th case 里 16 条含泰文数字词。
+_THAI_NUM_WORDS = re.compile(
+    r"ศูนย์|หนึ่ง|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า|สิบ|ยี่สิบ|ร้อย|พัน|หมื่น|แสน|ล้าน|บาท|เปอร์เซนต์"
+)
+
+
 def _is_numeric(case: dict) -> bool:
     """数字类 case 要单独汇总：Whisper 自己会把口播数字词归一成阿拉伯数字或货币符号，
     实测 "isang libo't limang daan pesos" 被转写成 "1,500 pesos"，CER 因此虚高到 0.588
-    而 base 与 checkpoint 完全相同——这一类的 CER 差异不能当作 TTS 质量差异。"""
+    而 base 与 checkpoint 完全相同——这一类的 CER 差异不能当作 TTS 质量差异。
+    泰文数字词（สอง/สิบ/บาท/เปอร์เซนต์…）同样会被归一成数字，一并识别。"""
     if "numeric" in case:
         return bool(case["numeric"])
-    return bool(re.search(r"\d", case.get("text") or ""))
+    text = case.get("text") or ""
+    return bool(re.search(r"\d", text) or _THAI_NUM_WORDS.search(text))
 
 
 def _acoustics(wav_path: str, text: str, ref_path: str | None, ref_cache: dict) -> dict:
@@ -147,8 +156,8 @@ _REPORT_NOTE = (
     "工程检查通过不等于完整语言验收通过。"
     "rate 的量纲随语种不同（th 字符/秒、tl/en/id 词级），不横向比。"
     "suspected_truncation=少读/漏尾，over_read=多读/跑飞（>1.4× 参考长度）。"
-    "mean_cer_non_numeric 剔除了含阿拉伯数字的 case——那一类的 CER 会被 Whisper "
-    "自身的数字归一化污染，只能靠盲听。metallic 与 low_snr 阈值移植自 OmniVoice "
+    "mean_cer_non_numeric 剔除了含数字的 case（阿拉伯数字与泰文数字词都算——"
+    "两者都会被 Whisper 归一成数字符号而污染 CER），只能靠盲听。metallic 与 low_snr 阈值移植自 OmniVoice "
     "生产口径，但 168 条盲听标注样本标定定案：metallic_score 对人工 noise 标注 "
     "AUC=0.060（反相关），low_snr AUC=0.509（纯随机）且 28.7% 误报（主因是参考音频"
     "噪底）——两者永久只作参考值，不作通过门限。speaker_sim 是 WavLM X-vector 余弦，"
