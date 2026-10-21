@@ -11,6 +11,7 @@ checkpoints/
 /work/video_review/
 /work/audio_ab/
 /work/for_train/
+/work/rescore/
 wandb/
 logs/
 *.wav
