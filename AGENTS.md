@@ -259,6 +259,8 @@ OmniVoice 是 GPU 侧合成服务；配音编排在另一个仓库 `dubbing_inte
 - **响度**：仅已验证说话人统一增益到 −24 dBFS；防削波时整个说话人共同回退，**禁止单条峰值归一**；未知身份不统一调响度；上游已抹掉的动态不能恢复。
 - **声学描述**：`f0_std_st` 含泰语声调与清浊音误差，不代表自然度；`energy_range_db` 是能量分位差不是 SNR。**拒绝 min_snr_db/min_f0_std 硬筛**，不把这些指标自动变成情绪指令（`--min-snr-db` CLI 已删，`Options` 字段与守卫保留）。**`librosa.yin` 的 `frame_length` 必须按 sr 推导**（`2*sr/60` 向上取 2 的幂），硬编码 1024 会让 48k 合成音频的 `f0_std_st` 失真约 9%。
 - **重加工**：每次写新音频子目录，不覆盖旧清单引用的音频；旧产物不自动清理。JSONL 格式与远程执行命令见 README。
+- **删除加工产物前先回收派生数据**：`needs_transcribe` 源的 whisper 转写文本只存在于 processed 产物里（raw 清单 text 保持空），`rm -rf processed/<src>` 前先把文本回填进 raw 清单（回填注意：加工产物的 text 可能已被 `apply_control_prefixes` 改成 `(控制)正文`，须按 `control` 字段剥掉前缀，否则触发裸台词校验）。2026-10-21 因此丢过 1.5h 的 3000 条转写。
+- **分片并发加工按 speaker∪session 并查集分量切**（`scripts/shard_by_identity.py`）：thai_ser 的 session 是 `studioNNN` 多人同棚，只按 speaker 切会让同一 session 跨片落进 train/val 两边，混合器身份检查直接拒绝。
 - **追加素材会让旧验证集泄漏**：`split_records` 的随机分组依赖清单长度，追加后重新加工会把上一轮验证组整体重排进训练集，**已训 run 的评测结论随之作废**。用 `data/raw/<source>/holdout.json` 钉住固定验证集；矛盾组合直接报错，不静默把钉住的数据喂进训练。`ingest` 的 `session` 自动设为素材 ID。
 
 ### 许可红线与禁用语料
