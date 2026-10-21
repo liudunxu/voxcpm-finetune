@@ -114,6 +114,75 @@ MS重复币种输入修前→修后共同CER .613793→.275862，但转写不直
 本次补录重新校验配置、训练清单及历史基线指纹；结构化抽取备份为大盘
 `runlog_backfill_20260918.json`，原始报告未改。
 
+## lora_omni5_r17_no_atika
+
+- 生成时间：2026-10-21 08:36:26
+- 结论：**不通过：总体 CER 0.0495 与 base 持平，但 id 显著差于 r13x（+0.025）；id 探针 CER 0.114 vs base 0.059，77h/4177 步大预算过拟合**
+- 下一步：按用户决定晋级 r13x（12h×3ep=1094 步的甜点位）并推 HF；不再盲目堆数据量/步数
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 2 / 4177 |
+| warmup / weight_decay / max_grad_norm | 417 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/r17_no_atika/train.jsonl |
+| 样本数 / 语种条数 | 33416 / {"en": 822, "id": 14046, "th": 11567, "tl": 5361, "zh": 1620} |
+| val loss 首→末 | 1.0676 (step 0) → 0.9371 (step 4176)，最优 0.9341 |
+
+### 数据配比（按时长）
+
+- 总时长 **69.4764 h** / 33416 条，max_repeat=3.0
+- 带 ref_audio：6632，带控制前缀：724
+- max_exposure：3
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.0273 | 0.0278 | 1.9296 |
+| id | 0.3667 | 0.3729 | 25.9045 |
+| th | 0.2757 | 0.2804 | 19.4789 |
+| tl | 0.2757 | 0.2635 | 18.3069 |
+| zh | 0.0546 | 0.0555 | 3.8565 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、118 个 case × seed = 354 条样本
+
+| 语种 | base CER | lora_omni5_r17_no_atika_latest CER |
+|---|---|---|
+| en | 0.0153 (WER 0.0251) | 0.0162 (WER 0.0271) |
+| id | 0.023 (WER 0.0893) | 0.0407 (WER 0.1235) |
+| th | 0.1155 | 0.0982 |
+| tl | 0.0184 (WER 0.0735) | 0.0126 (WER 0.0699) |
+| zh | 0.0515 | 0.0686 |
+| **总体** | 0.049 | 0.0495 |
+| 疑似漏尾 | 0.0141 | 0.0395 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r17_no_atika_latest` 红线：无
+  - 噪声级（未触发红线，照实记录）：en 0.0153→0.0162；id 0.0230→0.0407；zh 0.0515→0.0686
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r17_no_atika_latest`：id speech_ratio 0.905→0.855（-0.051）
+
+报告文件：`base_b34db7c942ec4464ae04543c02bb8f9a.json`、`lora_omni5_r17_no_atika_latest_ae547b0ec6fd4935993e3e122b78173e.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+tl 显著好（-0.006）但不足以抵消 id 退化；r16(+Atika88)/r17(撤Atika88 同预算) 两轮大预算一致退化，验证 12h×3ep 是当前甜点位
+
+---
+
 ## lora_omni5_r16_big
 
 - 生成时间：2026-10-20 22:15:58
