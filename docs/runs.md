@@ -114,6 +114,75 @@ MS重复币种输入修前→修后共同CER .613793→.275862，但转写不直
 本次补录重新校验配置、训练清单及历史基线指纹；结构化抽取备份为大盘
 `runlog_backfill_20260918.json`，原始报告未改。
 
+## lora_omni5_r18_idaccent_3ep
+
+- 生成时间：2026-10-21 10:59:51
+- 结论：**通过（离线轨）：总体 CER 0.0393 优于 r13x 0.0410；th 显著优于基座（-0.0321）；id/tl 无退化；SIM 0.9171 无漂移；id 探针 0.0013 历代最佳**
+- 下一步：母语评审 id 口音包（含 r18 样本）；通过则 r18 替换上线
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × None = None |
+| epochs / num_iters | 3 / 1390 |
+| warmup / weight_decay / max_grad_norm | 139 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/r18_idaccent/train.jsonl |
+| 样本数 / 语种条数 | None / ["th", "id", "tl", "zh", "en"] |
+| val loss 首→末 | 1.0416 (step 0) → 0.9273 (step 1389)，最优 0.9273 |
+
+### 数据配比（按时长）
+
+- 总时长 **15.0077 h** / 7412 条，max_repeat=3.0
+- 带 ref_audio：1448，带控制前缀：0
+- max_exposure：1
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.0255 | 0.0256 | 0.3846 |
+| id | 0.4756 | 0.4754 | 7.1349 |
+| th | 0.224 | 0.224 | 3.3612 |
+| tl | 0.224 | 0.224 | 3.3614 |
+| zh | 0.0509 | 0.051 | 0.7657 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、118 个 case × seed = 354 条样本
+
+| 语种 | base CER | lora_omni5_r18_idaccent_3ep_latest CER |
+|---|---|---|
+| en | 0.0153 (WER 0.0251) | 0.0138 (WER 0.0281) |
+| id | 0.023 (WER 0.0893) | 0.0157 (WER 0.0903) |
+| th | 0.1155 | 0.0834 |
+| tl | 0.0184 (WER 0.0735) | 0.0128 (WER 0.0721) |
+| zh | 0.0515 | 0.0758 |
+| **总体** | 0.049 | 0.0393 |
+| 疑似漏尾 | 0.0141 | 0.0198 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r18_idaccent_3ep_latest` 红线：无
+  - 噪声级（未触发红线，照实记录）：zh 0.0515→0.0758
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r18_idaccent_3ep_latest`：id p90尾静音 0.180→0.320s（+0.140s）；th p90尾静音 0.180→0.320s（+0.140s）；tl p90尾静音 0.180→0.300s（+0.120s）
+
+报告文件：`base_b34db7c942ec4464ae04543c02bb8f9a.json`、`lora_omni5_r18_idaccent_3ep_latest_14e9edd24d5a441288a77e1614b8e547.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+zh 回放 +0.024 显著但未触 0.05 红线，回放侵蚀较 r13x 的 +0.015 缓慢加重，下轮关注；id 探针各轮：base 0.059 / r8 0.022 / r13x 0.018 / r16 0.062 / r17 0.114 / r18 0.001
+
+---
+
 ## lora_omni5_r17_no_atika
 
 - 生成时间：2026-10-21 08:36:26
