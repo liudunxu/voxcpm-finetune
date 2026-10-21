@@ -307,9 +307,9 @@ def test_control_prefix_from_emotion():
     assert n == 20
     assert all(r["text"].startswith("(") and ")" in r["text"] for r in recs)
     assert all(r["control"] for r in recs)
-    # 中英文前缀都要出现（线上 prompt 就是中英文写的）
-    langs = {any("\u4e00" <= ch <= "\u9fff" for ch in r["control"]) for r in recs}
-    assert langs == {True, False}
+    # 前缀形态与生产 control_instruction 对齐：英文散文短语（DIS _EXPLICIT_EMOTION_STYLE），
+    # 不是中文副词（2026-10-21 读 dubbing_intelligence_service 源码核实后切换）
+    assert all(r["control"] == "angry and emotionally tense" for r in recs)
 
 
 def test_control_prefix_left_off_for_some_samples():
@@ -477,7 +477,7 @@ def test_sources_are_sorted_by_quality():
         "drama_tl", "fleurs_tl", "filipino_speech", "filswitch",
         "filipino_emotion", "tagalog_tts"]
     assert [s.id for s in grouped["id"]] == [
-        "drama_id", "gigaspeech2_id", "fleurs_id", "cv22_id"]
+        "drama_id", "atika88_id", "gigaspeech2_id", "fleurs_id", "cv22_id"]
 
 
 def test_yodas_th_session_from_utt_id():
@@ -572,7 +572,7 @@ def test_verified_controls_and_reference_quadrants():
             r.pop(key, None)
     assert all(not r.get("ref_audio") for r in pair_references(unknown, opts, random.Random(42)))
     assert build_control({"emotion": "angry", "rate": 20, "_rms_dbfs": -10}, random.Random(1), 1) == ""
-    assert build_control({"emotion": "angry", "emotion_verified": True}, random.Random(1), 1) == "愤怒地"
+    assert build_control({"emotion": "angry", "emotion_verified": True}, random.Random(1), 1) == "angry and emotionally tense"
 
 
 def test_sessions_are_indivisible_and_split_is_control_independent():

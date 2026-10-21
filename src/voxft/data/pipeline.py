@@ -323,21 +323,34 @@ def cluster_pseudo_speakers(embs: list[np.ndarray], threshold: float = 0.6,
 # VoxCPM2 的情绪/风格控制就是文本前缀 "(控制指令)正文"（见官方 cli.build_final_text）。
 # 训练文本里完全没有前缀，LoRA 会把基座的指令跟随能力冲掉，情绪 prompt 越调越不灵；
 # 只按可信标签给一部分样本加前缀，另一部分保持裸文本。
-_EMO_PHRASES: dict[str, dict[str, list[str]]] = {
-    "neutral": {"zh": ["平静地", "语气自然", "正常语调"],
-                "en": ["neutral tone", "calm and natural", "plain delivery"]},
-    "angry": {"zh": ["愤怒地"], "en": ["angry"]},
-    "anger": {"zh": ["愤怒地"], "en": ["angry"]},
-    "happy": {"zh": ["开心地"], "en": ["happy"]},
-    "happiness": {"zh": ["开心地"], "en": ["happy"]},
-    "sad": {"zh": ["伤心地"], "en": ["sad"]},
-    "sadness": {"zh": ["伤心地"], "en": ["sad"]},
-    "fearful": {"zh": ["害怕地"], "en": ["fearful"]},
-    "fear": {"zh": ["害怕地"], "en": ["fearful"]},
-    "surprised": {"zh": ["惊讶地"], "en": ["surprised"]},
-    "frustration": {"zh": ["烦躁地"], "en": ["frustrated"]},
-    "frustrated": {"zh": ["烦躁地"], "en": ["frustrated"]},
-    "disgust": {"zh": ["厌恶地"], "en": ["disgusted"]},
+#
+# 前缀形态必须与生产对齐（2026-10-21 读 dubbing_intelligence_service 源码核实）：
+# 线上 LLM 产出 emotion/delivery 英文枚举标签，TTS 后端查表映射成**英文散文短语**
+# 经 control_instruction 字段发出（tts/backends/voxcpm.py _EXPLICIT_EMOTION_STYLE），
+# 不是中文副词、也不是裸英文单词。所以 verified 情绪样本直接用下面的生产形态，
+# 不用 _EMO_PHRASES 式的中文副词。happy/frustrated 不在生产词表，映射到最近邻
+# （excited / low-intensity angry，后者正是 DIS 对 annoyed 的归一行为）；
+# neutral 在生产侧会被清空不发指令，训练侧同样不加前缀。
+_PROD_EMOTION_STYLE: dict[str, str] = {
+    "angry": "angry and emotionally tense",
+    "anger": "angry and emotionally tense",
+    "sad": "sad and emotionally weighted",
+    "sadness": "sad and emotionally weighted",
+    "fearful": "fearful and tense",
+    "fear": "fearful and tense",
+    "surprised": "naturally surprised, kept restrained",
+    "disgusted": "disgusted",
+    "disgust": "disgusted",
+    "contemptuous": "cold and contemptuous",
+    "happy": "bright and excited",
+    "happiness": "bright and excited",
+    "excited": "bright and excited",
+    "amused": "amused",
+    "affectionate": "warm and affectionate",
+    "sarcastic": "cold and sarcastic",
+    "pained": "audibly pained",
+    "frustrated": "subtly angry and emotionally tense",
+    "frustration": "subtly angry and emotionally tense",
 }
 _RATE_PHRASES = {"slow": {"zh": ["语速慢"], "en": ["slow paced"]},
                  "fast": {"zh": ["语速快"], "en": ["fast paced"]}}
@@ -360,7 +373,8 @@ def _assert_control_lang(control) -> str:
 
 
 def build_control(rec: dict, rng: random.Random, zh_ratio: float) -> str:
-    """只使用经审核的中英文指令/标签；不从音量、空格数猜测表演方式。"""
+    """只使用经审核的中英文指令/标签；不从音量、空格数猜测表演方式。
+    emotion_verified 样本直接用生产侧英文散文形态（_PROD_EMOTION_STYLE）。"""
     lang = "zh" if rng.random() < zh_ratio else "en"
     if rec.get("control_verified") is True:
         control = rec.get(f"control_{lang}") or rec.get("control_zh") or rec.get("control_en")
@@ -368,9 +382,8 @@ def build_control(rec: dict, rng: random.Random, zh_ratio: float) -> str:
             return _assert_control_lang(control)
     parts: list[str] = []
     emo = (rec.get("emotion") or "").lower()
-    pool = _EMO_PHRASES.get(emo) if rec.get("emotion_verified") is True else None
-    if pool:
-        parts.append(rng.choice(pool[lang]))
+    if rec.get("emotion_verified") is True and emo in _PROD_EMOTION_STYLE:
+        parts.append(_PROD_EMOTION_STYLE[emo])
     if rec.get("control_verified") is True:
         for key, phrases in (("rate_label", _RATE_PHRASES), ("volume_label", _VOL_PHRASES)):
             if rec.get(key) in phrases:
