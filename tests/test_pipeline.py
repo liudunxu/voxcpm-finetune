@@ -802,3 +802,18 @@ def test_repair_refs_refuses_untrusted_source():
                  DATA_PROCESSED / "fleurs_th" / "train.jsonl")
     with pytest.raises(ValueError, match="has_speaker"):
         repair_refs("fleurs_th")
+
+
+def test_mix_max_sample_dur_filters_overlong():
+    """混合期时长上限：生产 cue 上限 20s，超长样本混合时丢弃；与加工 3-30s 守卫互不替代。"""
+    _make_source(None, "t_longsrc", dur=21.0)
+    process_dataset("t_longsrc", opts=Options(metrics=False, val_ratio=0.0))
+    _make_source(None, "t_shortsrc", dur=4.0)
+    process_dataset("t_shortsrc", opts=Options(metrics=False, val_ratio=0.0))
+    mix_manifests([("t_longsrc", 0.5), ("t_shortsrc", 0.5)], "t_durcap",
+                  max_sample_dur=20.0)
+    rows = [json.loads(l) for l in
+            (DATA_PROCESSED / "t_durcap" / "train.jsonl").read_text().splitlines()]
+    assert rows and all(r["duration"] <= 20.0 for r in rows)
+    with pytest.raises(ValueError, match="max_sample_dur"):
+        mix_manifests([("t_shortsrc", 1)], "t_durcap2", max_sample_dur=31.0)

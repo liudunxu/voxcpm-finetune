@@ -1046,8 +1046,12 @@ def process_dataset(source_id: str, out_name: str | None = None,
 
 def mix_manifests(parts: list[tuple[str, float]], out_name: str,
                   seed: int = 42, max_repeat: float = 3.0, progress=None, *,
-                  train_hours: float | None = None) -> dict:
-    """按有效音频时长采样；每条原始目标音频全局最多 3×，验证集不重复采样。"""
+                  train_hours: float | None = None,
+                  max_sample_dur: float | None = None) -> dict:
+    """按有效音频时长采样；每条原始目标音频全局最多 3×，验证集不重复采样。
+
+    max_sample_dur：混合时丢弃超过该时长的样本（生产 cue 上限 20s，训超过的就是
+    出分布样本）；只收窄，与加工管线的 3-30s 硬守卫（官方建议区间）互不替代。"""
     if not parts or any(not math.isfinite(w) or w <= 0 for _, w in parts):
         raise ValueError("parts 不能为空，权重须为有限正数")
     if len({n for n, _ in parts}) != len(parts) or out_name in {n for n, _ in parts}:
@@ -1056,6 +1060,8 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
         raise ValueError("max_repeat 必须为 1、2 或 3")
     if train_hours is not None and (not math.isfinite(train_hours) or train_hours <= 0):
         raise ValueError("train_hours 必须为有限正数")
+    if max_sample_dur is not None and not (3.0 <= max_sample_dur <= 30.0):
+        raise ValueError("max_sample_dur 只能在加工硬守卫区间 [3, 30] 内收窄")
     for name in [out_name, *(n for n, _ in parts)]:
         if Path(name).name != name or name in ("", ".", ".."):
             raise ValueError("输入/输出必须是单个数据集名称")
@@ -1071,7 +1077,14 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
             p = DATA_PROCESSED / name / f"{split}.jsonl"
             if not p.exists():
                 raise FileNotFoundError(p)
-            rows_by_part.append(_read_manifest(p))
+            rows = _read_manifest(p)
+            if max_sample_dur is not None:
+                kept = [r for r in rows if float(r.get("duration", 0)) <= max_sample_dur]
+                if progress and len(kept) < len(rows):
+                    progress(f"{name}/{split}: 按 max_sample_dur={max_sample_dur}s 丢 "
+                             f"{len(rows) - len(kept)} 条超长样本")
+                rows = kept
+            rows_by_part.append(rows)
         for rows in rows_by_part:
             for rec in rows:
                 if not math.isfinite(float(rec.get("duration", 0))) or float(rec.get("duration", 0)) <= 0:

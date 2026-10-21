@@ -11,6 +11,9 @@
 配方 = r13_idemph 原样（ID 38.3 / TH 28.3 / TL 28.3 / ZH 5 / EN 2.5，12h，seed 42）
 + thai_ser 8 份（~0.94h，~5 情绪类 × 可信标签，经管线 apply_control_prefixes 自动加前缀，
   朗读源无 verified 标签不加——覆盖率守纪律，不伪造标签）。
+混合期 max_sample_dur=20s（2026-10-21 用户确认生产 cue 范围 1-20s；超长样本仅
+  fleurs_* 有 1-6%，总影响 ~1.4h/62h，代价可忽略）。1-3s 侧不动：加工管线
+  3s 下限是官方硬守卫，短 cue 覆盖由验收集（drama_chain 短文本）负责。
 总量 ~12.9h，3ep ≈ 1180 步，守 r13x 甜点位。
 """
 import json
@@ -65,7 +68,8 @@ def main():
                 excluded.add(_norm(json.loads(line)["text"]))
     if (DATA_PROCESSED / OUT).exists():
         raise FileExistsError(f"{OUT} 已存在，不覆盖旧产物")
-    result = mix_manifests(PARTS, OUT, seed=SEED, train_hours=TRAIN_HOURS, progress=print)
+    result = mix_manifests(PARTS, OUT, seed=SEED, train_hours=TRAIN_HOURS,
+                           max_sample_dur=20.0, progress=print)
     train = _read_manifest(DATA_PROCESSED / OUT / "train.jsonl")
     leaked = [r for r in train if _norm(r["text"]) in excluded]
     if leaked:
