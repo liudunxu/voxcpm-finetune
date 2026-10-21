@@ -363,3 +363,22 @@
 - `model=large-v3`不等于切后端；现有转写端点可显式传`asr_backend`做对照。
   合成内置Whisper路径目前带期望文本initial_prompt，不能和无提示Qwen分数直接比；
   先复用无提示端点评估，不为此改生产、每句双跑或新增训练。
+
+## 2026-10-21 drama_chain 生产链路对齐验收（zh ref + 情绪前缀 + 短 cue + 短 ref 2×2）
+
+背景：用户确认真实链路为中文原音 → 说话人 cue ref + 自动情绪 prompt → th/id/tl(+少量en)；
+优先级 = ① 各语种口音地道性 ② 不出娃娃音/玻璃音 badcase ③ 同 speaker 音色一致 ④ 情绪表达。
+集合 eval_cases/drama_chain_20261021.jsonl（28 文本×4 条件=112 行，seeds 42/43/44，cfg1.8/20步）。
+
+三模型对照（每条件 n=84）：
+- 情绪前缀→音色漂移 Δsim：base −0.048 / r13x −0.021 / **r18 −0.015**（微调均减半用户反馈的漂移，r18 略优）
+- id+情绪跑飞：base 0.069 / r13x 0.055 / **r18 0.308**（drama_id_nat_06 seed42 CER 5.94 续写跑飞；
+  r13x 同 case 正常 → 主因指向 r18 的 id 47.5% 份额而非前缀出分布）
+- plain 条件总体 CER：r13x 0.0448/0.0371 ≤ base ≤ r18（r13x 与 r18 差值在 ±0.04 噪声带内）
+- 短 ref（1.7-2.5s）效应：三模型 Δsim 均 ≤0.015，无显著劣化
+- id 韵律探针无泄漏：r13/r18 训练清单命中探针文本均为 0 行
+
+结论：在 zh-ref 生产链路上 **r13x 优于 r18**（v2/fil-ref 验收结论在 zh ref 下反转，再次验证
+「ref 语言改变胜负」）；情绪前缀训练（control 前缀 0%）是两个 LoRA 共同的未覆盖项。
+盲听包 work/audio_ab/drama_chain_20261021/（336 条，按 case 目录，refs/ 含 6 条 zh ref）。
+报告：base_0225cf…、r13x_6140b1…、r18_335be6…（远端 eval/）。
