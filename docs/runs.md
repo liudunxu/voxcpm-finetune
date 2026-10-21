@@ -114,6 +114,59 @@ MS重复币种输入修前→修后共同CER .613793→.275862，但转写不直
 本次补录重新校验配置、训练清单及历史基线指纹；结构化抽取备份为大盘
 `runlog_backfill_20260918.json`，原始报告未改。
 
+## lora_omni5_r19_emotion_3ep
+
+- 生成时间：2026-10-21 17:56:49
+- 结论：**不通过：dramaprod id CER 0.069→0.223（8/96 跑飞，r13x 同集 0/96），且 id p90 尾静音 0.82s 越上限、id speech_ratio -0.145**
+- 下一步：r20：回到 r13x 配比为底（id 恢复 ~37%），thai_ser 减到 ~300 行，给 id/tl 接种生产形态中性前缀；验收看 dramaprod id 跑飞归零且 Δsim 改善不回吐
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | full |
+| LoRA r/alpha/dropout | None/None/None |
+| enable_lm/dit/proj | None/None/None |
+| learning_rate | None |
+| batch × 累积 × GPU | None × None × None = None |
+| epochs / num_iters | None / None |
+| warmup / weight_decay / max_grad_norm | None / None / None |
+| save/valid_interval | None/None |
+| max_batch_tokens | None |
+| 基座 | None |
+| 训练清单 | None |
+| 样本数 / 语种条数 | None / null |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、112 个 case × seed = 336 条样本
+
+| 语种 | base CER | lora_omni5_r19_emotion_3ep_latest CER |
+|---|---|---|
+| en | 0.0024 (WER 0.0052) | 0.0038 (WER 0.0069) |
+| id | 0.0688 (WER 0.2171) | 0.2229 (WER 0.335) |
+| th | 0.1125 | 0.078 |
+| tl | 0.0106 (WER 0.0994) | 0.0153 (WER 0.1101) |
+| **总体** | 0.0552 | 0.0909 |
+| 疑似漏尾 | 0.0119 | 0.0179 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r19_emotion_3ep_latest` 红线：id 0.0688→0.2229
+  - 噪声级（未触发红线，照实记录）：en 0.0024→0.0038；tl 0.0106→0.0153
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r19_emotion_3ep_latest`：overall p90尾静音 0.240→0.500s（+0.260s）；id p90尾静音 0.180→0.820s（+0.640s）；id p90尾静音 0.820s 越过 0.5s 上限；th p90尾静音 0.220→0.460s（+0.240s）；overall speech_ratio 0.859→0.793（-0.066）；id speech_ratio 0.882→0.737（-0.145）；th speech_ratio 0.855→0.794（-0.061）
+
+报告文件：`base_dramaprod.json`、`lora_omni5_r19_emotion_3ep_latest_f89e8d6684e94f8e94cb7ae09f2b4064.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+v2（fil-ref 线上口径）：r19 th 0.096 / tl 0.012 / id 0.020，三语种均优 base，与 r13x/r18 噪声带内打平；zh 退化 0.052→0.139（非目标语种）。id 探针 0.0035 零跑飞（r13x 0.018、r18 0.0013）。情绪音色漂移 Δsim(emo−plain)：base −0.014 / r13x −0.024 / r19 −0.011（r19 达成设计目标，id 子项 −0.029→−0.008）。短 ref SIM r19 0.893 三者最优。dramaprod id 跑飞 8/96 全部在 r13x 同 case 上干净（0.00–0.27），6/8 集中在短 zh ref 条件；r19 数据侧唯一实质变化：新增 thai_ser 511 行（情绪前缀 254 条全在 th）、th 份额 27.7→32.9%、id 稀释 37.4→34.7%、20s 时长上限。机制判断：th 倾斜先验在弱条件（短 ref）下挤占 id 解码稳定性。wandb run 已同步。
+
+---
+
 ## lora_omni5_r18_idaccent_3ep
 
 - 生成时间：2026-10-21 10:59:51
