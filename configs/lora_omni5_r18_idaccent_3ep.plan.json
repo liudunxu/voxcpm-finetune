@@ -1,0 +1,15 @@
+{
+  "run": "lora_omni5_r18_idaccent_3ep",
+  "created": "2026-10-21",
+  "langs": [
+    "th",
+    "id",
+    "tl",
+    "zh",
+    "en"
+  ],
+  "data": "r18_idaccent: 7412 rows / 15.01h (id 7.13h/47.5%, th 3.36h, tl 3.36h, zh 0.77h, en 0.38h)",
+  "epochs": 3,
+  "steps": 1390,
+  "note": "r13x 甜点位配方 + id 份额 38.3→46.7 份（口音优先）；计划 docs/r18_plan_20261021.md"
+}
