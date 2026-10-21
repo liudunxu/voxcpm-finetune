@@ -114,6 +114,112 @@ MS重复币种输入修前→修后共同CER .613793→.275862，但转写不直
 本次补录重新校验配置、训练清单及历史基线指纹；结构化抽取备份为大盘
 `runlog_backfill_20260918.json`，原始报告未改。
 
+## lora_omni5_r21_nothaiser_cont
+
+- 生成时间：2026-10-21 20:27:31
+- 结论：**不通过：dramaprod id 跑飞 7/96（全部集中 seed 44），id CER 0.069→0.104；比 r20 更差**
+- 下一步：r22 候选：r13x 冷启动 + 仅 id/tl 中性前缀接种（无 thai_ser 权重残留），验证 Δsim 改善到底来自前缀还是 thai_ser
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × None = None |
+| epochs / num_iters | None / 1531 |
+| warmup / weight_decay / max_grad_norm | 120 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/r21_nothaiser/train.jsonl |
+| 样本数 / 语种条数 | None / null |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、112 个 case × seed = 336 条样本
+
+| 语种 | base CER | lora_omni5_r21_nothaiser_cont_latest CER |
+|---|---|---|
+| en | 0.0024 (WER 0.0052) | 0.0027 (WER 0.0035) |
+| id | 0.0688 (WER 0.2171) | 0.1037 (WER 0.2398) |
+| th | 0.1125 | 0.0771 |
+| tl | 0.0106 (WER 0.0994) | 0.0121 (WER 0.1032) |
+| **总体** | 0.0552 | 0.0555 |
+| 疑似漏尾 | 0.0119 | 0.0208 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r21_nothaiser_cont_latest` 红线：无
+  - 噪声级（未触发红线，照实记录）：en 0.0024→0.0027；id 0.0688→0.1037；tl 0.0106→0.0121
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r21_nothaiser_cont_latest`：overall p90尾静音 0.240→0.460s（+0.220s）；id p90尾静音 0.180→0.700s（+0.520s）；id p90尾静音 0.700s 越过 0.5s 上限；th p90尾静音 0.220→0.400s（+0.180s）；overall speech_ratio 0.859→0.805（-0.054）；id speech_ratio 0.882→0.743（-0.138）
+
+报告文件：`base_dramaprod.json`、`r21_dramaprod.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+从 r20 latest 续训 369 步（LR 接余弦尾 ~1.4e-5，终步 1531）。dramaprod：th 0.0771/tl 0.0121/id 0.1037（7/96 跑飞、100% 在 seed 44，id_nat_02/04/06/17/24 口语台词）。Δsim −0.0103 历轮最优（情绪漂移改善保留）。v2 id 0.026（较 r20 0.051 减半）。id 探针 0.0204。结论：续训没能洗掉 thai_ser 引入的 id 失稳，权重残留仍在；r13x 继续守擂（稳定 0 跑飞，但情绪漂移未修）。
+
+---
+
+## lora_omni5_r20_emofix_3ep
+
+- 生成时间：2026-10-21 20:27:31
+- 结论：**不通过：dramaprod id 跑飞 5/96（r13x 0/96），id CER 0.069→0.073；v2 id 0.051 同证**
+- 下一步：r21：从 r20 续训 369 步，数据去全部 thai_ser（id 份额回 37.4%）
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × None = None |
+| epochs / num_iters | None / 1162 |
+| warmup / weight_decay / max_grad_norm | 120 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/r20_emofix/train.jsonl |
+| 样本数 / 语种条数 | None / null |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、112 个 case × seed = 336 条样本
+
+| 语种 | base CER | lora_omni5_r20_emofix_3ep_latest CER |
+|---|---|---|
+| en | 0.0024 (WER 0.0052) | 0.0031 (WER 0.0035) |
+| id | 0.0688 (WER 0.2171) | 0.0732 (WER 0.2038) |
+| th | 0.1125 | 0.0764 |
+| tl | 0.0106 (WER 0.0994) | 0.0104 (WER 0.0919) |
+| **总体** | 0.0552 | 0.0461 |
+| 疑似漏尾 | 0.0119 | 0.0119 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r20_emofix_3ep_latest` 红线：无
+  - 噪声级（未触发红线，照实记录）：en 0.0024→0.0031；id 0.0688→0.0732
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r20_emofix_3ep_latest`：id 非数字 audio_sec 2.53→3.03s（+20%），ΔCER非数字 +0.0044——非数字音频变长但 CER 近似不变；overall p90尾静音 0.240→0.440s（+0.200s）；id p90尾静音 0.180→0.720s（+0.540s）；id p90尾静音 0.720s 越过 0.5s 上限；th p90尾静音 0.220→0.340s（+0.120s）；id speech_ratio 0.882→0.765（-0.117）
+
+报告文件：`base_dramaprod.json`、`r20_dramaprod.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+dramaprod：th 0.0764（历轮最优）/ tl 0.0104（最优）/ id 0.0732（跑飞 5/96，4 条集中 seed 44，严重度较 r19 大降 max 0.79 vs 6.58）。Δsim(emo−plain) −0.0158（r19 −0.0112、r13x −0.0236），情绪漂移改善大半保住。v2：th 0.094/tl 0.012/id 0.051（id 续写 3.1%）。id 探针 0.0174。thai_ser 300 行仍留 5 条跑飞 → thai_ser 是失稳源，r21 全删。
+
+---
+
 ## lora_omni5_r19_emotion_3ep
 
 - 生成时间：2026-10-21 17:56:49
