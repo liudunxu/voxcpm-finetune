@@ -3,14 +3,17 @@
 
 - th +800：gigaspeech2_th 500（自然口语锚点）+ cv22_th 300（朗读补充）
 - tl +500：fleurs_tl 剩余未用行（tl 唯一已加工源；fleurs 行长，800 行会把 tl 时长份额推过 id，裁到 500）
-- 排除 r22 train/val 已用 audio 路径（防重复曝光与验证集泄漏）；
-  新行对齐 r22 train 列集（HF datasets schema 一致），ref_audio=None
+- 排除已用目标音频/原音频、评测文本、验证音频/身份/session；保持 3-20s
+- 新行对齐 r22 train 列集，保留原 source_id 与可信 ref，报告实际覆盖率
+- 已存在输出拒绝覆盖；历史 r23 清单不重新构建
 - 确定性抽样 seed=46
 """
 import json
 import random
 import shutil
 from pathlib import Path
+
+from incremental_mix import align_addition, describe_mix, eligible_additions, load_exclusions, validate_mix
 
 R22 = Path("/root/autodl-tmp/voxft_data/processed/r22_idboost")
 PROC = Path("/root/autodl-tmp/voxft_data/processed")
@@ -23,9 +26,12 @@ def load(p):
 
 
 def main() -> None:
+    if DST.exists():
+        raise FileExistsError(f"Frozen output already exists: {DST}")
     train = load(R22 / "train.jsonl")
     val = load(R22 / "val.jsonl")
-    used = {r["audio"] for r in train} | {r["audio"] for r in val}
+    excluded, eval_hashes = load_exclusions()
+    validate_mix(train, val, excluded)
     cols = set()
     for r in train:
         cols.update(r.keys())
@@ -33,38 +39,31 @@ def main() -> None:
     rng = random.Random(46)
     add_all = []
     for src, want in PLAN:
-        pool = [r for r in load(PROC / src / "train.jsonl") if r.get("audio") and r["audio"] not in used]
-        take = rng.sample(pool, min(want, len(pool)))
+        pool, rejected = eligible_additions(load(PROC / src / "train.jsonl"),
+                                           train + add_all, val, excluded)
+        if len(pool) < want:
+            raise ValueError(f"{src}: insufficient safe additions {len(pool)} < {want}")
+        take = rng.sample(pool, want)
         print(f"{src}: 可用 {len(pool)} 行，取 {len(take)} 行")
-        for r in take:
-            for k in list(r.keys()):
-                if k not in cols:
-                    del r[k]
-            for k in cols - set(r.keys()):
-                r[k] = None
-            r["source_id"] = f"{src}_r23boost"
-        add_all.extend(take)
+        print(f"排除 {rejected}")
+        add_all.extend(align_addition(record, cols) for record in take)
     out = train + add_all
+    audit = validate_mix(out, val, excluded)
 
-    DST.mkdir(parents=True, exist_ok=True)
+    DST.mkdir(parents=True, exist_ok=False)
     with open(DST / "train.jsonl", "w", encoding="utf-8") as f:
         for r in out:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     shutil.copy(R22 / "val.jsonl", DST / "val.jsonl")
 
-    hours: dict[str, float] = {}
-    counts: dict[str, int] = {}
-    for r in out:
-        lg = r["lang"]
-        hours[lg] = hours.get(lg, 0.0) + (r.get("duration") or 0.0) / 3600
-        counts[lg] = counts.get(lg, 0) + 1
-    total_h = sum(hours.values())
-    shares = {lg: {"actual": round(h / total_h, 4), "hours": round(h, 3), "rows": counts[lg]}
-              for lg, h in sorted(hours.items())}
+    summary, shares = describe_mix(out)
+    total_h = summary["hours"]
     (DST / "mix.json").write_text(json.dumps({
-        "derived_from": "r22_idboost + th 800 行（gigaspeech2_th 500 + cv22_th 300）+ tl fleurs_tl 剩余全取",
+        "derived_from": "r22_idboost + th 800 行（gigaspeech2_th 500 + cv22_th 300）+ tl fleurs_tl 500 行",
         "total_rows": len(out), "total_hours": round(total_h, 3),
         "language_shares": shares,
+        "train": summary, "metadata_audit": audit, "evaluation_sha256": eval_hashes,
+        "requested_share_note": "Incremental row counts, not a fixed duration-share recipe.",
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"总计 {len(out)} 行 / {total_h:.2f}h")
     for lg, s in shares.items():

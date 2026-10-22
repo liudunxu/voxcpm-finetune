@@ -4,6 +4,286 @@
 
 本文是可以照着一步步执行的流程，三个语种共用。开发约定与踩坑记录见 [AGENTS.md](../AGENTS.md)，数据源取舍背景见 [README.md](../README.md)，**ID 特有的依据、语料核实状态与口径差异见 [vi_id_support.md](vi_id_support.md)**（同文件的 vi 部分与 [ms_support.md](ms_support.md) 已转存档）。
 
+## 2026-10-22：暂停交接与续做计划
+
+**用户决定先记录、后续再做；此前“继续”授权暂停。** 本次只更新文档，不启动新试听包、TTS/ASR、
+训练或大评测，不更换生产r8。下文的启动命令与时间线是历史记录，不是待执行队列。
+强度对照已于北京时间2026-10-22 19:03:41完成；0.5不推进，0.75只保留局部诊断，两档均不晋级。
+完整结果及哈希见[runs.md](runs.md)，当前待办见[TODO.md](../TODO.md)。
+
+### 1. 恢复入口与证据保全
+
+- 用户恢复后先公钥重连：`ssh -p 51348 -o BatchMode=yes -o ConnectTimeout=10 root@connect.bjb1.seetacloud.com`。
+  若端口拒绝连接，向用户确认实例状态/新端口，不反复重试、不自行重启；不在命令或文档写密码。
+- 只读核验`/root/autodl-tmp/strength_ab_20261022_v1/status.json`为`complete`，
+  `plan.json`、四份报告、实际ref与WAV哈希仍匹配。计划SHA为
+  `0c970e1dd10301a68eaf1f338bd1874c7539b721ebf125884ea9f321354eb803`，
+  汇总`comparison.json` SHA为
+  `d4d8c289652bdf3d0ca07a16bc93a442c559467bce1cd0a19029b2aa42790721`；
+  其它报告SHA见运行记录。校验失败先查差异，**不重新生成来覆盖证据**。
+- 原始大评测在`/root/autodl-tmp/control_ab_20261022_v4/`，旧包和反馈在
+  `/root/autodl-tmp/review_20261022/acoustic_review_v1/`及其`feedback_review/`；
+  候选/回归归档在`/root/autodl-tmp/work/for_train/ab_candidates/acoustic-5b297d423cc5/`。
+  本地对应元数据在`work/strength_ab_20261022_v1/`、`work/review_20261022/acoustic_review_v1/`；
+  这些目录**不含完整WAV/模型备份**，不能据此释放实例或删盘。
+- 已完成的`prepare/run/collect`不重跑，不删除`run.started`或claim，不覆盖冻结执行器、旧报告和音频。
+  本次不关机或管理旧试听服务/隧道；其当前在线状态未重查，历史GPU空闲不等于实例已停机。
+
+### 2. 第一项：仅复用音频的6组强度盲听（尚未制作）
+
+比较**同一个on权重的1.0与0.75强度**，各取下表同case/同seed的原始输出，共6组/12条。
+来源为强度目录的`on_report.json`和`s0.75_report.json`；模型基座不是生产r8，不能写成r8 A/B。
+
+| 用途 / 旧包代号 | case_id | seed | 语种 |
+|---|---|---:|---|
+| D01-B，尾空白 | `fresh_id_1786_plain` | 46 | id |
+| D02-A，声音过小 | `regression_id_ms_colloquial_en_control` | 42 | id |
+| D05-A，头空白 | `fresh_tl_1728_plain` | 45 | tl |
+| D06-A，声音稍小且尚未改善 | `regression_sc_tl_1747_zh_plain` | 42 | tl |
+| TH随机层对照 | `fresh_th_1806_plain` | 42 | th |
+| TL随机层对照 | `fresh_tl_1781_plain` | 46 | tl |
+
+TH/TL对照按原冻结`plan["selection"]`顺序，各取该语种首个random条目并保留原seed，不按结果排名。
+前四组刻意复查已知异常；整包是开发诊断，不是新独立验收集，不能用其异常比例推算线上坏例率。
+旧代号只用于追溯，不预设新包A/B顺序；case名称中的`ms`只是历史命名，实际目标仍为ID。
+
+续做时的最小实现与验收：
+
+1. 现有`scripts/control_ab_review.py`的`prepare/load_sources`固定原实验哈希和base/on来源，
+   **不能直接把强度目录传入就当作1.0/0.75导出器**。补最小独立适配，复用现有页面、反馈、归档逻辑；
+   不覆盖远端`acoustic_review_code_v3`或强度计划引用的冻结代码。
+2. 补定向测试：精确6组且两侧case/seed/ref/生成条件一致、只差强度，SHA不符及覆盖旧产物均拒绝；
+   验证公开页面不暴露模型映射、私有ref或自动分数，未知/未评反馈不转为通过。
+3. 另建唯一包目录和包号，随机化A/B；复制完整原WAV字节并复验SHA，不裁剪、重采样、响度归一，
+   不触发新TTS/ASR。私有记录保留实际ref/prompt是否存在、原字节/SHA、文本、有效参数、QC与旧反馈。
+4. 现有`serve()`固定监听远端127.0.0.1:16006；该端口旧包是base/on 1.0，不是强度新包。
+   上线试听前检查服务/隧道与端口冲突，只公开新包`public/`；不静默顶替旧服务。
+   **目前没有新适配器、新包号或新试听URL，不能宣称已可打开。**
+
+### 3. 收到反馈后，再决定是否值得开下一轮
+
+- 用户只判断空白、声音过小、破音/杂音/明显变声等声学问题；未知或未评保留未知，
+  不要求其判断三语种发音、口音或自然度。反馈写新副本，正常合成候选也仍为
+  `development_only/training_eligible=false`，声学正常不清除自动内容风险或认证`false_alarm`。
+- 对照必须保留D06和TH/TL，不能只汇报改善例。D02在0.75的原seed上RMS提高12.08dB，
+  但CER为0.0541→0.1622；D06低电平未改善。0.75随机组ID/TH/TL的p90尾静音仍比base多
+  0.22/0.18/0.18s。RMS不是LUFS、能量边界不是词对齐，不能据此承诺听感/内容改善。
+- 优先复查已有证据。未来备料前检查两条TL极低电平目标
+  `fleurs_tl/audio/run_mj9e85fn/0000585.wav`与`0000936.wav`；不改写旧训练数据，
+  不预判它们解释全部退化，也不删掉两条就自动重训。0.5疑似续写保留原WAV/转写，不重抽挑优。
+- 如果局部听感无稳定收益，停止推进0.75；即使听感改善，也只保留诊断结论，生产仍为r8。
+  再开训练/大评测前须另冻可证伪的单变量假设、数据来源/隔离、case/ref/seed/参数、预算与停止条件，
+  获得新授权后再执行；不自动追加epoch、改CFG/步数或扩大生成数。
+- 这18条已用于选参，不能重新命名为独立验证集。未来晋级仍需独立样本的ID/TH/TL分语种验收、
+  相应声学与合格母语评审；base比较不能冒充已核验的生产r8比较。没有母语评审可继续授权的离线诊断，
+  但不能宣布完整语言质量通过。
+
+## 2026-10-22：先修验收独立性，再做控制前缀单变量
+
+复核范围：10 月 20–21 日提交、远端 r19/r22/r23 清单、既有 refrob 报告。
+最初复核阶段没有训练、TTS/ASR、语料下载或生产变更；后续执行授权与实际状态见下节。
+新工具与产物独立放在大盘，未覆盖远端已修改源码。
+
+### 最新执行：小比例中英回放，中文为主的跨语言参考
+
+**17:45结果更新**：base/r23/off/on各1000输出完成；off/on均已训练393步，GPU任务已退出。
+on相对off的TH内容指标改善有配对证据，但ID/TL的CER区间仍跨零。
+两臂均触发相对base的三语种p90尾静音增量门槛，**不晋级生产、不自动追加训练**；
+当时优先对on做既有音频声学盲听、尾静音与历史风险归因；后续反馈及强度对照见下。
+完整数字/哈希/限制见`runs.md`顶部。
+下文12:05/14:14为调度发生时的快照，不代表当前仍待开训或仍在评测。
+
+**18点后续诊断**：已用既有WAV完成18组base/on声学盲听包（36条/297.76秒），
+12组元数据随机对照与6组风险样本分开；全部训练目标已做CPU尾静音复核。
+6271条可测训练目标没有>0.17s长尾，另2条TL极低电平边界未知，不能当通过。
+on的生成尾静音增量跨plain/control、中英ref和5seed存在；尚无根因或听感改善结论。
+没有新合成/转写/训练，也不改变“不晋级”结论。详情见`runs.md`顶部。
+
+#### 本轮盲听入口与反馈
+
+- 以下为已收齐反馈的旧base/on 1.0包，当前服务/隧道状态未重查；不是计划中的1.0/0.75新包。
+- 本机浏览器打开`http://127.0.0.1:16006/`，先听R组，有余力再听D组；全部原音频不裁尾。
+  只填声学异常及时间点，不懂语言可选“不确定”。浏览器暂存不是提交，需导出文本发回。
+- 包号`acoustic-5b297d423cc5`；远端产物根
+  `/root/autodl-tmp/review_20261022/acoustic_review_v1/`。只有`public/`可被HTTP访问，
+  `mapping.json`、`conditioning.jsonl`、参考音和私有报告不得公开。
+- 构建器冻结在`review_20261022/acoustic_review_code_v1/`，带HTTP Range的只读服务/反馈入口
+  在`acoustic_review_code_v2/control_ab_review.py`；没有修改旧`execution_code_v4`。
+  服务复用已安装的Starlette/Uvicorn，只监听远端127.0.0.1:16006；不再用不支持Range的简单HTTP服务器。
+- 断线后只重连SSH隧道，不重新生成包，不改变A/B映射：
+  ```bash
+  ssh -fN -p 51348 -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+    -L 127.0.0.1:16006:127.0.0.1:16006 root@connect.bjb1.seetacloud.com
+  ```
+- 远端服务退出时，先确认端口空闲，再按nohup约定启动；日志在产物根旁：
+  ```bash
+  cd /root/voxcpm-finetune
+  export PYTHONPATH=/root/autodl-tmp/review_20261022/execution_code_v4:/root/voxcpm-finetune/src
+  export CUDA_VISIBLE_DEVICES=
+  nohup stdbuf -oL -eL .venv/bin/python -X utf8 -u \
+    /root/autodl-tmp/review_20261022/acoustic_review_code_v2/control_ab_review.py \
+    /root/autodl-tmp/review_20261022/acoustic_review_v1 --serve \
+    > /root/autodl-tmp/review_20261022/acoustic_review_range_http.log 2>&1 < /dev/null &
+  ```
+- 导入真人反馈用同一入口`<包目录> --feedback <反馈txt>`（继承上面的PYTHONPATH）：
+  校验包号、试听代号、全部冻结产物和WAV哈希，拒绝重复或错包；写入新的`feedback_review/`，
+  不覆盖原报告，三种抽样层分别汇总。自动化浏览器测试文件不得导入为真人反馈。
+  已导入目录拒绝覆盖，后续修订反馈需另建可追溯副本。
+- **本包36条反馈已完成导入**：随机组两侧均无明显声学异常；风险组4条异常全在on。
+  只覆盖本包声学观察，母语与内容未验；on仍不晋级，后续强度对照已获授权但不自动晋级。
+- 导入后通过独立v3入口`<包目录> --archive <私有归档目录>`收录候选/回归。
+  本轮归档根`/root/autodl-tmp/work/for_train/ab_candidates/acoustic-5b297d423cc5/`；
+  32条正常候选与4条回归分文件，实际ref原字节/参数/原始QC/用户原话一起留存，
+  全部`development_only/training_eligible=false`；声学正常不清除内容风险。
+  回归登记到`eval_cases/acoustic_feedback_20261022.jsonl`，不要反向将合成候选放进训练清单。
+
+#### 反馈后的强度对照（19:03已完成，两档均不晋级）
+
+- 独立工作目录`/root/autodl-tmp/strength_ab_20261022_v1/`；原18组×seed42–46，
+  只生成on强度0.5/0.75共180条，原base/1.0共180条直接复用。未训练、未换生产模型。
+  **已于北京时间19:03:41完成**，四份报告各90条与全部WAV/输入哈希已核验，GPU进程退出。
+  0.5出现TL双seed强内容风险；0.75缓解部分头尾空白/低电平，但D06未改善，
+  三语种随机组p90尾静音仍高于base。只保留0.75局部诊断，不晋级；数字见`runs.md`顶部。
+- 新入口`review_20261022/strength_code_v1/control_ab_strength.py`，支持`prepare/run/worker/collect`；
+  PYTHONPATH依次为该源码目录、`acoustic_review_code_v3`、`fast_eval_code_v1`、
+  `execution_code_v4`、`/root/voxcpm-finetune/src`。前三个依赖目录为既有冻结实现，不要覆盖。
+  本轮`prepare/run/collect`均已完成，原以nohup/stdbuf和`python -X utf8 -u`执行，**不要重复启动**。
+- 准备日志`/root/autodl-tmp/strength_ab_20261022_v1_prepare.log`，调度日志同名前缀`_run.log`；
+  进度读工作目录的`status.json`、`worker*_progress.json`和`worker*.log`。
+  启动暖机时`status.json`曾暂留prepared，须结合进程与worker日志；不据此另起重复任务。
+- 每条结果在`items/`，排他claim在`claims/`，强度参数核验在`scaling*.json`；
+  最终自动写`s0.5_report.json`、`s0.75_report.json`、`levels.json`与`comparison.json`。
+  原base/on子集带`reused_without_rescoring=true`，原报告/WAV不改。
+- 运行拒绝已有`run.started`，计划与输入必须保持哈希；失败保留逐项结果，不自动重抽，
+  不删除claim伪装续跑。分层、分语种复核后才能决定是否需要少量新盲听，不能据小样本晋级。
+
+用户已授权“新独立基线→控制前缀 A/B→同口径复评”，并明确主要合成 ID/TH/PH，
+ref 大部分中文、少部分英文。**目标回放比例与参考语言分布分别设置**：
+
+- 目标回放按有效时长 zh 4%/en 1%，两臂使用相同 seed42 下采样与原行序；
+  不删除 ID/TH/TL 目标，不改变可信同人 ref，不顺带重配三语种份额。
+  实际 **6273 行/12.6414h**，TH/ID/TL/ZH/EN **2536/2443/1021/219/54** 行，
+  时长占比 **33.60%/35.46%/25.94%/4.00%/0.99%**（四舍五入）。
+- 254 条可信 TH 前缀、1340 条 ref 保留。ID/TL 情绪标签和跨语言同人 ref 仍缺，
+  **中文参考占多数不等于可以把任意中文音频配到 ID/TH/TL 训练目标上**。
+- 独立集为三语种各 30 条新文本，每句 plain/control、seed42–46；其中参考 zh/en **80%/20%**，
+  各用 3 条可追溯、未命中已审计训练 PCM/已知身份/session 的 FLEURS 验证录音。
+  另有数字/混英/短句/严重续写共 10 条历史压力文本，同样配对，单独汇总；合计每模型 1000 输出。
+- 旧参考文件有两条 PCM 命中候选训练血统：`ref_en_03.wav` 与 `ref_tl_02.wav`。
+  新独立集不使用任何旧参考；历史压力回归保留原参考，不伪称独立验证。旧文件、分数不改。
+- 基线为 **base/r23**，不是已完成 base/r8 生产回放：远端缺 r8 的完整历史训练清单。
+  冻结实际 base 权重、r23 的 step2909 文件、执行源码、输入音频与报告 SHA。
+  中文/英文参考身份是否真正未见、录音授权、近似重复、基座预训练文本暴露仍未验证。
+- 预算每臂 **393 步（约 1 epoch）**，沿用下述 r64/alpha64/lr1e-4/batch2×8/DiT 开/proj 关；
+  两臂同基座，全新优化器和调度器，官方 Accelerator seed42 重复初始化抽样一致，
+  不宣称逐位训练确定性，不自动续训或生产晋级。原 3 epoch 备料版留档不回写。
+
+CPU 入口 `scripts/control_ab_gate.py`，分阶段执行器 `scripts/control_ab_run.py baseline|train|evaluate`；
+冻结工作目录 `/root/autodl-tmp/control_ab_20261022_v4/`，源码
+`/root/autodl-tmp/review_20261022/execution_code_v4/`。生成/训练一律 nohup 单独日志，
+失败停止、不自动重抽，不覆盖成功 WAV/报告。训练前拒绝已有 checkpoint；共享 preflight
+会创建空输出目录，执行器只移除自己刚创建的空目录，有意外内容即停止，防止误判 resume 或删数据。
+完整性检查通过后才进入下一阶段，指标按语种与独立文本聚类；**运行状态以 TODO 与远端 status.json 为准**。
+工程与语言验收分开，母语质量/声学盲听未完成，不能据此宣称实际配音质量提升。
+
+**12:05 调度变更（用户要求 r23 提前并行）**：使用独立入口 `scripts/control_ab_overlap.py`
+接管正在运行的两个 base 分片，不修改 `execution_code_v4` 或重跑其音频。
+首先只加一个 r23 分片，总并发最多3；另一个分片等槽位与至少16GiB空闲显存。
+接管前核 `/proc` 启动时刻、父子关系、模型/分片参数并暂停旧调度器，防止原队列重复启动；
+成功后回收旧调度器，新队列继续原训练/复评，失败则停，不隐式重抽。
+调度源码在 `review_20261022/overlap_code_v1/`，指纹和原进程身份另存
+`control_ab_20261022_v4/overlap_schedule.json`；日志以 `overlap_pipeline.log` 为准。
+当时双worker占约19.1GiB、仍有约28.3GiB可用，但GPU已100%忙，**显存富余不等于已证明提速**；
+并行运行的 `gen_sec` 不作隔离延迟基准，生成条件/评分口径/每模型1000输出预算保持不变。
+评测文本已登记 `eval_cases/control_ab_20261022.jsonl`，后续备料须继续排除这些文本。
+
+**14:14 调度加速接续（用户要求缩短评测等待）**：
+
+- 原500输出大分片在结束前不持久化逐条结果，不能中断后直接分摊余量。
+  保留最后一个r23分片继续跑；新入口 `scripts/control_ab_fast_handoff.py`
+  只暂停外层shell，核启动时刻/父子关系及源码指纹，待基线成功退出、全量报告/WAV核验后回收旧shell，
+  接原冻结训练，再运行 `scripts/control_ab_fast_eval.py run`。不会重复启动训练或修改冻结v4源码。
+- 后续off/on共2000输出改为共享逐case/seed队列，排他认领，最多4worker；
+  逐个完成首项暖机并检查至少12GiB空闲显存才加下一worker。优先保留当前模型，结束本臂后可帮助另一臂。
+  Whisper保持驻留，参考音频及相同PCM声纹缓存，生成目标的声纹仍独立计算；不改模型/精度/ASR参数。
+  每条立即保存完整报告和WAV SHA，最终要求所有case/seed恰好一次、条件/权重一致。
+  失败停止、保留已完成项，**未实现自动恢复/失败重抽**，不要删除claim伪装续跑。
+- 缓存等价性只在现存base WAV做CPU声学重算，不触发TTS/ASR、不回写旧分数。
+  TH/TL/ID各一个主集WAV，每轮各重复两次，4轮按原始/缓存/缓存/原始交叉顺序测试：
+  原始两轮 **3.703s/2.893s**，缓存两轮 **2.672s/2.437s**，所有声学字段完全相等且SIM非空。
+  相配比较约 **28%/16%局部耗时下降**；小样本且非隔离负载，不外推整体提速。
+- 新源码独立存 `review_20261022/fast_eval_code_v1/`，计划与指纹为
+  `control_ab_20261022_v4/fast_handoff.json`、`fast_eval_profile.json`；
+  接续日志 `fast_handoff.log`，运行后逐worker日志/逐项报告在 `fast_eval/`。
+  加速器SHA `4462b82b94b12472e0e9db82ac1d31c4ed1b21a461ba92e465251904aca0d400`；
+  接续器SHA `6eec01f3d0eaf9f4fe69ecac46979b0bd46c41f4b7d46d824d3e12afb04ce7cc`。
+  五seed、20步、CFG1.8、large-v3、每模型1000输出保持不变；ASR原有随机回退不保证逐位确定性。
+  本地完整测试 **220 passed（107.58s）**，涵盖缓存等价/任务排他、逐项保留、报告与WAV篡改拒绝、
+  接续父子身份和失败停止；`git diff --check` 通过。测试不等于已完成GPU四并发验收。
+  **当前只验证缓存数值/局部耗时和安全接续，动态评测GPU全程吞吐/峰值显存尚未实测**。
+
+### 实际数据问题
+
+| 清单 | train/val 行数 | 训练同评测文本行 | 训练同验证文本行 | 目标 >20s |
+|---|---|---|---|---|
+| r19_emotion | 6407/1367 | 0 | 40 | 0 |
+| r22_idboost | 6696/1367 | 0 | 40 | 0 |
+| r23_thtlboost | 7996/1367 | 29 | 49 | 65 |
+
+文本先去已记录的控制前缀，再沿用评测 `_norm` 归一化比较；两种同文检查可能重叠，
+r23 合计 **76 条**文本风险行（29+49−2），加时长风险共 **141 条**不同训练行。
+29 条评测同文行均为 TL，覆盖 v2 的 **21/30** 条 TL 文本、drama 两套各 **7/8** 条独立
+TL 文本（各展开 28 个 case）、refrob 的全部 6 条 TL 文本。**这是训练见过评测文本，
+不是已证明评测参考音频/身份泄漏；但不能把 r23 的 TL 分数当独立泛化收益。**
+该暴露在 r23 增量中出现，不倒推污染此前 r12 A/B 的结果。
+
+本次未发现元数据路径/已验证 speaker/session 交叉或目标原音频 >3 次重复；
+这不等于 PCM、真人来源、授权或身份已核验。r23 的 ref 覆盖是 ID **625/3247**、
+TH **613/2833**、TL **0/1535**，整体 **1238/7996（15.5%）**，远低于 30–50% 目标。
+原注释“增量没有 ref”不符合 CV22 实际清单；保留已有可信配对，不给身份未知行强配。
+r23 ID/TL 的 246/127 条控制行都是中性接种，不能据此声称非中性表演数据已齐全。
+
+入口 `scripts/incremental_mix.py` 支持只读审计；r22/r23 构建器共享同一门禁，
+包含继承清单检查、增量候选筛选、原 source_id/非空元数据保留与实际占比统计。
+**旧 DST 存在就拒绝；旧父清单有风险也拒绝**，不要通过删除历史目录来让它运行。
+
+### 第一版备料（当时未授权，原产物保留）
+
+- 假设：在同样 THAI-SER 音频上，仅添加可信英文控制前缀，会否改善受控输出且不损害 ID/TL。
+  两臂都保留 THAI-SER，**只隔离前缀作用，不隔离数据源作用**。
+- 入口 `scripts/prepare_control_ab.py`：r19 原清单仅去掉 40 条验证同文行，保留 **6367 条/12.8539h**；
+  TH/ID/TL/ZH/EN 分别 **2536/2443/1021/244/123** 条。
+  on 臂仅 254 条已有可信 TH 标签带前缀（约 4.0%，不凑比例）；off 去同一前缀。
+  两臂 **1340 条 ref（21.0%）**，跨语言同人 ref 仍为 0；不新增 ID/TL 情绪标签。
+- target/ref/来源/顺序完全相同；验证集复制原字节。继承 r20 的 r64/alpha64/dropout0.05、
+  lr1e-4、batch2×累积8、warmup120、DiT 开/proj 关，以原始基座新训，不续 r23。
+  配置暂按 3 epoch 上限计算各 **1194 步**；这是备料预算，不是已执行或已获增益证明。
+- 远端目录 `review_20261022/control_ab/` 包含 `off/on.jsonl`、`off/on.yaml`、`validation.jsonl`、
+  `plan.json`；状态为 `prepared_not_authorized_for_training`。实文件逐行核验只差前缀，
+  共同参数相同，checkpoint 目录不存在。**训练 seed42 目前只是计划，执行器 RNG 尚未验证。**
+- 开训前：冻结每语种 ≥30 条独立新文本，含生产控制开/关及数字/混英/短句/严重失败回归，
+  固定相同 case/ref、cfg1.8/20步、禁内部重试、large-v3、seed42–46；
+  审计全部候选训练血统，核 target/ref PCM、身份/session、授权证据、实际基座 SHA。
+  新文本需要新 base/稳定对照，不能复用旧集基线。然后核相同 RNG 与无隐式 resume。
+- 每语种分别判断内容风险和声学异常；SIM 只作相应目标的诊断，不抵消乱读/重复。
+  母语自然度、口音、情绪均未验证，不要求当前用户填这些分数。
+
+冻结 SHA256（完整输入哈希在 `plan.json` 与审计报告中）：
+
+| 文件 | SHA256 |
+|---|---|
+| r19 train 原件 | `1303c59f84496aea74af56563eee2c814f1c300f647be330a764f524b610aec1` |
+| validation 原件/副本 | `9d60874edde09368196341a80292dd33c7f65c0d3ee0df9cff7b460e8df690bf` |
+| off.jsonl | `5c369e7ae048e034879c3c66e8fd001722d23178d93797bf18fe298ccd0dcba6` |
+| on.jsonl | `a81b498c0140ce29b27c5ea25516284fa67fc8fed3f3b56ab2afc80673968aaa` |
+
+不直接延续 r20→r23 的另一个原因：官方训练脚本恢复 scheduler 后会按**新的总步数**
+计算余弦 LR。本地按现有代码复现，1162→1531、1531→2159、2159→2909 时，
+旧终点的 0 可分别回升到约 **1.59e−5/2.16e−5/1.68e−5**；这不是连续低 LR 尾部。
+远端逐步 LR 日志未核，不把本地复现冒充实际轨迹。r16/r17 同时改数据/预算，
+也不能推导“1500 步以上必过拟合”或通用最优数据量。
+
 > **2026-10-19 目标语种收缩**：用户决定不再微调越南语（vi / VN）与马来语（ms / MY），
 > 目标语种只剩 **th / tl / id**，另加 zh / en 防遗忘回放。`TARGET_LANGS`、eval 语种白名单
 > （`SAMPLE_TEXTS` / `WER_LANGS`）、registry 的 7 个 vi/ms 源、UI 文案与混合配比已全部同步收缩，

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>声学盲听</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f5f7;color:#17202a;font:16px/1.6 system-ui,sans-serif}
+main{max-width:1000px;margin:auto;padding:24px 18px 60px}h1{font-size:30px}h2{font-size:20px;margin-top:0}
+section,.feedback{background:white;border:1px solid #dce1e6;border-radius:12px;padding:22px;margin-top:20px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:28px}.take{min-width:0}h3{margin-top:0}
+audio{display:block;width:100%;margin:12px 0}label{display:block;margin:12px 0;font-size:14px}
+select,input,textarea,button{font:inherit}select,input,textarea{width:100%;padding:9px;border:1px solid #a8b2bd;border-radius:6px;background:white;color:#17202a}
+button{padding:10px 18px;border:0;border-radius:6px;background:#205d49;color:white;cursor:pointer}
+:focus-visible{outline:3px solid #326ec7;outline-offset:3px}.hint,footer{color:#52606d;font-size:14px}
+textarea{min-height:160px;resize:vertical}#progress{font-weight:600}footer{margin-top:24px}
+@media(max-width:650px){.pair{grid-template-columns:1fr;gap:20px}main{padding:16px 12px}section{padding:16px}}
+</style></head><body><main>
+<header><h1>声学盲听 · 18 组</h1>
+<p>先听 R01–R12 随机对照，有余力再听 D01–D06 诊断样本。每组 A / B 来自两个不同版本；不同组的字母不对应固定版本。</p>
+<p>只标爆音、金属感、沙哑粗糙、异常娃娃音、明显变声或长空白；不需要判断外语发音、口音、自然度或情绪。没有把握选“不确定”，没听保持“未评”。</p>
+<p class="hint">使用完整原始 WAV，未裁尾、未拼接、未变速。请保持 1 倍速。不因偏好某条而把另一条判异常，也不以参考相似度作为唯一标准。</p>
+<p class="hint">填写只暂存在当前浏览器；完成后点击页面底部导出并把文本发给我。随机与诊断样本分开统计，未评不算通过。</p>
+<p id="progress" role="status" aria-live="polite"></p></header>
+{{cards}}
+<div class="feedback"><h2>导出反馈</h2><button id="export" type="button">生成并下载已填反馈</button>
+<p id="status" role="status" aria-live="polite"></p><label for="feedback-text">也可复制以下反馈发给我</label>
+<textarea id="feedback-text" readonly></textarea></div>
+<footer>试听包 {{package}} · 映射与评分不在此页展示；语言质量未验证。</footer>
+</main><script>
+const storageKey = '{{package}}';
+const takes = Array.from(document.querySelectorAll('[data-code]'));
+const players = Array.from(document.querySelectorAll('audio'));
+const status = document.getElementById('status');
+players.forEach(player => {
+  player.addEventListener('play', () => players.forEach(other => { if (other !== player) other.pause(); }));
+  player.addEventListener('error', () => { status.textContent = '音频加载失败，请检查连接；不要把未播放条目标为无异常。'; });
+});
+function snapshot() {
+  return Object.fromEntries(takes.map(take => [take.dataset.code, {
+    verdict: take.querySelector('select').value, notes: take.querySelector('input').value
+  }]));
+}
+function progress() {
+  const filled = takes.filter(take => take.querySelector('select').value).length;
+  document.getElementById('progress').textContent = `已填写 ${filled} / ${takes.length} 条声学判断`;
+}
+try {
+  const saved = JSON.parse(localStorage.getItem(storageKey) || '{}');
+  takes.forEach(take => {
+    const record = saved[take.dataset.code];
+    if (record) { take.querySelector('select').value = record.verdict || ''; take.querySelector('input').value = record.notes || ''; }
+  });
+} catch { status.textContent = '浏览器暂存不可用，请及时导出反馈。'; }
+takes.forEach(take => take.addEventListener('input', () => {
+  progress();
+  try { localStorage.setItem(storageKey, JSON.stringify(snapshot())); }
+  catch { status.textContent = '暂存失败，请导出反馈后再关闭页面。'; }
+}));
+progress();
+document.getElementById('export').addEventListener('click', () => {
+  const rows = Object.entries(snapshot()).flatMap(([code, record]) => {
+    const notes = record.notes.trim().replace(/[\r\n]+/g, ' ');
+    return record.verdict || notes ? [`${code}：${record.verdict || '未指定判断'}${notes ? '；' + notes : ''}`] : [];
+  });
+  if (!rows.length) { status.textContent = '尚未填写反馈；未评条目不算无异常。'; return; }
+  const text = `试听包 {{package}}\n${rows.join('\n')}\n其余条目未评；语言质量未验证。\n`;
+  document.getElementById('feedback-text').value = text;
+  const downloadUrl = URL.createObjectURL(new Blob([text], {type:'text/plain;charset=utf-8'}));
+  const link = document.createElement('a');
+  link.href = downloadUrl; link.download = '{{package}}-feedback.txt';
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+  status.textContent = `已导出 ${rows.length} 条反馈，请发给我；未填写的条目保持未评。`;
+});
+</script></body></html>

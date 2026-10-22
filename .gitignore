@@ -12,6 +12,8 @@ checkpoints/
 /work/audio_ab/
 /work/for_train/
 /work/rescore/
+/work/review_20261022/
+/work/strength_ab_20261022_v1/
 wandb/
 logs/
 *.wav
