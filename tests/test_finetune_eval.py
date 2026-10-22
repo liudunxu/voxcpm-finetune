@@ -486,6 +486,10 @@ def test_runlog_puts_newest_record_first(tmp_path, monkeypatch):
     monkeypatch.setattr(runlog, "RUNLOG", tmp_path / "runs.md")
     monkeypatch.setattr(runlog, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(runlog, "CHECKPOINT_DIR", tmp_path)
+    for run in ("run_a", "run_b"):  # 记录生成要求配置在场：缺配置时不允许推断超参
+        (tmp_path / f"{run}.yaml").write_text(
+            yaml.safe_dump({"pretrained_path": "/base", "train_manifest": "", "num_iters": 10}),
+            encoding="utf-8")
     runlog.append_record("run_a", [], verdict="第一轮")
     runlog.append_record("run_b", [], verdict="第二轮")
     text = (tmp_path / "runs.md").read_text(encoding="utf-8")

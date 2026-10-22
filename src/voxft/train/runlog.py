@@ -35,8 +35,12 @@ _COLS = ("run", "日期", "数据(h)", "步数", "LoRA r/α", "lr", "总体 CER"
 
 
 def _read_yaml(run: str) -> dict:
+    """缺配置必须硬失败：静默返回 {} 会把 LoRA 轮记成 finetune=full、其余超参全记成 None。"""
     p = CONFIG_DIR / f"{run}.yaml"
-    return yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else {}
+    if not p.exists():
+        raise FileNotFoundError(
+            f"缺少训练配置 {p}；runlog 不从缺失配置推断超参，请先从 GPU 机取回该 yaml")
+    return yaml.safe_load(p.read_text(encoding="utf-8"))
 
 
 def _read_plan(run: str) -> dict:

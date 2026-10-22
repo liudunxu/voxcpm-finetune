@@ -52,3 +52,32 @@ def test_preflight_bad_pretrained(tmp_path):
     mf.write_text("{}", encoding="utf-8")
     issues = preflight(_cfg(tmp_path, train=str(mf), pre="not-a-valid-path"))
     assert any("pretrained_path" in i for i in issues)
+
+
+def _rows(tmp_path, n):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"x")
+    mf = tmp_path / "train.jsonl"
+    mf.write_text("".join(json.dumps({"audio": str(wav), "text": "hi"}) + "\n" for _ in range(n)),
+                  encoding="utf-8")
+    return mf
+
+
+def _set_iters(path, num_iters):
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    cfg["num_iters"] = num_iters
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return path
+
+
+def test_preflight_three_epoch_ceil_slack(tmp_path):
+    """steps_for_epochs 向上取整：正好 3 epoch 的配置不该被报成「超过 3 epoch」。"""
+    mf = _rows(tmp_path, 8)  # 8 行 / 等效 batch 16 → 3 epoch = ceil(1.5) = 2 步
+    cfg = _set_iters(_cfg(tmp_path, train=str(mf)), 2)
+    assert not any("超过 3 epoch" in i for i in preflight(cfg))
+
+
+def test_preflight_over_three_epoch_warns(tmp_path):
+    mf = _rows(tmp_path, 8)
+    cfg = _set_iters(_cfg(tmp_path, train=str(mf)), 5)  # 5×16=80 > 3×8+16=40
+    assert any("超过 3 epoch" in i for i in preflight(cfg))

@@ -207,7 +207,10 @@ def preflight(config_path: str | Path, gpus: int | None = None) -> list[str]:
         if plan.get("epochs") is not None and plan.get("train_samples") != counts["train_manifest"]:
             issues.append("训练条数与生成计划时不同，请重新生成配置")
     effective_batch = cfg.get("batch_size", 2) * cfg.get("grad_accum_steps", 8) * (gpus or 1)
-    if counts["train_manifest"] and cfg.get("num_iters", 0) * effective_batch > 3 * counts["train_manifest"]:
+    train_samples = counts["train_manifest"]
+    # steps_for_epochs 向上取整，正好 3 epoch 的配置会多出不到一步；不留这一步余量，
+    # 每个按 3 epoch 生成的配置都会误报「超过 3 epoch」。
+    if train_samples and cfg.get("num_iters", 0) * effective_batch > 3 * train_samples + effective_batch:
         issues.append("警告：预计训练超过 3 epoch，小语料还需计入混合重复曝光")
 
     save = Path(cfg.get("save_path", ""))
