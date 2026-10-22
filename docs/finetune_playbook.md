@@ -4,6 +4,155 @@
 
 本文是可以照着一步步执行的流程，三个语种共用。开发约定与踩坑记录见 [AGENTS.md](../AGENTS.md)，数据源取舍背景见 [README.md](../README.md)，**ID 特有的依据、语料核实状态与口径差异见 [vi_id_support.md](vi_id_support.md)**（同文件的 vi 部分与 [ms_support.md](ms_support.md) 已转存档）。
 
+## 2026-10-22：r24 冷启动单变量轮（用户授权，已开训）
+
+**授权与范围**：用户在看完 #8/#9 取证与 r19→r23 时长回归证据后决定「保持 r23，直接开训」。
+本轮只做一个单变量实验；不追加 epoch、不改 CFG/步数、不动 HF 与生产。此前的暂停交接项（1.0/0.75 盲听包等）
+保留在下一节，未取消、也未插队。
+
+### 1. 开训依据（全部来自已冻结记录与本机复算，无新实验）
+
+**成片取证：第43剧108集 #8/#9「同人音色差异」**（目标语实际是 **id**，不是 CDN 暗示的 VN）
+- 同 speaker key `review_4f50387a`，但**参考字节不同源**：#8 = `8a4cc827…`（`episode_current`），
+  #9 = `e92e2477…`（`episode_alternate` + `fallback=true`，锚点 cue 24）。本机 WavLM：`ref#8↔ref#9` 仅
+  **0.6824**，而 `ref#9↔ref#24`=**0.9841**、`ref#9↔ref#10`=0.8912 ⇒ **#8 那条参考是该 speaker 参考池的离群值**
+  （F0 134.1 vs 190.8/203.0/194.5Hz；DIS 另记录它头部 0.25s 被判「female against body male」并裁掉）。
+- #9 换参考是**救援结果**：两次 seed 重试都跑飞（6.40s / 6.26s 对 1.2s 窗）+ severe `speaker_mismatch`
+  → identity 预算用尽 → 改用 cue 24 参考。最终音频是从 6.26s 跑飞输出 `external silence trim 0.000–1.340s`
+  **硬裁**出来的，DIS 自判 `tts_failed` → 源人声抑制 → **keep-best 出片（score −269.1）**，
+  带 `unresolved_artifact=true`、`pitch_register_drift`、`runaway salvage rejected: untrusted_alignment`。
+- **控制条件也不同**：#8 最终 take 带 style control「as a sharp but controlled outburst」（angry/shouting）；
+  #9 最终 take `voxcpm_style_control_suppressed=true` + `style_retry_mode=reference_only`
+  （原请求「openly angry, with full exclamatory force」那次因跑飞被拒）。⇒ **两条不是模型 A/B，是两组不同条件**。
+- 后处理放大差异：tempo 1.500×（需 1.99× 被截）vs 1.314×；电平匹配 −0.77dB vs **+3.54dB**。
+  输出 F0 交叉：#8 173.9Hz（高于自己 ref 40Hz）、#9 137.4Hz（低于自己 ref 53Hz）。
+- DIS 自己已测到：`timbre_consistency.pitch_dispersion[review_4f50387a]` spread **2.192 / over_threshold=true**
+  （drifted 含 #9 的 140.4Hz，ratio 1.527），`anchor_similarity` min **0.1354**、median 0.5052（生产门限 0.45）。
+  两条 cue 的 `speaker_similarity_to_reference` = 0.3274 / 0.3826，**均低于 0.45**。
+- ⚠️ **前提存疑**：该 speaker key 下 10 条 cue 的参考 F0 跨 142.9–333.3Hz，其中 cue 10/13/17/18 的参考被判
+  **female**（置信 0.69–0.885）而请求 `declared_gender=male`，`speaker_status` 全为 `unverified`
+  ⇒ 这个聚类可能混入多个真人，「#8/#9 是同一个人」在参考层面尚未证实。
+- 冻结产物（本机 `work/video_review/20261022_43_108/`）：视频 SHA256
+  `a6a24d9ada1f86d5d358e26fd8277442baa9a4c2b5f3333ec18956f9e7d1e7e8`（25,178,696B，与 CDN content-length 一致）、
+  `embedded_meta.json`、`review-references/`（18 文件 3,865,972B，逐 cue SHA 校验通过）、`seg8/seg9_final_mix.wav`。
+  DIS 客户端源码 SHA `42eeda758ba30ec0b095ac07a0ef2c50d8afa7e35f168cd7ecba05563a845875`、endpoint
+  `220.130.209.122:41853`、`model_id="openbmb/VoxCPM2"`（**客户端配置，不是权重加载证明**；`git_commit=null`，
+  `scope=publishing_process_not_tts_server_or_cached_take`）。本轮**未新增 TTS/ASR**，未重渲，未改生产。
+
+**时长/停止回归的转折点在 r19，不在音色指标**
+| 轮次 | 初始化 | 步数 | id p90 尾静音 | id speech_ratio | dramaprod id 跑飞 |
+|---|---|---|---|---|---|
+| base | — | — | 0.180s | 0.882 | — |
+| r13x | 冷启动 | 1094 | +0.140s | — | 0/96 |
+| r18 | 冷启动 | 1390 | +0.140s | — | — |
+| r19 | 冷启动 | 1202 | **+0.640s（0.82s，越上限）** | **−0.145** | 8/96 |
+| r23 | **r22 续训** | 2909 | **+0.840s（1.02s，越上限）** | **−0.147** | 4/96 |
+
+r23 另有 id 非数字 audio_sec +24%。**r21 已证「把 thai_ser 全删也洗不掉」（runs.md 原话：续训没能洗掉权重残留）**；
+r18 的 id 份额更高（47.5%）却只 +0.14s ⇒ 既不是 id 份额，也不是删数据能修的。
+结构上一致：`enable_proj=false` 下 `stop_proj`/`stop_head` **全冻结**，停止行为只能被 LM/DiT 的 LoRA 漂移间接带坏
+⇒ **累积 2909 步的续训链就是那个漂移量**。
+
+**音色一致性本身没有可测退化**（本机复算既有冻结报告）
+- r8 vs base（`checkpoints/holdout_eval_20260917/voice_stability/`，WavLM 两两 cosine，150 组 cross-seed /
+  325 组 cross-cue 配对）：**r8 略优**，cross_seed Δmean id +0.0023 / th +0.0017 / tl +0.0001，
+  cross_cue +0.0016/+0.0015/+0.0001，「更差」组数约一半 ⇒ 全在 ±0.009 run 间噪声内。
+- 2026-10-22 四臂（各 1000 输出、200 case×5 seed）：sim-to-ref 三语种全部 ≥ base（id +0.0093~+0.0155）；
+  同 ref 跨句离散度 **r23 比 base 更紧**（id 0.0072 vs 0.0136、tl 0.0096 vs 0.0122），
+  未晋级的 off/on 反而更松（id 0.0192 / 0.0267）。Δsim(emo−plain)：r23 −0.0127，优于 r13x −0.0236。
+- 边界：这两套离线集都是干净 FLEURS 参考 + 4–12s 朗读文本，**覆盖不到 #8/#9 那种 1.2s 窗 + 1.9s 低 SNR 参考 +
+  跑飞后硬裁**的形态；不能用它们证明生产没有音色问题，只能证明「声纹相似度」这一维没有系统性退化。
+
+### 2. 生产权重现实核验（与文档口径不一致，如实记录）
+
+HF `FrankLiuDundun/voxcpm-finetune-lora` 当前发布的**是 r23**：`lora/lora_weights.safetensors` 的 LFS oid
+`8ca1dc95dbbe3234967e09d3c459a8ebe6482193eded7934efe196997c8b0ef2`（144,749,240B）与远端
+`voxft_ckpt/lora_omni5_r23_thtlboost_cont/latest`（`training_state.json` step 2909）**逐字节一致**，
+README 亦写「当前版本为 r23」，仓库 lastModified `2026-10-21T14:21:34Z`（北京 22:21；r23 生成于 22:07）。
+⇒ TODO/AGENTS 里的「生产指定 r8」是**指定口径，不是线上加载证明**；GPU 实例实际加载的权重仍未核验
+（用户 2026-10-22 选择不追这条）。**用户决定：保持 r23，不回滚 r18**（r18 仍可从 HF revision `7e5ffab6` 取回，
+远端 r18 checkpoint 已被「只留最新 5 次」清掉，现仅存 r8/r13x/r17/r23 + r23 的 step_2250/2500/2750）。
+
+### 3. r24 冻结方案（唯一变量 = 初始化与总步数）
+
+- **假设（可证伪）**：r19 引入、经 r20→r23 五轮续训继承的停止/时长失控，主因是**续训链累积的 LoRA 漂移**，
+  不是 r23 的数据本身。
+- **A 臂 `lora_omni5_r24_coldstart`**：r23 清单**原样**（`/root/autodl-tmp/voxft_data/processed/r23_thtlboost/`，
+  train 7996 行 / val 1367 行 / 16.554h；id 3247、th 2833、tl 1535、zh 253、en 128）
+  + **官方基座冷启动**（`pretrained_path` = VoxCPM2 snapshot `32279eff…`；save_path 为新目录，开训前已确认不存在 ⇒ 无 resume）
+  + **3 epoch = 1500 步**（`ceil(7996×3/16)`）。
+- 超参与 r23 逐字段相同，`diff` 只有 4 处：`num_iters` 2909→1500、`max_steps` 同、`warmup_steps` 120→150
+  （builder 的 10% 规则）、`save_path`/`tensorboard` 路径。其余：LoRA r64/α64/dropout0.05、
+  `enable_lm/dit=true`、`enable_proj=false`、lr 1e-4、batch2×累积8、wd 0.01、max_grad_norm 1.0、
+  max_batch_tokens 8192、save/valid_interval 250、`lambdas` diff/stop 各 1.0。
+- 配置由**同一份 builder 生成**（本地与远端 `yaml_builder.py` SHA `d422a939…` 一致、`launcher.py` `e76cd5f2…` 一致），
+  `.plan.json` 留审计（epochs 3.0 / effective_batch 16 / train_samples 7996 / langs 同上）。
+- **两头都有已知对照**：对 r23 只差初始化与总步数；对 r18（冷启动 1390 步、尾静音 +0.14s）只差数据。
+- **判读（开训前写死，不看结果再改）**：
+  - 达标 ⇒ 坐实续训链是主因，A 臂成为晋级候选，并说明 r19 的数据变更本身未必有害；
+  - 仍 0.8–1.0s ⇒ 主因在 r23 数据，**下一臂才做时长卫生**（剔 >15s 目标 + 尾裁 0.15→0.06），仍冷启动、仍单变量。
+- **晋级门**（全用既有门禁，不新造）：id/th/tl 的 p90 尾静音增量 ≤0.10s 且 id 绝对值 ≤0.5s；
+  speech_ratio 降幅 ≤0.05；dramaprod id 跑飞 0/96；v2 三语种 CER 不劣于 r23 超噪声（±0.04）；
+  Δsim(emo−plain) 不劣于 −0.013 量级。**任一语种退化即整轮不通过。**
+- **预算**：训练 1500 步（实测约 1.75s/步 ⇒ 约 44 分钟）；评测 v2-118×3 seed + dramaprod 112×3 seed ≈ 690 输出。
+  磁盘：开训前 14G 空闲；实测官方脚本只自留最后两个 `step_*`（1499/1500，各 415M）+ `latest`，
+  收尾时远端仍剩 13G ⇒ 未删任何 checkpoint。
+- **启动记录**：北京时间 **2026-10-22 21:26:58** 起（`step_0000000` 落盘时刻），单卡 GPU（28.9GB/49140MiB），
+  日志 `/root/autodl-tmp/r24_coldstart_train.log`，val step0 `loss/total` **1.021114**（对照 r18 首值 1.0416）。
+  完成判活看**进程退出 + `training_state.json` 步数到 1500**，不看 `latest/` 是否存在（官方脚本 step 0 就存一份）。
+
+### 4. 明确不做
+
+- 不为 1.2s 短 cue 跑飞开训练轮：`process_dataset` 的 3s 硬下限把它们挡在训练门外，**结构上学不到**，只能推理侧兜。
+- 不做无假设的 lr / r / 强度 / `loss/stop` 权重网格（`loss/stop` 在 LoRA 下只能通过 LM 隐状态间接起作用，停止头冻结）。
+- 不给 r23 继续加 epoch，不动 HF 与生产，不删 r23 的中间 `step_*`（是证据）。
+
+### 5. 本轮顺手修掉的代码问题（含测试）
+
+- `runlog._read_yaml` 缺配置时静默返回 `{}` ⇒ `finetune` 被写成 `full`、超参全 None。**这就是 r19 被错记成
+  「全量微调」的原因**（远端 `configs/lora_omni5_r19_emotion_3ep.yaml` 实际是 LoRA r64、1202 步）。
+  改为硬失败 `FileNotFoundError`，新增 `tests/test_runlog.py`（2 项）；`docs/runs.md` 加更正说明、不改历史指标。
+- `launcher.preflight` 的 3-epoch 警告没给 `steps_for_epochs` 的向上取整留余量：1500×16=24000 > 3×7996=23988，
+  正好 3 epoch 的配置也被报「超过 3 epoch」。改为留一步余量，补 2 项测试。
+- 全套 **253 通过**（新增 2 项在改前失败）；两个文件已同步远端，SHA 双侧一致
+  （`runlog.py` `2b69444f…`、`launcher.py` `92813372…`）。
+
+### 6. 结果与判定（2026-10-22 22:53 完成：**不通过、不晋级，生产保持 r23**）
+
+三套验收全部与 base/r23 同口径（cfg1.8 / 20 步 / 禁重试 / large-v3 / seed 42-44），base 与 r23 **未重跑**。
+完整数字在 `docs/runs.md` 的 `lora_omni5_r24_coldstart` 段（由 `voxft.train.runlog` 生成，未手抄）。
+
+| dramaprod（112×3=336） | base | r23 | **r24 冷启动** | 门禁 |
+|---|---|---|---|---|
+| id CER | 0.0688 | 0.0752 | **0.1298** | Δbase >0.05 ⇒ **越红线** |
+| id p90 尾静音 | 0.18 | 1.02 | **0.78** | ≤0.5s ⇒ **越上限**（比 r23 好 0.24s） |
+| id speech_ratio | 0.882 | 0.735 | **0.712** | 降幅 ≤0.05 ⇒ **越门** |
+| id audio_sec | 2.53 | 3.13 | **3.61** | +43% vs base |
+| id 跑飞 | 0/96 | 3/96 | **5/96** | 0/96 ⇒ **不达标** |
+| th CER | 0.1125 | **0.0773** | 0.1183 | r23 的收益被丢掉 |
+| tl CER | 0.0106 | 0.0139 | 0.0127 | 持平 |
+| Δsim(emo−plain) | −0.0140 | −0.0127 | **−0.0129** | **保住** |
+
+- **假设被否**：冷启动 + 更少步数（1500 vs 2909）在同一份数据上，尾静音只从 1.02→0.78s（仍远超 base 0.18），
+  而 CER / 跑飞 / speech_ratio / audio_sec 全面变差 ⇒ 「续训链累积是主因」不成立。
+- **v2 上 id CER 同样越红线**（base 0.0230 / r23 0.0177 / r24 **0.0876**），但拆开看全部来自 2 条短 cue 跑飞
+  （`id_nat_02` audio 1.92→6.67s、`id_nat_20` 1.76→2.93s，各 1/3 seed 多读）；**剔最差 3 条后 id ΔCER −0.0030**、
+  32 条里只 10 条变差 ⇒ 不是普遍性内容退化。逐 case 尾静音 106/118 比 base 高（均值 +0.111s）。
+- **id 探针上的反向信号**：r24 mean CER **0.0042**、多读 0/54、SIM 0.8734，优于 r23 的 0.0672 / 1/54 / 0.8686
+  （r23 有一条 `id_ms_colloquial_en` seed43 跑到 **20.8s**、CER 3.16）。⇒ **冷启动不是全面更差，而是把跑飞
+  挪到了不同 case 上**（r23 炸在 `id_ms_colloquial_en`，r24 炸在 `id_nat_02/06/20/24`，后者 base 音频只有 1.6–2.8s）。
+  历代 id 探针：base 0.059 / r8 0.022 / r13x 0.018 / r17 0.114 / r18 0.001 / r23 0.067 / r24 0.0042。
+- **音色一致性没有变好**（用户最在意的维度）：同 ref 跨句离散度 id base 0.0154 / r23 **0.0132** / r24 0.0153，
+  th 0.0158/0.0186/0.0183，tl 0.0102/0.0104/**0.0093** ⇒ r24 丢掉 r23 在 id 上的优势，**没有理由换**。
+- **顺带学到的一条**：Δsim 在冷启动下保留（−0.0129 ≈ r23 的 −0.0127）⇒ **情绪前缀带来的音色稳定收益来自数据，
+  不来自续训链**；而续训链在这份数据上是「内容更准 + 尾巴更长」的权衡，不是单纯过拟合。
+
+**⇒ 按开训前写死的规则：本轮不通过、不晋级、生产保持 r23、HF 不动、不 merge 不推送。**
+并且**不再为「修尾静音」开训练轮**——三次独立证据都指向生成侧而不是数据尾：r4（数据尾压到 0.15s，模型仍垫
+~0.25s）、2026-10-22（6271 条训练目标尾全 ≤0.17s，生成仍 +0.18~0.22s）、本轮（冷启动仍 +0.60s）。
+要降尾静音/跑飞只能走**推理侧**（DIS 长度门、重试策略、参考锁定、可选 VAD 尾裁）。
+再开训练轮的前置是**新的可证伪假设**，不是继续调时长卫生或步数。
+
 ## 2026-10-22：暂停交接与续做计划
 
 **用户决定先记录、后续再做；此前“继续”授权暂停。** 本次只更新文档，不启动新试听包、TTS/ASR、

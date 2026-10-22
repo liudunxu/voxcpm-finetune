@@ -4,6 +4,67 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## lora_omni5_r24_coldstart
+
+- 生成时间：2026-10-22 22:54:25
+- 结论：**不通过：id CER 0.0688→0.1298（Δbase +0.0610 越 0.05 红线，v2 同向 +0.0646）、id 跑飞 5/96（r23 3/96、门禁 0/96）、id p90 尾静音 0.78s 仍越 0.5s 上限、speech_ratio −0.170、audio_sec +43%；th 丢掉 r23 的收益（0.0773→0.1183）。仅 Δsim(emo−plain) −0.0129 与 tl 持平保住 ⇒「续训链累积是主因」被否，生产保持 r23**
+- 下一步：不再为「修尾静音」开训练轮：r4（数据尾压到 0.15s、模型仍垫 0.25s）、2026-10-22（6271 条训练目标尾全 ≤0.17s、生成仍 +0.18~0.22s）、本轮（冷启动仍 +0.60s）三次独立证据都指向生成侧而非数据尾。改走推理侧（DIS 长度门/重试/参考锁定 + 可选 VAD 尾裁）。若再开训练轮，前置是新的可证伪假设，不是继续调时长卫生或步数
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | True/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 3.0 / 1500 |
+| warmup / weight_decay / max_grad_norm | 150 / 0.01 / 1.0 |
+| save/valid_interval | 250/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/voxft_data/processed/r23_thtlboost/train.jsonl |
+| 样本数 / 语种条数 | 7996 / {"en": 128, "id": 3247, "th": 2833, "tl": 1535, "zh": 253} |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、112 个 case × seed = 336 条样本
+
+| 语种 | base CER | lora_omni5_r24_coldstart_latest CER |
+|---|---|---|
+| en | 0.0024 (WER 0.0052) | 0.0064 (WER 0.0115) |
+| id | 0.0688 (WER 0.2171) | 0.1298 (WER 0.2573) |
+| th | 0.1125 | 0.1183 |
+| tl | 0.0106 (WER 0.0994) | 0.0127 (WER 0.0995) |
+| **总体** | 0.0552 | 0.0754 |
+| 疑似漏尾 | 0.0119 | 0.0238 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `lora_omni5_r24_coldstart_latest` 红线：id 0.0688→0.1298
+  - 噪声级（未触发红线，照实记录）：en 0.0024→0.0064；th 0.1125→0.1183；tl 0.0106→0.0127
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；p90尾静音增量 >0.1s 或 >0.5s；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `lora_omni5_r24_coldstart_latest`：overall p90尾静音 0.240→0.620s（+0.380s）；overall p90尾静音 0.620s 越过 0.5s 上限；id p90尾静音 0.180→0.780s（+0.600s）；id p90尾静音 0.780s 越过 0.5s 上限；th p90尾静音 0.220→0.600s（+0.380s）；th p90尾静音 0.600s 越过 0.5s 上限；overall speech_ratio 0.859→0.785（-0.074）；id speech_ratio 0.882→0.712（-0.170）；th speech_ratio 0.855→0.782（-0.073）
+
+报告文件：`base_dramaprod.json`、`lora_omni5_r24_coldstart_latest_9462d1a6a265417bb931a267c69bd78a.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+三套验收全部与 base/r23 同口径（cfg1.8/20步/禁重试/large-v3/seed42-44），base 与 r23 未重跑。
+① dramaprod(112×3=336)：id CER base 0.0688 / r23 0.0752 / r24 0.1298；id p90 尾静音 0.18/1.02/0.78（r24 比 r23 好 0.24s 但仍越 0.5s 上限）；id speech_ratio 0.8817/0.7346/0.7117；id audio_sec 2.53/3.13/3.61；跑飞 id 0/3/5、th 3/0/1（base/r23/r24）。th CER 0.1125/0.0773/0.1183，tl 0.0106/0.0139/0.0127。
+② v2(118×3=354)：id CER 0.0230/0.0177/0.0876——越红线全部来自 2 条短 cue 跑飞（id_nat_02 audio 1.92→6.67s、id_nat_20 1.76→2.93s，各 1/3 seed 多读），剔最差 3 条后 id ΔCER −0.0030、32 条里只 10 条变差；th 0.1155/0.0877/0.1026；tl 0.0184/0.0135/0.0137；p90 尾静音 id 0.18/0.50/0.42、th 0.18/0.30/0.44、tl 0.18/0.28/0.28；逐 case 尾静音 106/118 比 base 高（均值 +0.111s）。
+③ id 探针(18×3=54)：反向信号——r24 mean CER 0.0042 / 多读 0/54 / SIM 0.8734，优于 r23 的 0.0672 / 1/54 / 0.8686（r23 有一条 id_ms_colloquial_en seed43 跑到 20.8s、CER 3.16）；但 r24 p90 尾静音 0.50 比 r23 的 0.30 差。历代 id 探针：base 0.059 / r8 0.022 / r13x 0.018 / r17 0.114 / r18 0.001 / r23 0.067 / r24 0.0042。
+④ Δsim(emo−plain)：base −0.0140 / r23 −0.0127 / r24 −0.0129 ⇒ 情绪前缀带来的音色稳定收益在冷启动下保留，来自数据不来自续训链。
+⑤ 同 ref 跨句一致性（v2，越小越稳）：id base 0.0154 / r23 0.0132 / r24 0.0153；th 0.0158/0.0186/0.0183；tl 0.0102/0.0104/0.0093 ⇒ r24 丢掉 r23 在 id 上的优势。
+⑥ 关键新认识：冷启动不是全面更差，而是把跑飞挪到了不同 case 上（r23 炸在 id_ms_colloquial_en，r24 炸在 id_nat_02/06/20/24，后者 base 音频只有 1.6-2.8s）。⇒ 1-3s 出分布是结构性的（3s 硬下限），微调只能改变它落在哪些 case 上，不能消除；同时续训链在这份数据上是「内容更准 + 尾巴更长」的权衡，不是单纯过拟合。
+⑦ 训练：3 epoch / 1500 步冷启动（官方基座 snapshot 32279eff…），与 r23 的 yaml diff 只有 num_iters/max_steps/warmup_steps/save_path 四处；val loss 首 1.021114 → 末 0.919980、最优 0.906632(step1000)，按铁律一律交付 latest。北京 21:26:58 启动、22:08 完成（约 41 分钟）。
+⑧ 评测由 /root/autodl-tmp/eval_r24_20261022.sh 自动执行：等训练进程退出且 training_state step==1500 才开跑，已有 r24 报告则拒绝覆盖，shard 非零退出即停。报告文件：base_dramaprod.json / lora_omni5_r24_coldstart_latest_9462d1a6…json；v2 = base_b34db7c9…json / …_556be769…json；id 探针 = r23 …_dd5f5c56…json / r24 …_bec16569…json。
+
+---
+
 ## 2026-10-22：用户暂停，转文档交接（无新实验）
 
 用户要求先记录TODO及后续规划，后续再继续；此前“继续”授权暂停。
@@ -617,6 +678,12 @@ dramaprod：th 0.0764（历轮最优）/ tl 0.0104（最优）/ id 0.0732（跑�
 | 样本数 / 语种条数 | None / null |
 
 ### 验收（离线轨）
+
+> **2026-10-22 更正（不改写历史指标）**：上表的 `finetune: full` 与全部 `None` 是
+> `runlog._read_yaml` 在本地缺 `configs/lora_omni5_r19_emotion_3ep.yaml` 时静默返回 `{}` 造成的
+> **错误标签，不是实验事实**。远端该 yaml 实为 **LoRA r64/α64/dropout0.05、lr 1e-4、num_iters 1202**、
+> `pretrained_path` 指向官方基座 snapshot `32279eff…`。缺陷已修（缺配置硬失败）并补
+> `tests/test_runlog.py`；下面的验收数字与结论照旧保留。
 
 - case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、112 个 case × seed = 336 条样本
 
