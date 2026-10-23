@@ -11,7 +11,8 @@
   `train.jsonl` SHA `98cc7227…`；**与三套验收集文本暴露 0 条**（r23 是 29 行覆盖 v2 的 21/30 条 TL 文本）。
 - [x] 配置与 r18 的 yaml **diff 只有 4 行**（两个清单路径 + save_path/tensorboard），`num_iters 1390`、
   `warmup 139`、LoRA r64/α64、lr 1e-4、batch2×8、proj 关全部逐字相同；冷启动自官方基座、save_path 开训前不存在。
-  旁证：`val step0 = 1.041648` 与 r18 记录的首值 **1.0416 逐位吻合**。
+  val 集与 r18 逐字节相同由**构建脚本的 SHA 断言**保证（不是靠 val loss 比对——官方验证只取 10 个 batch 且
+  val 也 shuffle，是约 20 条随机样本的估计，跨轮不可比；见 AGENTS.md 的机制记录）。
 - [x] 10:35:16 启动，日志 `/root/autodl-tmp/r25_train.log`，ETA ~11:10；评测驱动
   `/root/autodl-tmp/eval_r25_20261023.sh` 自动接力（等进程退出 + step==1390，已有报告拒绝覆盖，
   **全程 HF_HUB_OFFLINE=1**），三套共 744 输出，base/r18/r23/r24 一律不重跑。

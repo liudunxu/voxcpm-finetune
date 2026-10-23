@@ -194,8 +194,12 @@ README 亦写「当前版本为 r23」，仓库 lastModified `2026-10-21T14:21:3
   冷启动自官方基座 snapshot `32279eff…`，开训前确认 save_path 不存在（无 resume）。
 - preflight 只剩 r18 配方自带的两条警告（带前缀目标不足 25%、同人 ref 覆盖不足 30%），
   3-epoch 误报已随本轮修复消失。
-- **旁证**：`val step0 = 1.041648`，与 r18 记录的首值 **1.0416 逐位吻合** ⇒ 独立证明 val 集与 r18 逐字节相同、
-  初始化同为官方基座（step0 时 LoRA 为零初始化，val loss 只由 val 数据 + 基座决定）。
+- **val 集与 r18 逐字节相同的硬证据是构建脚本里的 SHA 断言**（`assert sha256(dst/val.jsonl) == sha256(r18/val.jsonl)`）。
+  `val step0 = 1.041648` 与 r18 记录的首值 1.0416 吻合，但这只是**一致性旁证、不是证明**：官方 `validate()`
+  只跑 val_loader 前 `max_val_batches=10` 个 batch，且 `build_dataloader` 对 val 也 `shuffle=True`
+  （`train_voxcpm_finetune.py:390`、`training/data.py:253`）⇒ 每次验证只是约 20 条随机样本的估计。
+  实测 r25 的 val 在 0.9384 与 1.0205 之间**逐次交替**（250/750/1250 高、500/1000/1389 低），就是换了一批样本。
+  **因此本轮不把 val loss 与 r18 的 0.9273 作跨轮比较**，`runlog` 输出已自带该告示（AGENTS.md 已记机制）。
 
 ### 3. 预注册门禁（开训前写死，两轨都要过才算晋级候选）
 

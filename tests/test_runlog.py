@@ -27,3 +27,18 @@ def test_finetune_label_follows_lora_block(tmp_path, monkeypatch):
     _write_cfg(tmp_path, "without_lora")
     assert "| finetune | lora |" in runlog.build_record("with_lora", [])
     assert "| finetune | full |" in runlog.build_record("without_lora", [])
+
+
+def test_val_loss_line_carries_subset_caveat(tmp_path, monkeypatch):
+    """官方 validate() 只跑前 10 个 batch（max_val_batches）且 val_loader 也 shuffle=True，
+    这个数是约 20 条随机样本的估计——记录里必须自带"跨轮不可比"的告示，否则会被当收敛曲线读。"""
+    monkeypatch.setattr(runlog, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(runlog, "CHECKPOINT_DIR", tmp_path)
+    _write_cfg(tmp_path, "with_val")
+    log = tmp_path / "with_val" / "train.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("[val] step 0: loss/total: 1.0416, loss/diff: 0.9151\n"
+                   "[val] step 1389: loss/total: 0.9273, loss/diff: 0.9000\n", encoding="utf-8")
+    text = runlog.build_record("with_val", [])
+    assert "1.0416" in text and "0.9273" in text
+    assert "跨轮不可比" in text and "不作选点依据" in text

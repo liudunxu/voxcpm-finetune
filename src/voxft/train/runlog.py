@@ -199,9 +199,12 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
               f"| 训练清单 | {cfg.get('train_manifest')} |",
               f"| 样本数 / 语种条数 | {plan.get('train_samples')} / {json.dumps(plan.get('langs'), ensure_ascii=False)} |"]
     if vals:
+        # 官方 validate() 只跑 val_loader 的前 max_val_batches=10 个 batch，而 build_dataloader
+        # 对 val 也是 shuffle=True ⇒ 这是约 20 条随机样本的估计，跨轮不可比，更不能用来选 checkpoint。
         lines.append(f"| val loss 首→末 | {vals[0][1]:.4f} (step {vals[0][0]}) → "
                      f"{vals[-1][1]:.4f} (step {vals[-1][0]})，最优 "
-                     f"{min(v for _, v in vals):.4f} |")
+                     f"{min(v for _, v in vals):.4f}"
+                     f"（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |")
 
     if mix:
         lines += ["", "### 数据配比（按时长）", "",
