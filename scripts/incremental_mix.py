@@ -45,7 +45,7 @@ def load_exclusions(directory=ROOT / "eval_cases"):
     return texts, hashes
 
 
-def row_issues(row, protected, excluded):
+def row_issues(row, protected, excluded, max_dur: float = 20.0):
     issues = []
     text = target_text(row)
     if not isinstance(text, str) or not _norm(text):
@@ -58,11 +58,11 @@ def row_issues(row, protected, excluded):
         issues.append("unsupported_language")
     try:
         duration = float(row["duration"])
-        valid_duration = math.isfinite(duration) and 3 <= duration <= 20
+        valid_duration = math.isfinite(duration) and 3 <= duration <= max_dur
     except (KeyError, TypeError, ValueError):
         valid_duration = False
     if not valid_duration:
-        issues.append("duration_outside_3_20s")
+        issues.append(f"duration_outside_3_{max_dur:g}s")
     if row.get("speaker_verified") is True and not row.get("speaker"):
         issues.append("missing_verified_identity")
     elif memberships([source_row(row)]) & protected:
@@ -117,13 +117,13 @@ def validate_mix(train, validation, excluded):
     return audit
 
 
-def eligible_additions(candidates, train, validation, excluded):
+def eligible_additions(candidates, train, validation, excluded, max_dur: float = 20.0):
     protected = memberships([source_row(row) for row in validation])
     excluded = excluded | {_norm(target_text(row)) for row in validation if row.get("text")}
     used = {key for key in memberships([without_ref(row) for row in train]) if key[0] == "audio"}
     kept, rejected = [], Counter()
     for row in candidates:
-        issues = row_issues(row, protected, excluded)
+        issues = row_issues(row, protected, excluded, max_dur)
         target_keys = {("audio", str(Path(row[field]).resolve()))
                        for field in ("audio", "origin_audio") if row.get(field)}
         if target_keys & used:

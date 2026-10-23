@@ -128,3 +128,19 @@ def test_builders_keep_provenance_and_actual_ref_summary(module, monkeypatch, tm
 def test_new_identity_metadata_cannot_disappear(module):
     with pytest.raises(ValueError, match="discard"):
         module.align_addition(row(speaker_verified=True, speaker="actor"), set(row()))
+
+
+def test_max_dur_is_parameterisable_and_defaults_to_20(module):
+    """r27 需要 3–30s（继承的 r18 系清单本来就含 >20s 的行，用 20s 会让新增数据的时长分布
+    与继承数据不一致），但默认值必须仍是 20s，否则既有调用方会被静默放宽。"""
+    validation = row("validation", speaker_verified=True, speaker="held-out", session="studio")
+    candidates = [row("mid", duration=25.0), row("ok", duration=8.0), row("huge", duration=30.01)]
+
+    kept, rejected = module.eligible_additions(candidates, [], [validation], set())
+    assert [r["text"] for r in kept] == ["ok"]
+    assert rejected["duration_outside_3_20s"] == 2
+
+    kept30, rejected30 = module.eligible_additions(candidates, [], [validation], set(), 30.0)
+    assert [r["text"] for r in kept30] == ["mid", "ok"]
+    assert rejected30["duration_outside_3_30s"] == 1
+    assert module.row_issues(row("mid", duration=25.0), set(), set(), 30.0) == []

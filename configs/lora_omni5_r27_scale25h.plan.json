@@ -1,0 +1,15 @@
+{
+  "gpus": 1,
+  "epochs": 3.0,
+  "num_iters": 2309,
+  "effective_batch": 16,
+  "train_manifest": "/root/autodl-tmp/voxft_data/processed/r27_scale25h/train.jsonl",
+  "train_samples": 12312,
+  "langs": {
+    "en": 270,
+    "id": 6391,
+    "th": 3471,
+    "tl": 1639,
+    "zh": 541
+  }
+}
