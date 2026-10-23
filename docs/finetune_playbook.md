@@ -210,6 +210,70 @@ r26 的收益主要来自 th/tl 几乎零漂移。**剂量是有效杠杆，但�
   时长与 v2 内容 r25 最好、情绪音色稳定与"无灾难级跑飞"r26 最好。构成这条前沿已经画完，
   继续调前缀剂量只是沿前沿移动 ⇒ 要突破得换维度（规模）或换数据（新源）。
 
+## 2026-10-23：id 母语盲听口音包（零 GPU，已交付；地道性判据从这里开始）
+
+**为什么做**：口音/语调地道性在项目里长期是 `未验证`——机器分数、音频大模型、非母语听感都不能冒充母语验收
+（`docs/qc_gates.md`），而它又是决定 `enable_proj=true` 值不值得开的**前置**（proj 只在"跨语言 ref 韵律泄漏"
+这一机制上对症）。这个包是把该维度从"未验证"变成"有方向"的唯一零 GPU 路径。
+
+**产物**（`work/`，已 gitignore；脚本与测试入库）：
+
+| 路径 | 内容 | 能否外发 |
+|---|---|---|
+| `work/audio_ab/20261023_id_accent/id_accent_blind_20261023.zip` | 5.3 MB / 26 文件 = `index.html` + `audio/` 24 wav | **可外发** |
+| `.../pack/public/` | 同上，未压缩 | 可外发 |
+| `.../pack/private/mapping.json` | 代号 → 模型 / 自动分数 | **严禁外发** |
+| `.../plan.json`、`.../raw/` | 选片计划、原始 wav | 自留 |
+
+**构成**：4 模型（`base`/`r18`/`r23`/`r26`，用户「主要看这四个就行」收窄，原计划 7 个）× 6 条 zh-ref 印尼语台词
+× seed 42 = 24 条。文本取 `id_prosody_probe_20261020.jsonl` 的 zh-ref 行，冻结登记在
+`eval_cases/id_accent_pack_20261023.jsonl`。同文本、同参考音、同种子，**只有模型不同**——这是它能当归因证据的前提。
+
+**盲化与两道防泄漏**：组内代号 A–D 顺序随机（`--shuffle-seed 20261023`，可复现 mapping）；构建器自带禁词扫描
+（命中即 `shutil.rmtree` 整包回滚，不是警告）+ 事后独立复扫 `public/`，均无泄漏。
+⚠️ **禁词表里不能放 `case_id`**：它在同一组内对所有 clip 相同，不泄漏"哪条来自哪个模型"，而台词本身必须显示给听者
+（禁它会因台词恰含该字样而误报整包）。只禁模型名与轮次特征串（`lora_omni5`/`inoc10`/`prefix_graft`/`scale25h`…）。
+
+**页面文案全英文**（听者是印尼语母语者，中文页对他不可读）：标题、三问说明、每条两个下拉
+（`Non-Indonesian rhythm/accent`、`Obvious generation defect`）、Q1「哪条最像本地印尼人」、导出按钮。
+`data-*` 与导出字段名（`ACCENT_BLIND_FEEDBACK v1` + `best`/`accent`/`defect`/`rank`/`note`）**一字未改**，
+所以改语言不影响反馈解析口径。
+
+### 顺带定案：固定 seed 的推理可复现（这条比盲听包本身更值钱）
+
+base 与 r23 的探针音频已被远端 `auditions/` 轮转清掉（该目录 1.6G、会自动轮换）。用
+`eval_cases/id_accent_pack_20261023.jsonl` + `--report NAME=PATH` 覆盖重新生成后，
+**12 条与冻结报告在 `audio_sec` / CER / SIM 上完全一致**（构建器对每条 wav 都做了 `audio_sec ±0.05s` 校验才收进包）。
+⇒ ① 这个盲听包不是拿"另一次抽样"冒充历史结果；② 以后音频被轮转掉**不必恐慌**，同 seed 可重建；
+③ 但 `auditions/` 不是证据存储，**要留的证据得自己拷出来**（r23 的 5 个 `step_*` 属证据，不在轮转范围）。
+
+### 判读预案（预注册，别到时候现编）
+
+主指标 Q1「最像本地人」票数，辅指标 `accent=yes` 比例：
+
+1. base 与三个 LoRA **票数无差**且 `accent=yes` 普遍高 ⇒ 地道性不是微调能碰的（基座先验），
+   **`enable_proj` 不开**，结论写进 `docs/qc_gates.md` 的"口音"行并停在这。
+2. 某轮票数明显更高 ⇒ 该轮配方差异（r18 无前缀 / r23 内容向 / r26 音色向）就是可追线索，据此再定 proj 单变量轮。
+3. 反馈形态分流：「像中文/英文的节奏」⇒ proj 对症（四个投影正是跨语言 ref 的韵律泄漏通路）；
+   「印尼语内部口音像马来语」⇒ proj 无效，只能靠新语料。
+
+⚠️ **6 组 × 4 条是小样本，只够定方向、不够当门禁**——`metallic`/`low_snr` 那两条（AUC 0.060 / 0.509）
+就是把参考值当门禁用过的教训，不要重演。听者反馈里的"生成异常"条目按异常标，**不得当口音证据**（页面已写明）。
+
+### 重建命令
+
+```bash
+uv run python -X utf8 scripts/build_accent_blind_pack.py plan --models base,r18,r23,r26 \
+    --ref-lang zh --seed 42 --out work/audio_ab/20261023_id_accent/plan.json
+uv run python -X utf8 scripts/build_accent_blind_pack.py build \
+    --plan work/audio_ab/20261023_id_accent/plan.json --raw work/audio_ab/20261023_id_accent/raw \
+    --dst work/audio_ab/20261023_id_accent/pack --shuffle-seed 20261023
+# build 拒绝覆盖已有 dst；重建前先删旧目录（mapping 由 shuffle-seed 决定，删了可复现）
+```
+
+守卫测试 `tests/test_build_accent_blind_pack.py`（6 条）：拒绝覆盖、泄漏即回滚、时长校验、
+选片取交集、`--report` 覆盖、代号随机化确定性。全量 **286 passed**。
+
 ## 2026-10-23：r27 结果与归因（不通过，微调线暂停）
 
 三套跑完（16:36），按预注册六条门禁**不通过、不晋级，生产保持 r23**。完整数字在 `docs/runs.md`
@@ -275,8 +339,9 @@ tl 同人 ref（`fleurs_tl` 1833 行**全部 `speaker=unknown`**，已用数据�
   与 r23 的内容差（id Δ0.0098、th Δ0.0045）**都在 ±0.04 噪声带内**。
   ⚠️ 诚实说：r26 的 Δsim 对 r23 的优势（0.0039）**也在 ±0.009 SIM 噪声内**，不能当主要依据。
 - **决定 2：要不要开 `enable_proj=true` 单变量轮**（微调线唯一没排除的杠杆）。
-  **先做零 GPU 的 id 母语盲听口音包再定**：base/r18/r23/r24/r25/r26/r27 的 id 探针音频（各 18 case × 3 seed）
-  **已全部生成在远端**，同文本/同 ref/同 seed，可直接盲标。听感若是"带中文/英文的节奏"⇒ proj 是唯一机制
+  **前置的 id 母语盲听口音包已交付**（见上文「2026-10-23：id 母语盲听口音包」，4 模型 × 6 台词 × seed42 = 24 条，
+  按用户收窄只含 base/r18/r23/r26；原计划的 r24/r25/r27 音频也在远端，需要时可加模型重建）。
+  等反馈回来再定。听感若是"带中文/英文的节奏"⇒ proj 是唯一机制
   对症的杠杆（放开 `enc_to_lm_proj`/`fusion_concat_proj`/`lm_to_dit_proj`/`res_to_dit_proj` 四个投影 = 跨语言 ref
   的韵律泄漏通路，`voxcpm2.py:151,233-236,326-349`）；若是"印尼语内部口音像马来"⇒ 属基座先验，proj 无效。
   注意 `stop_proj`/`stop_head`（`:239/:241`）**不在** `target_proj_modules` 内、开了也仍冻结 ⇒ **proj 不是修跑飞的杠杆**。
