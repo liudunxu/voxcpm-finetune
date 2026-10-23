@@ -116,6 +116,10 @@ TAIL_SILENCE_P90_DELTA = 0.10      # p90 尾静音绝对增量上限（秒）
 TAIL_SILENCE_P90_MAX = 0.5         # checkpoint p90 尾静音绝对上限（秒），对齐官方训练数据尾静音上限
 SPEECH_RATIO_DROP = 0.05           # mean speech_ratio 下降上限
 
+# 只用于 _seed_severity_lines 的参考分解，不是门禁阈值。2.0× 与常设回归集
+# eval_cases/runaway_regression_*.jsonl 的提取阈值同一个数，便于两边对读。
+OVER_READ_CATASTROPHIC = 2.0
+
 
 def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
     """时长类红线：以第一份报告为基线，overall 与 by_lang 都查。
@@ -166,6 +170,42 @@ def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
                     f"{name} speech_ratio {bs:.3f}→{cs:.3f}（{cs - bs:+.3f}）")
         out[e.get("label", "?")] = gates
     return out
+
+
+def _seed_severity_lines(evals: list[dict]) -> list[str]:
+    """逐 seed 与严重度分解：**只作参考，不改任何门禁的语义与阈值**（改了就和历史轮次不可比）。
+
+    为什么要这两张分解（2026-10-23 r26 的教训，标定见 docs/qc_gates.md）：
+    - 极端跑飞按 seed 高度聚集：5 模型 × 3 套 × id 246 条 = 1230 条里 `len_ratio≥2` 的 10 条，
+      seed44 占 8 条（均匀零假设单侧 p=0.0034）、seed43 占 2、seed42 为 0 ⇒ 只看均值/总数
+      会把 seed 运气读成模型差异。
+    - 「多读条数」不分严重度会给出相反结论：r26 在 dramaprod 是 4/96（越 ≤3/96 门），
+      但 4 条全是 1.50–2.00× 的中等级；r25 只有 2/96，其中一条 7.97×（11.84s 对 2.5s 台词）。
+      按条数 r26 更差、按严重度 r26 更好。
+    """
+    lines = ["", f"逐 seed 与严重度分解（参考、不作门禁；`len_ratio` ≥{OVER_READ_CATASTROPHIC} 记灾难级，"
+                 f"其余多读记中等级）："]
+    for e in evals:
+        items = e.get("items") or []
+        if not items:
+            continue
+        lines.append(f"- `{e.get('label', '?')}`")
+        for lang in sorted({i.get("lang") for i in items if i.get("lang")}):
+            rows = [i for i in items if i.get("lang") == lang]
+            mod = sum(1 for i in rows if i.get("over_read")
+                      and (i.get("len_ratio") or 0) < OVER_READ_CATASTROPHIC)
+            cat = sum(1 for i in rows if (i.get("len_ratio") or 0) >= OVER_READ_CATASTROPHIC)
+            per = []
+            for s in sorted({i.get("seed") for i in rows}):
+                sub = [i for i in rows if i.get("seed") == s]
+                ratios = [i.get("len_ratio") or 0 for i in sub]
+                tails = sorted(i["tail_silence_sec"] for i in sub
+                               if i.get("tail_silence_sec") is not None)
+                p90 = tails[min(len(tails) - 1, int(0.9 * len(tails)))] if tails else None
+                per.append(f"s{s} 多读{sum(1 for i in sub if i.get('over_read'))}/{len(sub)}"
+                           f" max{max(ratios):.2f}×" + (f" p90尾{p90:.2f}s" if p90 is not None else ""))
+            lines.append(f"  - {lang}（{len(rows)} 条）中等 {mod} / 灾难 {cat} ｜ " + " ｜ ".join(per))
+    return lines
 
 
 def build_record(run: str, eval_paths: list[str], verdict: str = "",
@@ -253,6 +293,7 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
         if any(e.get("mean_audio_sec_non_numeric") is None for e in evals):
             lines.append("非数字时长字段缺失/无适用样本：该项未评，不代表通过；"
                          "旧报告先用 `voxft.eval --summarize` 另存重算。")
+        lines += _seed_severity_lines(evals)
         lines += ["", "报告文件：" + "、".join(f"`{Path(p).name}`" for p in eval_paths)]
 
     lines += ["", "### 人工盲听", "",

@@ -1,4 +1,5 @@
 """runlog 运行记录的输入守卫自测。"""
+import json
 import sys
 
 import pytest
@@ -43,6 +44,49 @@ def test_print_mode_announces_it_did_not_write(tmp_path, monkeypatch, capsys):
     assert "## printed" in out
     assert "未写入 docs/runs.md" in out
     assert not (tmp_path / "runs.md").exists()
+
+
+def test_seed_severity_breakdown_splits_moderate_and_catastrophic():
+    """r26 的教训：按多读条数它比 r25 差（4/96 vs 2/96），按严重度它更好（全 ≤2.00× vs 一条 7.97×）。
+    分解只是参考输出，不改任何门禁的语义与阈值。"""
+    rep = {"label": "ck", "items": [
+        {"lang": "id", "seed": 42, "len_ratio": 1.0, "over_read": False, "tail_silence_sec": 0.1},
+        {"lang": "id", "seed": 44, "len_ratio": 1.6, "over_read": True, "tail_silence_sec": 0.2},
+        {"lang": "id", "seed": 44, "len_ratio": 7.97, "over_read": True, "tail_silence_sec": 0.3},
+        {"lang": "th", "seed": 42, "len_ratio": 1.0, "over_read": False, "tail_silence_sec": 0.1},
+    ]}
+    text = "\n".join(runlog._seed_severity_lines([rep]))
+    assert "不作门禁" in text
+    assert "id（3 条）中等 1 / 灾难 1" in text
+    assert "th（1 条）中等 0 / 灾难 0" in text
+    assert "s42 多读0/1 max1.00×" in text
+    assert "s44 多读2/2 max7.97×" in text
+
+
+def test_record_includes_seed_breakdown(tmp_path, monkeypatch):
+    """分解必须真的出现在生成的记录里，否则等于没接上。"""
+    monkeypatch.setattr(runlog, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(runlog, "CHECKPOINT_DIR", tmp_path)
+    _write_cfg(tmp_path, "with_eval")
+    report = tmp_path / "ck.json"
+    report.write_text(json.dumps({
+        "label": "ck", "cfg_value": 1.8, "inference_timesteps": 20, "retry_badcase": False,
+        "asr_model": "large-v3", "mean_cer": 0.05, "suspected_truncation_rate": 0.0,
+        "by_lang": {"id": {"mean_cer": 0.05}},
+        "items": [{"case_id": "c1", "lang": "id", "seed": 44, "len_ratio": 3.0,
+                   "over_read": True, "tail_silence_sec": 0.4, "cer": 0.05}],
+    }, ensure_ascii=False), encoding="utf-8")
+    base = tmp_path / "base.json"
+    base.write_text(json.dumps({
+        "label": "base", "cfg_value": 1.8, "inference_timesteps": 20, "retry_badcase": False,
+        "asr_model": "large-v3", "mean_cer": 0.04, "suspected_truncation_rate": 0.0,
+        "by_lang": {"id": {"mean_cer": 0.04}},
+        "items": [{"case_id": "c1", "lang": "id", "seed": 44, "len_ratio": 1.0,
+                   "over_read": False, "tail_silence_sec": 0.2, "cer": 0.04}],
+    }, ensure_ascii=False), encoding="utf-8")
+    text = runlog.build_record("with_eval", [str(base), str(report)])
+    assert "逐 seed 与严重度分解" in text
+    assert "id（1 条）中等 0 / 灾难 1" in text
 
 
 def test_val_loss_line_carries_subset_caveat(tmp_path, monkeypatch):
