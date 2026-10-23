@@ -14,6 +14,7 @@ checkpoints/
 /work/rescore/
 /work/review_20261022/
 /work/strength_ab_20261022_v1/
+/work/r25_data_audit_20261023/
 wandb/
 logs/
 *.wav
