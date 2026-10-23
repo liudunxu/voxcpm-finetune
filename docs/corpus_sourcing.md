@@ -31,7 +31,60 @@
    原 id/ms 条目的通用教训，ms 退出后仍适用于任何近亲语种对），
    不因有新链接就改配比、开GPU或升级r8。母语质量未评仍标未验证。
 
-以下保留历史TH/TL调研；旧配比和规模建议不覆盖当前TODO与AGENTS的执行边界。
+## 2026-10-23：三语 HF 新候选复核（联网，仅元数据）
+
+本轮按 id / th / tl 分语种检索 Hugging Face，并核到数据卡、LICENSE、上游发布页或 API 原文。**未下载或试听音频/parquet，未改 registry、训练清单或权重；以下均为待审候选，不是已批准训练集，也不构成恢复 GPU 训练的理由。**
+
+### 1. 首选候选：Basis Global Emotions（id / th / fil）
+
+证据：[HF 数据卡](https://huggingface.co/datasets/basis-ai/basis-global-emotions)、[官方介绍](https://withbasis.co/open/global-emotions)、[Basis Data License 1.0](https://huggingface.co/datasets/basis-ai/basis-global-emotions/blob/main/LICENSE)。
+
+| locale | 时长 | recordings | series | speakers |
+|---|---:|---:|---:|---:|
+| `id-ID` | 7.47h | 1,824 | 722 | 194 |
+| `th-TH` | 2.98h | 1,260 | 516 | 189 |
+| `fil-PH` | 5.26h | 1,290 | 517 | 114 |
+
+`fil-PH` 与 `ceb-PH` 是独立配置，不得混用；`ms-MY`、`jv-ID`、`su-ID` 也不得当作 `id-ID`。
+
+**为什么比此前的英文朗读/评测集更对口：**
+
+- 付费招募母语贡献者原创录制，不是 TTS 合成或旧集重打包；原始 WAV 为 48kHz / 16-bit / mono，未做降噪、增强、响度归一或重采样。
+- 全库有 23 种情绪与 15 种 delivery steer；同一 speaker 对同一 instructed line 录 neutral/medium/full 或 neutral/full。三语各自的 steer 覆盖仍须按实际行统计。
+- `speaker_id` 是采集期稳定匿名身份，不是声纹聚类；有 `series_id`、`intensity`、`duration_s`、`region` 等字段。音频经母语者评价、内部 steer-following 与 NISQA 筛选，但这些仍不能替代本项目的声学及母语盲听。
+- 可能补「真人表演」与「目标语同 speaker ref」两个构成缺口，尤其是当前训练池从未有可信 ref 行的 tl。ref 配对优先跨 series，先按 speaker 隔离 train/val，不把同人同文不同强度当独立文本样本。
+- `speaker_id` 跨 locale 一致，使「同一 speaker 是否同时录 zh/en 与目标语」成为可审计问题；**尚未取得 gated 的 `speakers.jsonl`，实际跨语言重合人数未知，不能宣称跨语言同人 ref 已解决。**
+
+**访问、文本、许可和时长四道门：**
+
+1. **访问/许可**：这是 manual-gated 数据；只有申请人接受条款且 Basis 批准后才取得许可。获批后允许商用训练、微调、蒸馏、发布/销售模型与权重及商业 API，无 SA/NC；公开模型卡须署名并记录 release/revision。
+2. **不得再分发 Source Materials**：原始或加工后的音频、文本及含源信息的派生物不得公开镜像、转售或共享给未获授权方；远端私有训练副本须做访问控制。不得识别/联系参与者，也不得制作或提供可识别为某参与者的声音克隆；一般 TTS 训练和非特定人的合成声音允许。**这些参与者不能直接当生产音色或公开发布其克隆演示。**
+3. **`given_line` 不是人工逐字转写**：它只是表演提示稿，说话人可能脱稿；本 release 不含 human-validated transcripts，需要向 `data@withbasis.co` 另索。方括号中的 laugh/sigh 等 non-verbal cue 不是正文。`steer` 也不能未抽审就直接写成 `emotion_verified=true` / `control_verified=true`。
+4. **不是短 cue 来源**：全库 P5/P50/P95 时长为 5.7/13.0/24.4s，不是三语各自分位数；它不能宣称解决 1–3s cue 缺口，须先算三语 3–30s 留存率。
+
+### 2. 其他候选与适用边界
+
+下表由总时长/条数换算的「条均」只是均值，不代表时长分布或加工留存率。
+
+| 候选 | 已核事实 | 能补什么 / 不能补什么 | 当前级别 |
+|---|---|---|---|
+| [SEACrowd/gowajee](https://huggingface.co/datasets/SEACrowd/gowajee) / [上游说明](https://github.com/ekapolc/gowajee_corpus) | TH；20,308 条 / 188 speakers / 17h11m，MIT，原始文本与 `utt2spk`，条均约 3.05s；HF 是官方 Google Drive 数据的 loader | 可小样审短句与采集期同 speaker ref；只是智能家居命令/唤醒词，录音设备环境不统一，不补表演。低于 3s 的样本不能靠拆项目硬下限救回 | **小样审计，不整包加训** |
+| [SEACrowd/thai_elderly_speech](https://huggingface.co/datasets/SEACrowd/thai_elderly_speech) / [官方 release](https://github.com/VISAI-DATAWOW/Thai-Elderly-Speech-dataset/releases/tag/v1.0.0) | TH；19,200 条 / 32 位年长者 / 17h11m，CC-BY-SA-4.0，有文本和 speaker ID，条均约 3.22s | 可少量补年长音色、短句与同人 ref；医疗/家居朗读、年龄和领域偏窄，不补情绪。HF loader 只有一个 train split，须重按 speaker 隔离 | **次优先小样审计** |
+| [INESCO](https://data.mendeley.com/datasets/hzrznx3xs5/1)（**非 HF**） | ID；官方称 2,400 条 / 3h1m49s / 4 位专业戏剧演员，CC BY 4.0，棚录、逐句文本、happy/anger/sad，条均约 4.55s | 比大朗读集更贴「专业表演 + 短句 + 真人身份」；但只有 4 人、3 情绪、无 neutral，不是自然对白。文本来源权利、演员商业 TTS 同意与实际文件完整性仍须核 | **若允许 HF 外来源，优先小样审计** |
+| [PixelML/sea-asr-ph-data](https://huggingface.co/datasets/PixelML/sea-asr-ph-data) | Filipino/Taglish；1,914.3h / 308,672 段视频索引；**无音频、无 speaker ID、文本全是未人审 Whisper**；Apache-2.0 只覆盖 labels，音频须按逐视频 CC-BY 与权利链重建核验 | 只能作为自然口语 sourcing 线索；不是现成训练集，不补可信 ref 或表演，文本/配乐/重叠/真人来源均未验 | **低优先级，不直接训练** |
+
+付费线索 [SpeechDataAI ID](https://huggingface.co/datasets/SpeechDataAI/indonesian-conversational-speech) 与 [SpeechDataAI TH](https://huggingface.co/datasets/SpeechDataAI/thai-conversational-speech) 均只有销售卡、没有 HF 音频。厂商宣称各 2,000h / 200 人 / 双人对话 / 人工核验转写；只能先索免费代表性样品、稳定 speaker schema、同意链和完整合同，未独立验证前不登记为可用训练集。
+
+新查到但不推荐的典型项：`davidai-labs/DAI-ASR-I18N` 的 DUA 明示禁止 train/fine-tune/optimize；`meetween/mumospee_v3` 不含音频且全是伪转写、无 speaker；Kumu Taglish 只有约 7 分钟且未获训练同意；各类 TTS 合成集继续执行「不得合成补量」红线。
+
+### 3. 当前结论与下一步
+
+- **id**：优先审 `Basis id-ID`；若允许 HF 外来源，INESCO 的短句与专业演员形态同样值得优先。两者都不能预先宣称改善「像马来腔」或情绪。
+- **th**：表演先审 `Basis th-TH`；Gowajee / Thai Elderly 只用于短句、年龄或 ref 构成的小样审计，不再整包增加朗读时长。
+- **tl/PH**：`Basis fil-PH` 是本轮唯一强的新候选，有望首次补目标语同人 ref 与真人表演；自然 Taglish 短对白仍未解决，PixelML 不替代 `drama_tl` 自建或付费授权。
+- **下一步只做访问与小样审计**：申请 Basis 并同时索取人工核验转写；获批后冻结 release/revision，在远端按语种检查实际口音、稿音一致、steer 可信度、3–30s 留存、speaker/ref 覆盖与 zh/en 跨 locale 重合，再做声学及母语者抽审。全部通过后才讨论单变量训练；当前微调暂停、生产权重与既有配方均不变。
+
+以下保留历史TH/TL调研；旧配比和规模建议不覆盖当前TODO与AGENTS的执行边界。旧文中「没有/不存在/不要再找」只代表当时检索记录，被本节新证据覆盖的以本节为准。
 
 ## 2026-10-20：id/tl 开放语料复查（联网核实到原文，用户要求重搜）
 
