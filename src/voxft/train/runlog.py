@@ -297,6 +297,8 @@ def main() -> None:
                         args.noise)
     if args.do_print:
         print(text)
+        # 只打印时明确说出来：曾把 --print 的输出当成已落盘，结果那一轮记录根本没写进 runs.md
+        print("\n（--print：只打印，未写入 docs/runs.md）")
     else:
         path = append_record(args.run, args.eval, args.verdict, args.next_step,
                              args.notes, args.noise)

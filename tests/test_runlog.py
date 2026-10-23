@@ -1,4 +1,6 @@
 """runlog 运行记录的输入守卫自测。"""
+import sys
+
 import pytest
 import yaml
 
@@ -27,6 +29,20 @@ def test_finetune_label_follows_lora_block(tmp_path, monkeypatch):
     _write_cfg(tmp_path, "without_lora")
     assert "| finetune | lora |" in runlog.build_record("with_lora", [])
     assert "| finetune | full |" in runlog.build_record("without_lora", [])
+
+
+def test_print_mode_announces_it_did_not_write(tmp_path, monkeypatch, capsys):
+    """--print 的输出长得和落盘记录一模一样，必须自己说清"没写"，否则会把预览当成已归档。"""
+    monkeypatch.setattr(runlog, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(runlog, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(runlog, "RUNLOG", tmp_path / "runs.md")
+    _write_cfg(tmp_path, "printed")
+    monkeypatch.setattr(sys, "argv", ["runlog", "--run", "printed", "--print"])
+    runlog.main()
+    out = capsys.readouterr().out
+    assert "## printed" in out
+    assert "未写入 docs/runs.md" in out
+    assert not (tmp_path / "runs.md").exists()
 
 
 def test_val_loss_line_carries_subset_caveat(tmp_path, monkeypatch):
