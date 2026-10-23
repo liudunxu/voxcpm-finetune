@@ -15,6 +15,9 @@
 - [x] 10:35:16 启动，日志 `/root/autodl-tmp/r25_train.log`，ETA ~11:10；评测驱动
   `/root/autodl-tmp/eval_r25_20261023.sh` 自动接力（等进程退出 + step==1390，已有报告拒绝覆盖，
   **全程 HF_HUB_OFFLINE=1**），三套共 744 输出，base/r18/r23/r24 一律不重跑。
+- [x] wandb 桥接：开训时漏了（远程 `nohup` 裸启不走 `start_local`，而 `start_bridge` 是它的进程内线程），
+  10:45 补起并**回补 step 0→370**（run `m7czdoex`）；r24 那轮也漏了，已用新增的
+  `scripts/wandb_backfill.py` 一次性回补 **776 条 / max_step 1499**。约定已进 AGENTS.md。
 - [ ] **预注册门禁（两轨都要过）**：稳定性轨 = 三语种 CER ≤ r18+0.04、**id p90 尾静音 ≤0.48s 且 ≤0.5s 上限**、
   id speech_ratio 不低于 r18 的 0.792 超过 0.05、dramaprod id 跑飞 ≤3/96、id 探针 mean CER ≤0.005 且无 >10s 输出；
   收益轨 = **Δsim(emo−plain) ≤ −0.013**（r18 是 −0.0190、base −0.0140、r23 −0.0127）。

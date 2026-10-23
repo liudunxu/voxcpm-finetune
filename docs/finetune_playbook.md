@@ -217,6 +217,13 @@ README 亦写「当前版本为 r23」，仓库 lastModified `2026-10-21T14:21:3
   **全程 `HF_HUB_OFFLINE=1`**：r18 补评时 shard2 就是被在线 `repo_info`（镜像断连
   `httpx.RemoteProtocolError`）打死的，权重早已缓存 ⇒ 联网解析是纯风险（已写进 AGENTS.md）。
 - 磁盘：开训前 12G 空闲。
+- **wandb 桥接**：开训时漏了（远程是 `nohup` 裸启训练脚本、不走 `launcher.start_local()`，
+  而 `start_bridge` 是它的进程内 daemon 线程 ⇒ 被静默绕过）。10:45 补起
+  `python -m voxft.train.tb_wandb_bridge <ckpt>/logs lora_omni5_r25_r18_prefix_graft`，
+  从头读事件目录**回补了 step 0→370**（首轮 191 条、次轮 35 条）后转实时；
+  run `m7czdoex`（`wandb.ai/liudunxu22-b/voxcpm-finetune`）。r24 那轮同样漏了，已用
+  `scripts/wandb_backfill.py` 一次性回补 **776 条、max_step 1499**（追平即退，不留常驻进程）。
+  约定已写进 AGENTS.md：手动 nohup 启训练必须同批另起桥接。
 
 ### 5. B 臂（10% 接种）暂不开的理由
 
