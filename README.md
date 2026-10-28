@@ -137,6 +137,28 @@ uv run python -m voxft.data.pipeline --mix gigaspeech2_id_v1=75 fleurs_id_v1=5 c
 - 审计已有目标无需读取/识别音频：
   `uv run python scripts/incremental_mix.py data/processed/<dataset> --output /tmp/text-duration-audit.json`。
   报告保留逐行原因、词数、时长与审批键；它不是训练或音质通过证明。
+  默认时长上限仍为 20s；审计 r26/r27 这类原本允许 30s 的冻结配方时，显式加
+  `--max-dur 30`，不要把合法的 20–30s 行误报为异常。不能设置超过 30s。
+- 无 GPU 的 r26/r27 续做入口是 `scripts/audit_finetune_readiness.py --repo <远端仓库>
+  --work <大盘上的新目录>`。复用现有清单、音频和缓存 TSV，检查 PCM/来源元数据并准备
+  新文本留出及阅读探针；不下载、不调用模型、不改旧清单。仍须按远端 `nohup` 约定运行，
+  输出目录已存在即拒绝覆盖。冻结记录和未完成的人工/GPU 闸门见 `docs/finetune_playbook.md` 顶部。
+- 不准备恢复待审样本时，可以**先从新候选隔离，不以人工复核作为隔离前置**：
+  `scripts/quarantine_finetune_candidates.py --audit-dir <前述目录>/cpu
+  --eval-dir <仓库>/eval_cases --output <大盘上的新候选目录>`。
+  复用原审计，排除评测/验证同文和未决目标，同时按原音频路径及 PCM 检查其目标/参考复用；
+  不删原件、不换 ref、不补抽样，剩余训练行及 val 保留原始字节。`excluded.jsonl` 保留原行与原因，
+  `mix.json` 重新统计实际配比/参考覆盖并明确 `training_approved=false`。
+  只对待审条目使用已安装的 CPU VAD 辅助诊断，不下载、不跑 ASR/TTS、不据 VAD 自动批准、裁切或变速。
+  原始 WAV 不在盘上时如实记缺失，不把加工音频检查说成原音对照；只有 `summary.json` 写出才算本次完整结束。
+- GPU 恢复后的冻结基线入口为 `scripts/fresh_baseline_eval.py prepare|run --work <新目录>`：
+  仅 base/历史 r26、新留出 180 条条件、seed 42–46，共 1800 条；ID 优先、逐条保存、失败不自动重试。
+  运行源码须独立快照，所有缓存/产物写远端大盘；不训练、不下载、不覆盖历史报告或自动晋级。
+  完成信号为 `status.json` 的 `stage=complete`，不是进程名消失或仅有部分 WAV。
+  用户授权四路时，用独立快照的 `scripts/fresh_baseline_parallel.py handoff --work <原目录>
+  --supervisor <原控制器PID>`：只暂停控制器，让两路当前条目保存后在领取屏障退出，再以每模型两路
+  接续剩余任务。原源码/plan 不改，新增 `parallel4/plan.json` 冻结调度与已完成证据；
+  不直接热插 worker、不杀在途生成、不重新抽样，仍只认顶层 `status.json` 的完整结束信号。
 
 ### 成片素材导入（切分 → 转写 → 试听标注 → 追加）
 

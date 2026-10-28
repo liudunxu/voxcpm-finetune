@@ -15,6 +15,9 @@ checkpoints/
 /work/review_20261022/
 /work/strength_ab_20261022_v1/
 /work/r25_data_audit_20261023/
+/work/finetune_readiness_20261028/
+/work/fresh_baseline_20261028/
+/work/clean_candidate_20261028/
 wandb/
 logs/
 *.wav

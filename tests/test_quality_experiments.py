@@ -66,6 +66,15 @@ def test_seed_stability_missing_values_and_case_guards():
         evaluation.seed_stability(items + [dict(items[0], seed=99, ref_audio="different.wav")])
 
 
+def test_empty_cohort_is_unmeasured_not_perfect():
+    report = evaluation._report_metrics([])
+    assert report["mean_f0_std"] is None
+    assert report["mean_cer"] is None
+    assert report["mean_speaker_sim"] is None
+    assert report["by_lang"] == {}
+    assert report["seed_stability"]["overall"]["cases"] == 0
+
+
 def test_strength_reports_merge_and_reaggregate(tmp_path, monkeypatch):
     from voxft.data import pipeline
     monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path)

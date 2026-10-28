@@ -79,23 +79,26 @@ def row_issues(row, protected, excluded, max_dur: float = 20.0):
     return issues
 
 
-def audit_mix(train, validation, excluded):
+def audit_mix(train, validation, excluded, max_dur: float = 20.0):
+    if not math.isfinite(max_dur) or not 3 <= max_dur <= 30:
+        raise ValueError("Audit duration limit must be within 3-30 seconds")
     protected = memberships([source_row(row) for row in validation])
     validation_texts = {_norm(target_text(row)) for row in validation if row.get("text")}
     evaluation_texts = excluded
     excluded = excluded | validation_texts
     violations = []
     for position, row in enumerate(train, 1):
-        issues = row_issues(row, protected, excluded)
+        issues = row_issues(row, protected, excluded, max_dur)
         if issues:
             violations.append({"row": position, "audio": row.get("audio"),
-                               "source_id": row.get("source_id"), "issues": issues})
+                               "lang": row.get("lang"), "source_id": row.get("source_id"),
+                               "issues": issues})
             if "text_duration_review_pending" in issues:
                 violations[-1]["text_duration_diagnostic"] = text_duration_review(row)
     exposures = Counter(str(Path(row.get("origin_audio") or row["audio"]).resolve())
                         for row in train if row.get("audio"))
     return {
-        "rows": len(train), "validation_rows": len(validation),
+        "rows": len(train), "validation_rows": len(validation), "max_duration_sec": max_dur,
         "by_lang": {
             lang: {"rows": len(rows),
                    "with_ref": sum(bool(row.get("ref_audio")) for row in rows),
@@ -158,11 +161,11 @@ def align_addition(row, columns):
     return {key: row.get(key) for key in sorted(columns)}
 
 
-def audit_directory(directory, eval_dir):
+def audit_directory(directory, eval_dir, max_dur: float = 20.0):
     excluded, hashes = load_exclusions(eval_dir)
     paths = [directory / f"{split}.jsonl" for split in ("train", "val")]
     hashes.update({str(path): sha256(path) for path in paths})
-    result = audit_mix(*[_read_manifest(path) for path in paths], excluded)
+    result = audit_mix(*[_read_manifest(path) for path in paths], excluded, max_dur)
     training_texts = Counter(_norm(target_text(row)) for row in _read_manifest(paths[0]))
     result["evaluation_exposure"] = {}
     for path in sorted(eval_dir.glob("*.jsonl")):
@@ -184,11 +187,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--eval-dir", type=Path, default=ROOT / "eval_cases")
+    parser.add_argument("--max-dur", type=float, default=20.0,
+                        help="Audit the frozen recipe's duration cap; default 20, never above 30")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
         raise FileExistsError(args.output)
-    result = audit_directory(args.directory, args.eval_dir)
+    result = audit_directory(args.directory, args.eval_dir, args.max_dur)
     with args.output.open("x", encoding="utf-8") as stream:
         json.dump(result, stream, ensure_ascii=False, indent=2)
     print(json.dumps({key: value for key, value in result.items()

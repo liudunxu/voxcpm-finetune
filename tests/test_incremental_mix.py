@@ -144,3 +144,25 @@ def test_max_dur_is_parameterisable_and_defaults_to_20(module):
     assert [r["text"] for r in kept30] == ["mid", "ok"]
     assert rejected30["duration_outside_3_30s"] == 1
     assert module.row_issues(row("mid", duration=25.0), set(), set(), 30.0) == []
+
+
+def test_audit_directory_preserves_recipe_duration_limit(module, tmp_path):
+    eval_dir = tmp_path / "eval_cases"
+    eval_dir.mkdir()
+    for name in module.REQUIRED_EVAL_FILES:
+        (eval_dir / name).write_text('{"text":"held out"}\n', encoding="utf-8")
+    for split, sample in (("train", row("long", duration=25)), ("val", row("validation"))):
+        (tmp_path / f"{split}.jsonl").write_text(json.dumps(sample) + "\n", encoding="utf-8")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*.jsonl")}
+    assert module.audit_directory(tmp_path, eval_dir)["violation_counts"] == {
+        "duration_outside_3_20s": 1}
+    audit = module.audit_directory(tmp_path, eval_dir, 30.0)
+    assert audit["violation_counts"] == {}
+    assert audit["max_duration_sec"] == 30.0
+    assert all(path.read_bytes() == contents for path, contents in before.items())
+
+
+@pytest.mark.parametrize("limit", [2.99, 30.01, float("nan"), float("inf")])
+def test_audit_rejects_unsafe_duration_limit(module, limit):
+    with pytest.raises(ValueError, match="3-30"):
+        module.audit_mix([row()], [], set(), limit)

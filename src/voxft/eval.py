@@ -229,7 +229,7 @@ def _report_metrics(items: list[dict]) -> dict:
         "mean_audio_sec_non_numeric", "mean_head_silence",
         "mean_tail_silence", "p90_tail_silence", "mean_spectral_rolloff_99",
         "mean_band_ratio_2_8k")}
-    out["mean_f0_std"] = round(sum(i["f0_std_st"] for i in items) / len(items), 2)
+    out["mean_f0_std"] = round(sum(i["f0_std_st"] for i in items) / len(items), 2) if items else None
     out["by_lang"] = by_lang
     out["seed_stability"] = seed_stability(items)
     return out
