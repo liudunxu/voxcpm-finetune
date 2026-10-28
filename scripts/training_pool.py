@@ -11,7 +11,7 @@ import numpy as np
 import soundfile as sf
 
 from voxft import eval as evaluation
-from voxft.data.pipeline import Options, _read_manifest, _write_jsonl, dataset_summary, pair_references
+from voxft.data.pipeline import Options, _read_manifest, _write_jsonl, dataset_summary, pair_references, text_duration_review
 from voxft.data.registry import get_source
 from voxft.paths import CHECKPOINT_DIR, DATA_PROCESSED, ROOT
 
@@ -56,6 +56,8 @@ def metadata_rejection(row, protected_keys, excluded_texts):
         return "missing_verified_identity"
     if memberships([without_ref(row)]) & protected_keys:
         return "validation_audio_speaker_or_session"
+    if review := text_duration_review(row):
+        return review["reason"]
     return None
 
 
@@ -97,6 +99,9 @@ def prepare(output, experiment):
             reason = metadata_rejection(row, protected_keys, excluded_texts)
             if reason:
                 rejected[reason] += 1
+                if reason == "text_duration_review_pending":
+                    flags.append({**row, "source_id": source, "reason": reason,
+                                  "text_duration_diagnostic": text_duration_review(row)})
                 continue
             if row.get("speaker_verified") is True and not get_source(source).has_speaker:
                 raise ValueError(f"Unapproved verified speaker flag: {source}")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -225,6 +226,38 @@ def apply_speaker_gain(records: list[dict], target_dbfs: float,
 
 
 # ---------------------------------------------------------------- 表现力指标
+
+def text_duration_review(row: dict) -> dict | None:
+    """短文长音只进入待审；不把词速当音质结论，不对无空格文字套词速门。"""
+    text = row.get("text")
+    if row.get("reference_only") is True or row.get("lang") not in {"en", "id", "tl"} or not isinstance(text, str):
+        return None
+    prefix = f"({row.get('control')})"
+    if row.get("control") and text.startswith(prefix):
+        text = text[len(prefix):]
+    text = text.strip()
+    if _NO_WORD_SPACE.search(text) or re.search(r"[\u3400-\u9fff]", text):
+        return None
+    try:
+        duration = float(row["duration"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    words = re.findall(r"[^\W_]+(?:['’\-][^\W_]+)*", text)
+    if not words or not math.isfinite(duration) or duration < 5.0 or len(words) / duration > 0.8:
+        return None
+    key = hashlib.sha256(json.dumps([
+        str(row.get("origin_audio") or row.get("audio") or ""), text,
+        row["lang"], round(duration, 3),
+    ], ensure_ascii=False).encode("utf-8")).hexdigest()
+    approval = row.get("text_duration_review")
+    if (isinstance(approval, dict) and approval.get("approved") is True
+            and approval.get("key") == key and isinstance(approval.get("note"), str)
+            and approval["note"].strip()):
+        return None
+    return {"reason": "text_duration_review_pending", "word_count": len(words),
+            "duration": duration, "words_per_second": round(len(words) / duration, 3),
+            "review_key": key}
+
 
 def audio_metrics(wav: np.ndarray, sr: int, text: str) -> dict:
     """声学描述；不用于硬筛平读或生成控制指令。
@@ -940,9 +973,11 @@ def process_dataset(source_id: str, out_name: str | None = None,
             from ..qc.utmos import score_wav
 
     kept: list[dict] = []
+    duration_reviews: list[dict] = []
     embs: list[np.ndarray] = []
     stats = {"total": len(rows), "drop_transcribe": n_bad, "drop_decode": 0,
              "drop_duration": 0, "drop_lang": 0, "drop_whisper": 0, "drop_utmos": 0,
+             "review_text_duration": 0,
              "tail_capped": 0, "max_tail_silence_sec": opts.max_tail_silence_sec,
              "edge_vad": opts.edge_vad, "edge_trim_ratio": opts.edge_trim_ratio}
     samples = _decoded_clips(rows, stats, opts.edge_trim_ratio, opts.edge_vad,
@@ -954,6 +989,14 @@ def process_dataset(source_id: str, out_name: str | None = None,
         lo, hi = (opts.ref_min_dur, opts.ref_max_dur) if clip.metadata.get("reference_only") else (opts.min_dur, opts.max_dur)
         if not (lo <= dur <= hi):
             stats["drop_duration"] += 1
+            continue
+        review = text_duration_review({**clip.metadata, "text": clip.text, "duration": round(dur, 2)})
+        if review:
+            dst = audio_dir / f"{i:07d}.wav"
+            sf.write(dst, clip.wav, TARGET_SR)
+            duration_reviews.append({**clip.metadata, "audio": str(dst), "text": clip.text,
+                                     "duration": round(dur, 2), "text_duration_diagnostic": review})
+            stats["review_text_duration"] += 1
             continue
         if whisper is not None and not clip.metadata.get("reference_only"):
             try:
@@ -985,8 +1028,11 @@ def process_dataset(source_id: str, out_name: str | None = None,
             embs.append(_embed(clip.wav, TARGET_SR))
 
     stats["kept"] = len(kept)
+    _write_jsonl(duration_reviews, out / "text_duration_review.jsonl")
+    if duration_reviews and progress:
+        progress(f"短文长音待审 {len(duration_reviews)} 条：{out / 'text_duration_review.jsonl'}；未删除原音频")
     if not kept:
-        raise RuntimeError(f"{source_id}: 过滤后无剩余样本，请放宽质检参数")
+        raise RuntimeError(f"{source_id}: 过滤后无剩余样本，请检查质检条件及待审清单：{out / 'text_duration_review.jsonl'}")
 
     if opts.pseudo_speaker and embs:
         if progress:
@@ -1073,6 +1119,7 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
     requested_share: Counter = Counter()
     for split in ("train", "val"):
         rows_by_part = []
+        duration_reviews = []
         for name, _w in parts:
             p = DATA_PROCESSED / name / f"{split}.jsonl"
             if not p.exists():
@@ -1084,7 +1131,14 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
                     progress(f"{name}/{split}: 按 max_sample_dur={max_sample_dur}s 丢 "
                              f"{len(rows) - len(kept)} 条超长样本")
                 rows = kept
+            if split == "train":
+                duration_reviews.extend({**row, "text_duration_diagnostic": review}
+                                        for row in rows if (review := text_duration_review(row)))
             rows_by_part.append(rows)
+        if duration_reviews:
+            review_path = out / "text_duration_review.jsonl"
+            _write_jsonl(duration_reviews, review_path)
+            raise ValueError(f"短文长音未审核，不生成新训练清单：{review_path}")
         for rows in rows_by_part:
             for rec in rows:
                 if not math.isfinite(float(rec.get("duration", 0))) or float(rec.get("duration", 0)) <= 0:
@@ -1150,6 +1204,7 @@ def mix_manifests(parts: list[tuple[str, float]], out_name: str,
         raise ValueError("训练/验证存在共享音频、ref、说话人或会话；请先按组重新加工")
     if not mixes["train"]:
         raise ValueError("混合后训练集为空")
+    _write_jsonl([], out / "text_duration_review.jsonl")
     for split, mixed in mixes.items():
         _write_jsonl(mixed, out / f"{split}.jsonl")
     actual_seconds = sum(r["duration"] for r in mixes["train"])

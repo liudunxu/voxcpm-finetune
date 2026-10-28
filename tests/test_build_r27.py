@@ -15,7 +15,7 @@ def module(monkeypatch):
 def row(name, lang, src, dur, text=None, **kw):
     """dur 的单位是秒（清单口径），有效范围 3–30s。"""
     return {"audio": f"/audio/{name}.wav", "origin_audio": f"/raw/{name}.wav",
-            "text": text if text is not None else f"teks {name}", "duration": dur,
+            "text": text if text is not None else f"teks {name}" + " kata" * int(dur), "duration": dur,
             "lang": lang, "source_id": src, "speaker": f"spk_{name}", "session": f"ses_{name}",
             "rate": 2.0, **kw}
 
@@ -94,7 +94,8 @@ def test_inoculation_keeps_prefix_shape(module, pools, tmp_path):
     for r in prefixed:
         assert r["control"] in module.NEUTRAL_PHRASES
         assert r["control_inoculation"] is True
-        assert r["text"] == f"({r['control']})teks " + r["audio"].split("/")[-1][:-4]
+        expected = row(Path(r["audio"]).stem, r["lang"], r["source_id"], r["duration"])["text"]
+        assert r["text"] == f"({r['control']}){expected}"
     assert len(prefixed) <= 2, "10% 接种不该把整批都加前缀"
 
 

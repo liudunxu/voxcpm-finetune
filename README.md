@@ -111,6 +111,33 @@ uv run python -m voxft.data.pipeline --mix gigaspeech2_id_v1=75 fleurs_id_v1=5 c
 
 自有 acted/natural 两份清单如果共享演员/会话，需在分源前统一安排 holdout；混合器会拒绝跨源 train/val 泄漏。也可先合并原始清单统一加工，接受两类语料内部的自然时长配比。
 
+### 短文长音待审
+
+加工完成原有裁静音与 3–30s 检查后，`en/id/tl` 训练目标若 **≥5s 且 ≤0.8 词/秒**，
+写入输出目录的 `text_duration_review.jsonl`，暂不参与 train/val 或 ref 配对；
+`stats.json.review_text_duration` 记录数量。例如 3 个词、5s 会进入待审，**不是直接判成坏音频**。
+这条启发式尚未做真实语料命中率标定；拖长表演、数字读法等可能误报，需要人工核对。
+只按已有文本与裁后时长计算，不新增 ASR，也不改变既有 `rate` 指标、裁切或合成参数。
+仅作条件音频的 `reference_only=true` 行，以及泰文、中文等无空格文字不套这条词速门。
+
+- 原始音频/清单不删除，待审 WAV 保留。混合器、`incremental_mix`、`training_pool`
+  及训练启动预检共用同一规则，避免旧 processed 目标绕过；已被时长上限排除的行不阻断混合。
+  混合/预检不因本规则修改冻结验证集；它也不自动回写任何已训数据或启动新训练。
+- 有漏字、空段或错误切窗时，修正**新工作清单**及必要的音频，再重新加工；不要自动压缩到假定词速。
+- 若听评确认确为慢说且文字完整，在新工作清单对应行写入以下审批，`key` 复制自
+  `text_duration_diagnostic.review_key`（或预检错误/只读审计输出），再加工或构建新混合集：
+
+  ```json
+  {"text_duration_review":{"approved":true,"key":"<review_key>","note":"已核对完整台词，确为慢说"}}
+  ```
+
+  审批键绑定 `origin_audio`（缺失回退 `audio`）、裸文本、语种及时长，改变输入即失效；
+  不是 PCM/身份/许可认证，同路径替换音频仍须重新审核。不要为审批改写冻结实验清单。
+  批准后成功重建会更新输出待审清单，不保留过期记录。
+- 审计已有目标无需读取/识别音频：
+  `uv run python scripts/incremental_mix.py data/processed/<dataset> --output /tmp/text-duration-audit.json`。
+  报告保留逐行原因、词数、时长与审批键；它不是训练或音质通过证明。
+
 ### 成片素材导入（切分 → 转写 → 试听标注 → 追加）
 
 素材是成片视频或音轨时，用「素材导入」页（或 CLI）代替手工切片：PyAV 解码 → Whisper VAD 定边界（medium）→ 隔 ≤0.7s 的相邻区间合并成 3–30s 候选（超长的在最安静的一帧切开，不切在词中间）→ large-v3 逐条转写并按语种过滤（tl / id 源放行 `en`，Taglish 与印尼语混英不会被误杀；有权威文本的朗读源用 `accept_langs` 收紧到单一语种，语种不符就是错行不是 code-switch）→ 页面逐条试听、标说话人/情绪、判定保留或丢弃 → 追加进 `data/raw/<source>/manifest.jsonl`，可选自动重新加工。

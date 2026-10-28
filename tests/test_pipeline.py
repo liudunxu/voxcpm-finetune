@@ -620,7 +620,7 @@ def test_gain_peak_backoff_is_shared_by_speaker(tmp_path):
 def test_mix_duration_exposure_and_leak_detection():
     from voxft.data.pipeline import _write_jsonl
     for name, duration in (("short", 3), ("long", 9)):
-        rows = [{"audio": f"/{name}/{i}.wav", "duration": duration, "text": "test",
+        rows = [{"audio": f"/{name}/{i}.wav", "duration": duration, "text": "Hindi ko talaga alam kung ano ang nangyari dito.",
                  "lang": "tl"} for i in range(10)]
         _write_jsonl(rows, DATA_PROCESSED / name / "train.jsonl")
         _write_jsonl([{**rows[0], "audio": f"/{name}/val.wav"}], DATA_PROCESSED / name / "val.jsonl")
@@ -642,7 +642,7 @@ def test_mix_reports_language_shares_and_warns_on_shortfall():
     from voxft.data.pipeline import _write_jsonl
     for name, lang, n, dur in (("small", "th", 10, 3), ("big", "id", 100, 9)):
         rows = [{"audio": f"/{name}/{i}.wav", "origin_audio": f"/{name}/{i}.wav",
-                 "duration": dur, "text": "t", "lang": lang} for i in range(n)]
+                 "duration": dur, "text": "Aku sama sekali tidak tahu tentang hal itu.", "lang": lang} for i in range(n)]
         _write_jsonl(rows, DATA_PROCESSED / name / "train.jsonl")
         _write_jsonl([{**rows[0], "audio": f"/{name}/val.wav",
                        "origin_audio": f"/{name}/val.wav"}],

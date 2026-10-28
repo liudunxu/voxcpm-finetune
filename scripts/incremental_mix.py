@@ -5,7 +5,7 @@ import json
 import math
 from pathlib import Path
 
-from voxft.data.pipeline import _read_manifest, dataset_summary
+from voxft.data.pipeline import _read_manifest, dataset_summary, text_duration_review
 from voxft.eval import _norm
 from voxft.paths import ROOT
 
@@ -63,6 +63,8 @@ def row_issues(row, protected, excluded, max_dur: float = 20.0):
         valid_duration = False
     if not valid_duration:
         issues.append(f"duration_outside_3_{max_dur:g}s")
+    elif review := text_duration_review(row):
+        issues.append(review["reason"])
     if row.get("speaker_verified") is True and not row.get("speaker"):
         issues.append("missing_verified_identity")
     elif memberships([source_row(row)]) & protected:
@@ -88,6 +90,8 @@ def audit_mix(train, validation, excluded):
         if issues:
             violations.append({"row": position, "audio": row.get("audio"),
                                "source_id": row.get("source_id"), "issues": issues})
+            if "text_duration_review_pending" in issues:
+                violations[-1]["text_duration_diagnostic"] = text_duration_review(row)
     exposures = Counter(str(Path(row.get("origin_audio") or row["audio"]).resolve())
                         for row in train if row.get("audio"))
     return {

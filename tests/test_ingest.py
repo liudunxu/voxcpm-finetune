@@ -202,7 +202,8 @@ def test_clip_labels_are_unique_across_batches():
 def test_end_to_end_append_then_process_keeps_holdout_out_of_train(monkeypatch, tmp_path):
     """整链路：切两集 → 标注保留 → 追加 → 钉住第一集 → 加工 → 钉住的只能在验证集。"""
     _stub_decode(monkeypatch)
-    for vid, text in (("ep01", "una"), ("ep02", "pangalawa")):
+    for vid, text in (("ep01", "Ito ang unang pangungusap na narinig namin sa bahay."),
+                      ("ep02", "Ito ang ikalawang pangungusap na narinig namin sa bahay.")):
         _stub_whisper(monkeypatch, [(0.0, 4.0), (4.5, 9.0)])
         ingest_file(_fake_video(tmp_path, f"{vid}.mp4"), "drama_tl", vid)
         rows = load_candidates("drama_tl", vid)

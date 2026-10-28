@@ -98,6 +98,7 @@ def preflight(config_path: str | Path, gpus: int | None = None) -> list[str]:
     """训练前预检；返回问题列表（空 = 通过）。把报错提前到启动前。"""
     import json
     import yaml
+    from ..data.pipeline import text_duration_review
 
     issues: list[str] = []
     cfg_path = Path(config_path)
@@ -146,6 +147,9 @@ def preflight(config_path: str | Path, gpus: int | None = None) -> list[str]:
                 if not isinstance(rec.get("text"), str) or not rec["text"].strip():
                     issues.append(f"{key} 第 {i + 1} 行缺少训练文本")
                 if key == "train_manifest":
+                    if review := text_duration_review(rec):
+                        issues.append(f"{key} 第 {i + 1} 行 {review['reason']}，"
+                                      f"请复核文本与音频；review_key={review['review_key']}")
                     controls += isinstance(rec.get("text"), str) and rec["text"].startswith("(")
                     refs += bool(rec.get("ref_audio"))
                 for field in ("audio", "ref_audio", "origin_audio", "ref_origin_audio"):

@@ -239,7 +239,7 @@ OmniVoice 是 GPU 侧合成服务；配音编排在另一个仓库 `dubbing_inte
 - **临时脚本里 `import huggingface_hub` 必须在 `import voxft.paths` 之后**，否则 `HF_ENDPOINT` 还没写进 `os.environ`，远程直连 huggingface.co 报 `[Errno 101]`。
 - **`cmd | tail` 会吞掉失败**（退出码是 `tail` 的 0，`set -e` 拦不住），本轮因此真丢了 3GB 数据。用 `set -euo pipefail` 或重定向到文件再单独 `tail`，**且只有确认成功才删原始数据**。
 - **视频容器解码走 PyAV**（`av>=12`，faster-whisper 的传递依赖）；soundfile 读不了 mp4/mkv，不引入系统 ffmpeg。
-- **`rate` 的单位按文字系统判，不按有没有空格判**：泰文/缅文区块（`_NO_WORD_SPACE`）一律按字符计，否则 th 的 `rate` 会失真近 20 倍。`rate` 只在 `log.py` 展示、不参与判定，既有产物不需重跑。
+- **`rate` 的单位按文字系统判，不按有没有空格判**：泰文/缅文区块（`_NO_WORD_SPACE`）一律按字符计，否则 th 的 `rate` 会失真近 20 倍。`rate` 只在 `log.py` 展示、不参与判定，既有产物不需重跑。独立的 `text_duration_review` 只把词级目标的短文长音挂待审，不当音质结论；不套 reference-only 或无空格文字，不删除原音与冻结验证集，审批须绑定文本/时长/来源。操作见 README「短文长音待审」。
 
 ### 磁盘、下载与训练执行
 - **大盘约定（远程）**：`VOXFT_DATA_ROOT`/`VOXFT_CKPT_ROOT`/`HF_HOME` 都指 `/root/autodl-tmp/*`——**它是本实例唯一可写的大盘**，磁盘不够时不要去找别的路径，要去找可回收的东西（`autodl-pub` 只读、`autodl-fs` 不存在）。**回收顺序**：parquet 缓存（FLEURS 五 config 就 13G）→ `merged`（4.6G/份）→ `step_*`（只留 `latest`）→ `raw/<src>/audio`（`origin_audio` 只当字符串用，不读文件）→ 许可不明/SA 源。一轮五语种峰值约 20G（三语种收缩后按同量级预算，别指望自动变小——单语种源体积没变），开工前先 `df -h /root/autodl-tmp`。
