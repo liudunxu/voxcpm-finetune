@@ -101,6 +101,11 @@ def collect(work, names, destination):
     pairs = [(name, "base") for name in names if name != "base"]
     if "on" in names:
         pairs += [("on", "off")]
+    for candidate, baseline in plan.get("additional_comparisons", []):
+        if candidate == baseline or candidate not in reports or baseline not in reports:
+            raise ValueError("Invalid requested comparison")
+        if (candidate, baseline) not in pairs:
+            pairs.append((candidate, baseline))
     for candidate, baseline in pairs:
         result = {}
         for lang in LANGS:

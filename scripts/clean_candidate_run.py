@@ -1,4 +1,4 @@
-"""Authorized cleaned-data, one-epoch candidate; preserve historical evidence."""
+"""Authorized fixed-step candidates; preserve historical evidence."""
 import argparse
 import json
 import os
@@ -186,15 +186,15 @@ def prepare(work):
                       "steps": config["num_iters"], "preflight": issues}, ensure_ascii=False), flush=True)
 
 
-def tasks(cases):
-    return [(f"r28_{position:04d}_{seed}", case, seed)
+def tasks(cases, model="r28"):
+    return [(f"{model}_{position:04d}_{seed}", case, seed)
             for position, case in sorted(enumerate(cases), key=lambda item: item[1]["lang"] != "id")
             for seed in frozen.SEEDS]
 
 
 def checked(work, trained=False):
     plan = frozen.check_inputs(work)
-    if not plan["training_authorized"] or plan["epochs"] != 1 or plan["generation_budget"] != 900:
+    if not plan["training_authorized"] or plan["num_iters"] != 459 or plan["generation_budget"] != 900:
         raise ValueError("Candidate scope changed")
     if trained:
         state = read_json(work / "trained.json")
@@ -208,6 +208,7 @@ def checked(work, trained=False):
 
 def worker(work, index):
     plan = checked(work, trained=True)
+    model = plan.get("candidate_model", "r28")
     directory = work / f"eval/worker{index}"
     directory.mkdir(parents=True, exist_ok=False)
     frozen.runtime_environment(directory / "runtime")
@@ -219,14 +220,14 @@ def worker(work, index):
     frozen.evaluation.EVAL_DIR = directory / "raw_reports"
     frozen.evaluation.infer.CHECKPOINT_DIR = directory
     with cached_services(cases):
-        baseline.save_new(directory / "runtime.json", baseline.gpu_services(plan, cases, "r28"))
-        for count, (identifier, case, seed) in enumerate(tasks(cases)[index::4], 1):
+        baseline.save_new(directory / "runtime.json", baseline.gpu_services(plan, cases, model))
+        for count, (identifier, case, seed) in enumerate(tasks(cases, model)[index::4], 1):
             if shutil.disk_usage(work).free < 4 * 1024**3:
                 raise RuntimeError("Less than 4 GiB free; preserve evidence")
             if not claim(work / "eval/claims", identifier):
                 raise RuntimeError(f"Refusing retry: {identifier}")
             report = frozen.evaluation.evaluate(
-                plan["targets"]["r28"], "th", [case], base=plan["base_path"], seeds=[seed],
+                plan["targets"][model], "th", [case], base=plan["base_path"], seeds=[seed],
                 cfg_value=plan["cfg_value"], inference_timesteps=plan["inference_timesteps"])
             row, = report["items"]
             if row["seed"] != seed or any(row.get(k) != v for k, v in case.items()):
@@ -241,8 +242,9 @@ def worker(work, index):
 
 def collect(work):
     plan = checked(work, trained=True)
+    model = plan.get("candidate_model", "r28")
     cases = _read_manifest(work / "cases.jsonl")
-    expected = {identifier: (case, seed) for identifier, case, seed in tasks(cases)}
+    expected = {identifier: (case, seed) for identifier, case, seed in tasks(cases, model)}
     files = {path.stem: path for path in (work / "eval/items").glob("*.json")}
     if files.keys() != expected.keys():
         raise ValueError("Incomplete or duplicate evaluation")
@@ -256,10 +258,10 @@ def collect(work):
             raise ValueError(f"WAV changed: {identifier}")
     frozen.evaluation.EVAL_DIR = work / "eval/raw_reports"
     report = frozen.evaluation.merge_reports([str(files[key]) for key in sorted(files)])
-    frozen.verify_report(report, plan, cases, "r28")
+    frozen.verify_report(report, plan, cases, model)
     report["wav_sha256"] = {row["wav"]: frozen.sha256(row["wav"]) for row in report["items"]}
-    baseline.save_new(work / "r28_report.json", report)
-    frozen.collect(work, ("base", "r26", "r28"), work / "comparison.json")
+    baseline.save_new(work / f"{model}_report.json", report)
+    frozen.collect(work, tuple(plan["targets"]), work / "comparison.json")
 
 
 def stop(process):
@@ -305,7 +307,7 @@ def run(work):
                 "--config_path", plan["config"]], cwd=frozen.VOXCPM_REPO, stdout=log, stderr=subprocess.STDOUT)
             if os.environ.get("WANDB_API_KEY"):
                 bridge = subprocess.Popen([sys.executable, "-X", "utf8", "-u", "-m",
-                    "voxft.train.tb_wandb_bridge", config["tensorboard"], RUN_NAME],
+                    "voxft.train.tb_wandb_bridge", config["tensorboard"], plan["run_name"]],
                     cwd=frozen.ROOT, stdout=bridge_log, stderr=subprocess.STDOUT)
             while trainer.poll() is None:
                 status("training")

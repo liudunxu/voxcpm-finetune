@@ -4,7 +4,37 @@
 
 本文是可以照着一步步执行的流程，三个语种共用。开发约定与踩坑记录见 [AGENTS.md](../AGENTS.md)，数据源取舍背景见 [README.md](../README.md)，**ID 特有的依据、语料核实状态与口径差异见 [vi_id_support.md](vi_id_support.md)**（同文件的 vi 部分与 [ms_support.md](ms_support.md) 已转存档）。
 
-## 2026-10-29：所有本轮报警已隔离，新候选7252条（未开训）
+## 2026-10-29：r29已启动，接续查看日志和自动复评
+
+用户已授权训练和删除过期checkpoint。r29于 **10:41:56（北京时间）** 从原基座冷启动；
+入口 `scripts/suspect_candidate_run.py prepare|run`，环境 `scripts/suspect_candidate_run.sh`。
+本次实际run已启动，**不要再次执行prepare/run或覆盖冻结source**。
+
+- 数据7252条/14.6302h；只改变r28的81行排除，保留行与val1148字节不变，仍保护旧val1149。
+- 固定459步≈1.013epoch，seed42、r/alpha64、dropout.05、lr1e-4、batch2×8、warmup45、wd.01；
+  LM/DiT开、proj关。与r28配置差异仅train/val/save/tensorboard路径；未加第2epoch。
+- 10:43:58已实测40/459、CUDA bf16、GPU99%/25239 MiB，loss/梯度有限；
+  val起点1.028783，末值pending；wandb `ggxkkng4` 在线。
+- 自动四路900输出（180条件×seed42–46），沿用CFG1.8/20步/禁重试/large-v3，
+  复用冻结base/r26/r28。新增 `comparison.json` 的 `r29_minus_r28`，不重跑旧WAV。
+
+远端根 `/root/autodl-tmp/suspect_candidate_20261029/`：
+`run/status.json` 看阶段，`run/train.log` 看步数/loss，`run/driver.log` 看驱动错误，
+`run/wandb.log` 看同步，`run/eval/worker*.log` 看评测。完成须核trainer正常退出、
+`run/checkpoint/latest/training_state.json` step459，以及最终900/900与 `stage=complete`；
+不可凭 `pgrep -f` 命中包装shell认定任务仍活着。失败保留现场，不重抽已完成项。
+
+11份核心数据/配置/清理证据本地与远端SHA一致，见本地 `verification.json`；
+配置另登记 `configs/lora_joint3_r29_suspect_excluded_459.yaml` 及 `.plan.json`。
+全量379测试通过。完整plan SHA `684637c36e19820e37640a1639d9a550e6170c461edb5e62d63a69b0152fd0c4`。
+交接文档放远端 `handoff/`，不覆盖执行源码。新run已授权；审计候选的旧false不回写。
+
+磁盘已按用户授权清理16个过期step目录，回收6.47GiB；4个run完整latest逐文件SHA未变。
+具体删除项、SHA及回收量见本地/远端 `checkpoint_cleanup_plan.json`、`checkpoint_cleanup_actions.jsonl`、
+`checkpoint_cleanup_result.json` 和 `docs/runs.md`，不删原数据/旧评测或生产权重。
+训练约13分钟、评测约80分钟为r28历史耗时估计；效果、声学盲听、母语验收仍pending，未切生产。
+
+## 2026-10-29：所有本轮报警已隔离，新候选7252条（审计阶段）
 
 用户最终原则是“有问题及疑似有问题都删掉”，因此本轮**不以人工确认作为隔离前置**。
 新候选排除全部报警及原音路径/精确PCM/ref复用，原件和历史清单留存；部分ASR对齐不豁免。
@@ -48,8 +78,8 @@ ref1429行（19.705%），1353个不同ref，目标最大曝光1、ref最大复�
 excluded SHA `0caec52b89b5301b60ba763774745811c0d8281d192e91f5eab340e4a28b7a56`。
 新脚本及原隔离相关测试16 passed；输入与保留行字节检查通过。新增ASR87次，TTS/训练/下载/生产变更均0。
 
-下一轮仅改上述数据剔除，保持r28原基座、seed42、r/alpha64、lr1e-4、batch2×8、warmup45、
-LM/DiT开、proj关和459步（新集约1.013epoch）；配置/哈希冻结后再开训，未自动追加第2epoch。
+后续r29仅改上述数据剔除，保持r28原基座、seed42、r/alpha64、lr1e-4、batch2×8、warmup45、
+LM/DiT开、proj关和459步（新集约1.013epoch）；配置/哈希已冻结并启动，未追加第2epoch。
 同180条件×5seed比较base/r26/r28与新候选；旧报告、已知近静音坏例和门禁不回写。
 `training_approved=false`是该审计入口未启动训练的边界，不需要用户重复批准本次剔除。
 

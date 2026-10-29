@@ -4,7 +4,62 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
-## 2026-10-29：r28后续数据审计与隔离（未训练）
+## lora_joint3_r29_suspect_excluded_459（2026-10-29，训练中）
+
+- 用户明确授权启动训练及清理过期checkpoint；**10:41:56（北京时间）从原基座冷启动**，训练seed42。
+  10:43:58启动快照已推进到40/459，CUDA bf16，loss/梯度有限，GPU99%/25239 MiB。
+- r28仅移除全部疑似及复用链81行（ID55/TH13/TL9/en3/zh1），7333→**7252行/14.6302h**；
+  相对最初7412行累计剔除160。保留训练行和1148条验证行字节不变，完整旧val1149仍用于隔离。
+- 实际时长配比ID47.492%/TH22.681%/TL22.259%/zh5.029%/en2.539%；ref1429行、1353个不同ref，
+  目标最大曝光1、ref最大复用3；可信控制0、TL同人ref0。未通过重采样补配比或伪造标签/ref。
+- 与r28相同 **459步、batch2×累积8、r64/alpha64/dropout.05、lr1e-4、warmup45、wd.01**，
+  LM/DiT开、proj关；有效epoch=1.012686。配置只改train/val/save/tensorboard路径，未续训r28。
+- val loss起点 **1.028783(step0)**，末值及最终权重SHA **pending**；每次至多10个验证batch。
+  启动验收不等于训练完成，完成须核正常退出与latest状态step459。
+- 自动四路180条件×seed42–46=900新输出，CFG1.8/20步/禁重试/large-v3；复用base/r26/r28，
+  同时给出r29−base与r29−r28分语种配对区间。每语种30独立文本，控制/seed变体不增加独立样本数。
+- 分语种验收 **pending**：ID CER 2.27%→待评、WER 4.73%→待评、疑似漏尾13→待评；
+  TH CER 5.65%→待评、WER不适用、疑似漏尾14→待评；
+  TL CER 2.10%→待评、WER 10.35%→待评、疑似漏尾1→待评（每模型各300条）。
+  尾静音及r28近静音回归仍需核验。**当前没有收益或晋级结论，生产未切换，声学/母语验收未做。**
+- 产物 `/root/autodl-tmp/suspect_candidate_20261029/run/`；wandb `ggxkkng4`。
+  配置 `configs/lora_joint3_r29_suspect_excluded_459.yaml`，完整plan SHA
+  `684637c36e19820e37640a1639d9a550e6170c461edb5e62d63a69b0152fd0c4`。
+  全量测试379 passed（两条既有依赖弃用警告）；11份核心文件本地远端SHA一致。
+
+### 数据源（沿用既有来源；许可为Hub声明，不新增录音授权/身份认证）
+
+| source_id | 许可 | 行数 | 小时 |
+|---|---|---:|---:|
+| cv22_id | CC0 | 967 | 1.2384 |
+| cv22_th | CC0 | 462 | 0.5887 |
+| fleurs_en | CC-BY-4.0 | 153 | 0.3715 |
+| fleurs_id | CC-BY-4.0 | 551 | 1.5698 |
+| fleurs_th | CC-BY-4.0 | 127 | 0.3683 |
+| fleurs_tl | CC-BY-4.0 | 960 | 3.2565 |
+| fleurs_zh | CC-BY-4.0 | 311 | 0.7357 |
+| gigaspeech2_id | Apache-2.0 | 2267 | 4.1400 |
+| gigaspeech2_th | Apache-2.0 | 1017 | 1.7683 |
+| yodas_th | CC-BY-3.0 | 437 | 0.5930 |
+
+### 过期checkpoint清理
+
+启动前可用空间约5.1GiB；清理16个无计划/报告引用的中间或重复 `step_*`，回收
+**6,951,700,911 bytes（6.47GiB）**，清理后可用12,417,024,000 bytes（11.56GiB）。
+保留各run完整 `latest`（包括优化器），逐文件SHA前后一致；未删原始语料、评测WAV、历史报告或模型缓存。
+
+| 已完成run | 已删除step目录 |
+|---|---|
+| lora_omni5_r23_thtlboost_cont | 2250、2500、2750、2908、2909 |
+| clean_candidate_20261028 | 0、458、459 |
+| control_ab_20261022_v4/checkpoint_off | 0、250、392、393 |
+| control_ab_20261022_v4/checkpoint_on | 0、250、392、393 |
+
+审计plan SHA `32dfeb6aee6a169ea4bbb4159c5169cf10e57eb0bb5a4fc6601b4167b12ca4c7`；
+逐文件SHA、删除记录与结果镜像在 `work/suspect_candidate_20261029/checkpoint_cleanup_*.json*`。
+本地仅归档小型运行证据，不是全实例或优化器备份。
+
+## 2026-10-29：r28后续数据审计与隔离（本阶段未训练，后续r29见上）
 
 - CPU核8530个不同target/ref文件：能量口径尾静音>0.5s为0，p90=.15s、max=.37s，6个无边界记None。
   VAD长尾53、无语音23、无能量边界6，去重80文件；不能说发现80条已确认尾静音。
@@ -19,7 +74,7 @@
 - 产物 `/root/autodl-tmp/training_silence_20261029/candidate_all_flags/`；
   train SHA `27ed1d5ff21d8c31067b09429d2c9ba78b7fa71556b2d23b5ec540c52196e0a5`。
   相关测试16 passed；新增训练/TTS/下载/生产变更均0。r28仍未晋级，尚无新候选CER或语言验收结果。
-- 下一轮仅改数据剔除，保持r28其余参数及459步，冻结配置后再开训；详见TODO及续做手册顶部。
+- 后续r29仅改数据剔除，保持r28其余参数及459步；已冻结并启动，详见上节。
 
 ## lora_joint3_r28_clean_1ep（2026-10-28，已完成，不通过）
 

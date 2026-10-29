@@ -62,6 +62,30 @@ def test_control_variants_and_seeds_are_one_text_cluster(module):
     assert module.cluster_changes(candidate, baseline, cases, "cer", "id") == changes
 
 
+def test_explicit_parent_comparison_uses_matching_frozen_reports(module, monkeypatch, tmp_path):
+    cases, baseline, plan = fixture_report(module)
+    plan.update(inputs_sha256={}, additional_comparisons=[["r29", "r28"]])
+    plan["targets"].update(r28="/old/latest", r29="/new/latest")
+    (tmp_path / "cases.jsonl").write_text("".join(json.dumps(row) + "\n" for row in cases))
+    for name, cer in (("base", .2), ("r28", .1), ("r29", .05)):
+        report = deepcopy(baseline)
+        report.update(target=plan["targets"][name], lora_strength=0 if name == "base" else 1)
+        for row in report["items"]:
+            row.update(cer=cer, suspected_truncation=False, over_read=False)
+        (tmp_path / f"{name}_report.json").write_text(json.dumps(report))
+    (tmp_path / "plan.json").write_text(json.dumps(plan))
+    monkeypatch.setattr(module, "LANGS", ("id",))
+    monkeypatch.setattr(module.evaluation, "_report_metrics", lambda items: {})
+    result = module.collect(tmp_path, ("base", "r28", "r29"), tmp_path / "comparison.json")
+    assert result["comparisons"]["r29_minus_r28"]["id"]["cer"]["mean"] == pytest.approx(-.05)
+    assert result["comparisons"]["r29_minus_r28"]["id"]["cer"]["independent_texts"] == 1
+    assert "r29_minus_base" in result["comparisons"]
+    plan["additional_comparisons"] = [["r29", "missing"]]
+    (tmp_path / "plan.json").write_text(json.dumps(plan))
+    with pytest.raises(ValueError, match="Invalid requested comparison"):
+        module.collect(tmp_path, ("base", "r28", "r29"), tmp_path / "invalid.json")
+
+
 def test_fresh_training_never_reuses_a_checkpoint(module, tmp_path):
     checkpoint = tmp_path / "checkpoint"
     module.require_fresh_checkpoint({"save_path": str(checkpoint)})
