@@ -10,7 +10,9 @@
 声学检查未报警的8312文件逐10s窗（5s步长、覆盖末尾）打多标签sigmoid分数。
 单CPU线程、batch1、float32，每窗间隔100ms，PyTorch内存上限10%；不因显存空余扩大并发。
 100文件小样21.26s、PyTorch峰值404MiB，出现1条ID gs2的Music=.8567/Speech=.9073；
-已复用100条结果接续全量，状态在独立`/root/autodl-tmp/music_audit_20261029/run/status.json`。
+19:14:01全量8312份已完成，接续8212份1361.99s、PyTorch峰值404MiB；
+62个高分文件全部来自gs2 ID，均是训练目标。10个同时命中主ASR文本不匹配规则，另52个无ASR报警、待核验。
+状态在独立`/root/autodl-tmp/music_audit_20261029/run/status.json`，分窗/汇总/输入SHA复核在`postcheck.json`。
 >=.8是未标定的核验优先级，不自动变成“有BGM”或剔除门，低分也不证明单人/无音乐。
 保留各窗位置、前5类、输入SHA和使用行，主ASR政策、旧报告/WAV不改。
 
