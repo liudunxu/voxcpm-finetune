@@ -18,6 +18,7 @@ checkpoints/
 /work/finetune_readiness_20261028/
 /work/fresh_baseline_20261028/
 /work/clean_candidate_20261028/
+/work/training_silence_20261029/
 wandb/
 logs/
 *.wav

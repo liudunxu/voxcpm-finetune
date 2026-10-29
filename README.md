@@ -159,6 +159,15 @@ uv run python -m voxft.data.pipeline --mix gigaspeech2_id_v1=75 fleurs_id_v1=5 c
   --supervisor <原控制器PID>`：只暂停控制器，让两路当前条目保存后在领取屏障退出，再以每模型两路
   接续剩余任务。原源码/plan 不改，新增 `parallel4/plan.json` 冻结调度与已完成证据；
   不直接热插 worker、不杀在途生成、不重新抽样，仍只认顶层 `status.json` 的完整结束信号。
+- 已冻结训练清单的尾静音核验：`scripts/audit_training_silence.py --run <冻结run目录>
+  --output <大盘上的新目录>`。四路 CPU 同时核验实际 target/ref 的能量边界与 VAD，按使用角色、
+  语种和训练源汇总，原件 SHA 前后校验；报警只是待审线索，不自动裁音或剔除。
+  低电平无边界保持 `None`，内存增益复核不写回音频。只认 `summary.json` 的完整结束信号，
+  新目录拒绝覆盖；参考音的源分组表示引用它的训练源，不冒充已核验的参考来源。
+- `scripts/review_training_silence.py --audit <上述审计目录> --output <新目录>` 对报警文件做
+  无提示large-v3转写，仅本诊断关闭VAD，不改训练文本或旧评测；加 `--quarantine` 则仅按
+  用户“确认或疑似都剔除”的原则派生训练清单，不运行ASR/训练。所有报警及原音/PCM/ref引用
+  一并排除，保留行与val字节不变，完整旧val及评测隔离仍检查；ASR对齐不自动豁免报警。
 
 ### 成片素材导入（切分 → 转写 → 试听标注 → 追加）
 
