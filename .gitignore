@@ -22,6 +22,7 @@ checkpoints/
 /work/suspect_candidate_20261029/
 /work/full_corpus_clean_20261029/
 /work/training_quality_20261029/
+/work/codec_padding_20261029/
 wandb/
 logs/
 *.wav
