@@ -23,6 +23,9 @@ checkpoints/
 /work/full_corpus_clean_20261029/
 /work/training_quality_20261029/
 /work/codec_padding_20261029/
+/work/music_audit_20261029/
+/work/near_text_20261029/
+/work/granary_v2_20261029/
 wandb/
 logs/
 *.wav

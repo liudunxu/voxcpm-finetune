@@ -4,6 +4,26 @@
 
 本文是可以照着一步步执行的流程，三个语种共用。开发约定与踩坑记录见 [AGENTS.md](../AGENTS.md)，数据源取舍背景见 [README.md](../README.md)，**ID 特有的依据、语料核实状态与口径差异见 [vi_id_support.md](vi_id_support.md)**（同文件的 vi 部分与 [ms_support.md](ms_support.md) 已转存档）。
 
+## 2026-10-29：音乐事件与近重复文本旁路
+
+`scripts/audit_music.py` / `.sh`使用固定revision的MIT AST AudioSet权重，对当前训练目标/ref中
+声学检查未报警的8312文件逐10s窗（5s步长、覆盖末尾）打多标签sigmoid分数。
+单CPU线程、batch1、float32，每窗间隔100ms，PyTorch内存上限10%；不因显存空余扩大并发。
+100文件小样21.26s、PyTorch峰值404MiB，出现1条ID gs2的Music=.8567/Speech=.9073；
+已复用100条结果接续全量，状态在独立`/root/autodl-tmp/music_audit_20261029/run/status.json`。
+>=.8是未标定的核验优先级，不自动变成“有BGM”或剔除门，低分也不证明单人/无音乐。
+保留各窗位置、前5类、输入SHA和使用行，主ASR政策、旧报告/WAV不改。
+
+`scripts/audit_near_text.py`用三字片段倒排与有界Levenshtein补查评测/完整val隔离，
+同文全长度检查，近重复限同语种双方≥40个归一化字符、最多2编辑；7252训练行4.17s完成、0命中。
+这不是语义去重或音频近重复检测；产生的overlay若非空，须在主清洗完成后按target/ref/原音/PCM联动处理，
+不得直接混回原清单。11项新测试通过，全量单线程环境409 passed/exit0；默认环境首次退出仍有原生库abort，
+未确认根因，不把断言通过当该次运行成功。
+
+用户另提Granary-v2，已在远端核4份目标清单和SHA：ID/TL仅FLEURS、TH另有CV26，且文本与现有来源高度重合。
+没有下载音频或新增训练行；当前用途限标注复核候选，实际时长、许可和隔离风险见[来源记录](corpus_sourcing.md)。
+不能把机器生成的`high_quality`、caption/风格字段当TTS验收、可信情绪或同人身份。
+
 ## 2026-10-29：VAE真实编解码对照
 
 用户继续授权并行诊断。`scripts/audit_codec_padding.py prepare|run` / `.sh` 在独立

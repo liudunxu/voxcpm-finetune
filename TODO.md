@@ -1,5 +1,37 @@
 # TODO：配音质量改进（drama 非硬依赖）
 
+## 2026-10-29：新增音乐旁路、近重复文本审计与Granary-v2核验
+
+用户再次要求利用空余显存并行提升质量，并追加评估`nvidia/Granary-v2`。
+主清洗仍运行；新增诊断各自独立source/run，不改正在执行的清洗门/源码，不启动新训练。
+
+- [x] CPU近重复文本检查 `scripts/audit_near_text.py`：7252训练行对冻结评测文本和完整受保护val的2059个不同文本，
+  4.17s完成，**0命中**。同文全长度检查；近似仅同语种、双方至少40个归一化字符、Levenshtein距离≤2。
+  三字片段倒排索引及有界编辑距离，经独立完整DP/重复字符/泰文测试核验；没有做语义或音频近重复认证。
+  产物 `/root/autodl-tmp/near_text_20261029/run/{plan,summary}.json`，空`exclusion_overlay.jsonl`。
+- [x] 声音事件入口 `scripts/audit_music.py fetch|prepare|run` / `.sh`，独立目录
+  `/root/autodl-tmp/music_audit_20261029/`。固定MIT AST AudioSet revision `f826b80d28226b62986cc218e5cec390b1096902`，
+  BSD-3-Clause、346MB权重SHA核验；只在远端大盘下载，使用既有torch/torchaudio/transformers，未加依赖。
+  首次HF下载数分钟未写入权重，按PID停掉；同固定URL改curl下载135s后验SHA再安装缓存，原日志与零字节partial留存。
+- [x] 冻结当前训练目标/ref **8312文件**，跳过127个已有声学报警文件；16k单声道、10s窗/5s步长且覆盖结尾，
+  float32、单条推理、单CPU线程、每窗暂停100ms、PyTorch内存上限10%。采用多标签sigmoid，Speech/Music可同时高分。
+  **100条小样21.26s完成，PyTorch峰值404MiB**（nvidia-smi进程约820MiB）；同期主ASR42592→42641，
+  约20s推进49条，只能证明仍推进，非严格吞吐A/B。小样有1条ID gs2的Music=.8567，Speech=.9073。
+- [ ] **已后台接续8312全量审计**（小样100条复用，PID685167）；状态`run/status.json`，日志`continuation.log`。
+  >=.8仅列优先核验项，未标定分数不冒充已确认BGM或自动删除依据；低分也不认证无配乐/单人。
+  完成后结合主清洗结果与具体时间窗核查高分项；遵守有依据的异常/疑似联动排除，不用未校准排序制造身份/污染结论。
+- [x] Granary-v2 revision `81402b751b451b5fe4f4c29e8b40f92892f1e440`四份目标清单全部下载到远端并验SHA，
+  **仅标注、没有音频下载/入库**。ID和Filipino只有FLEURS；TH另有CV26。详见`docs/corpus_sourcing.md`新节。
+  TH CV26 33004条/37.631h、HQ且3–30s为10846条/14.064h；其中32914条至少一个转写版本与现有CV22同文。
+  同文不等于同PCM，尚未恢复原音频ID映射；不把重新标注当新语料、不直接换原文/补情绪或speaker标签。
+  **暂不作为新增主力；优先考虑已有录音的标注复核线索。** 三语已有验证/评测同文也必须继承排除。
+- [x] 新逻辑11测试通过；全量在单线程原生库环境下 **409 passed / exit0**，两条既有依赖弃用警告。
+  默认线程环境首次409断言通过后仍exit134（macOS原生库recursive_mutex退出异常），保留此失败；
+  单线程这次成功不等于已确认退出异常根因或彻底修复。
+- [x] 18:57快照：音乐2075/8312（25.0%），主ASR43688/49121（88.9%），两任务均持续运行。
+  复核音乐8450、近文本141、Granary43份输入SHA通过；12份冻结报告/脚本本机远端SHA一致，
+  证据 `work/music_audit_20261029/verification.json`。数据和报告留远端大盘，原始音频未改。
+
 ## 2026-10-29：现用10源全量清洗已启动（当前生效）
 
 用户在r29复评后要求「整体清洗一波微调数据呢」，范围扩为现用10个来源的全部已加工train/val，

@@ -1,5 +1,53 @@
 # 语料来源：地区短剧候选与历史获取调研
 
+## 2026-10-29：Granary-v2 实际清单核验
+
+用户提供 [nvidia/Granary-v2](https://huggingface.co/datasets/nvidia/Granary-v2)，要求判断补充/主力价值。
+本次冻结 revision `81402b751b451b5fe4f4c29e8b40f92892f1e440`（2026-10-28发布），
+核对官方[数据卡](https://huggingface.co/datasets/nvidia/Granary-v2/blob/81402b751b451b5fe4f4c29e8b40f92892f1e440/README.md)、
+[LICENSE](https://huggingface.co/datasets/nvidia/Granary-v2/blob/81402b751b451b5fe4f4c29e8b40f92892f1e440/LICENSE)
+与HF文件目录，并在远端下载、校验4份目标语种压缩JSONL，共20,147,181字节。
+**只下载标注清单，未下载新音频、改registry/训练清单或开启训练。**
+
+结论：**可作已有录音的标注复核候选，暂不作为三语种新增主力。**
+官方463,062h是48语种所有来源的标注总量；ID/Filipino只有FLEURS，TH只有FLEURS和Common Voice 26。
+`fil`在这里对应项目`tl`，不是另加一个训练语种。仓库没有音频，合成的是文字标注，不应称为合成音频集。
+
+| 清单 | 实际行数 | 全部时长 | 官方high_quality=true时长 | 同时满足HQ及3–30s |
+|---|---:|---:|---:|---:|
+| ID / FLEURS | 2,559 | 9.001h | 5.628h | 1,630条 / 5.617h |
+| Filipino / FLEURS | 1,882 | 7.696h | 3.695h | 904条 / 3.667h |
+| TH / FLEURS | 2,602 | 8.491h | 2.385h | 736条 / 2.367h |
+| TH / Common Voice 26 | 33,004 | 37.631h | 17.065h | 10,846条 / 14.064h |
+
+这些是清单标记和时长交集，**不是本项目验收通过时长或净新增时长**。三个FLEURS清单的文件标识均含train，
+CV26标识不含可确认split；这些源划分仍不能替代项目既有身份/session/PCM/评测文本隔离。
+
+与远端现有raw文本按既有`_norm`比较，对`tn_raw/itn_raw/itn_clean/code_switched_text`取“任一同文”计行：
+ID FLEURS 1911/2559、TL FLEURS 1659/1882、TH FLEURS 2309/2602；
+TH CV26 **32914/33004（99.727%）**与CV22同文。另分别有80/96/111/114行命中项目已保护的验证/评测文本。
+这不是当前训练集新增泄漏，也不能把“改了转写、因此文本不同”当作新录音。
+原始本地manifest已将文件重编号，**尚未恢复Granary标识到原录音的逐字节映射**；同文不证明相同PCM/身份，
+不同文也不证明新增。以后若接入，必须先对原音频ID/PCM与继承排除做核验，不能把此清单当独立评测集。
+
+使用边界：
+
+- `high_quality`是其自动标注管线的质量标记，未认证本项目的尾静音、配乐、重叠说话或母语自然度；
+  不能直接替换现有清洗门或放回已剔除数据。FLEURS已有原始文字，模型重写不自动更准确。
+- 四份清单均只有14个顶层字段，没有稳定speaker ID；`context_asr.speaking_style`与caption是生成文本，
+  不能转成`emotion_verified/control_verified`或配出可信同人ref。翻译、QA、caption也不能充当原音频TTS正文。
+- 目标四份**标注**采用OpenMDW-1.1，允许使用/修改，分发材料须保留许可及适用来源声明；
+  原音频另受FLEURS的CC-BY-4.0、Common Voice的CC0及访问条款约束。许可声明不自动证明个体身份/同意链。
+  `people_speech`的CC-BY-SA-4.0例外不涉及这四份，不能把全库混称单一许可。
+- 值得借鉴的是[NeMo Curator流程](https://github.com/NVIDIA-NeMo/Curator/tree/main/tutorials/audio/granary_v2)：
+  分别记录说话人数/声音事件/转写与语言选择证据。它的H100×8吞吐和私有8人Sortformer模型条件
+  不可套在本机4090D，也不为此改当前依赖或移植整个管线。当前AST声音事件旁路已另行启动，非照搬其门槛。
+
+下一步优先做原音频ID映射与小样稿音复核；只有证实净新增且通过原有质量/隔离门的TH CV26录音才讨论补充。
+目前不扩量、不改配比；TL可信同人ref、人工核验表演/控制仍应从独立、可追溯的新来源解决。
+证据远端 `/root/autodl-tmp/granary_v2_20261029/report.json`，本地镜像 `work/granary_v2_20261029/`。
+报告保留四份HF LFS SHA256、完整统计与输入SHA；小样仅展示标注，语言/声学质量未听验。
+
 ## 2026-09-20：用户提供的地区短剧候选
 
 用途：将来有明确微调假设时，优先核验这批短对白/表演素材。
