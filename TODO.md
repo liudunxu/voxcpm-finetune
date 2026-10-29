@@ -1,6 +1,6 @@
 # TODO：配音质量改进（drama 非硬依赖）
 
-## 2026-10-29：r30全量清洗子集微调（用户已授权）
+## 2026-10-29：r30已完成，不通过、不晋级
 
 用户明确「继续微调」，授权覆盖前一阶段仅清洗/不训练的范围；本轮独立根
 `/root/autodl-tmp/full_clean_candidate_20261029/`，入口`scripts/full_clean_candidate_run.py` / `.sh`。
@@ -19,11 +19,22 @@
   `d5be461816214108423112315b916668fa2d7736b72b33cae2c86305d078644b`。
   已清理r29的step0/458/459，回收1,303,443,919 bytes（1.214GiB），完整latest五文件SHA不变；
   清理误传的本地venv后磁盘可用8.93GiB。训练已后台启动，20:54首个取证为CUDA bf16、5788/895条加载完成。
-- [x] **20:53:42开训**，20:57:21取证已到90/459；loss/梯度有限，CUDA bf16，GPU100%/26979MiB。
-  首个val loss为**1.085739(step0)**，wandb `a8gdknd1`；新val与旧轮不同，不直接横比。
+- [x] **20:53:42开训，21:07:33正常完成459步**，耗时13分51秒；loss/梯度有限、CUDA bf16。
+  val loss **1.085739(step0)→.969930(step250)→.898114(step458)**，wandb `a8gdknd1`；
+  新val与旧轮不同，不直接横比。LoRA SHA `06944982432581880a1aaebad6bd82d3fd7c4af73d8945d42a8ac0833570fc6b`。
   11份核心产物本机/远端SHA一致，67份训练/推理源码与r29相同，完整latest仍核验通过；
   证据`work/full_clean_candidate_20261029/{startup_snapshot,verification}.json`。
-- [ ] 自动接续900条复评后登记分语种CER/WER/疑似漏尾/尾静音与配对区间。结果仍待完成，不宣称收益。
+- [x] **22:30:17完成900/900复评**，约83分钟。r29→r30 CER：ID **1.60%→1.71%**、
+  TH **4.68%→4.69%**、TL **1.98%→2.03%**；逐语种配对95%区间均跨零，无明确内容收益。
+  疑似少读/漏尾ID4→9、TH12→9、TL0→0；都是ASR诊断，不能直接认证漏词或误报。
+- [x] **不通过、不晋级**：尾静音p90 ID.34s、TH.34s、TL.36s，相对base+.18/+.16/+.18s，
+  全部超过既定+.10s门。TH较r29少20ms，其余两语种p90不变；不因小幅改善或val loss下降放宽门槛。
+  900条无空ASR/缺失尾指标/自动多读标记；未做声学盲听或母语验收，生产未切换。
+- [x] 完成后核验11,086份输入、完整latest、5模型4500份WAV及6份ref；19份完成文件本机/远端SHA一致。
+  只读汇总`run/postcheck_20261029.json`、逐seed分解`run/severity_20261029.json`，原报告/WAV未改或重跑。
+  GPU已释放（0MiB/0%），磁盘余约6.3GiB；全量音频/优化器仍主要留远端，不据此释放实例或数据盘。
+- [ ] 后续先定位冻结失败样本的停止/尾部行为；ID报警集中于`fresh_id_1707/1816`（正文括号/缩写）。
+  弱证据保持uncertain，不以ASR豁免；新的单变量假设与回归冻结后再决定实验，不自动加步数或扩池。
 
 完成状态以`run/status.json`及`checkpoint/latest/training_state.json`为准，日志`run/train.log`、
 `run/driver.log`、`run/eval/worker*.log`。旧审计的`training_approved=false`不回写；新plan单独记录授权。

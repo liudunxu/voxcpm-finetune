@@ -4,7 +4,7 @@
 
 本文是可以照着一步步执行的流程，三个语种共用。开发约定与踩坑记录见 [AGENTS.md](../AGENTS.md)，数据源取舍背景见 [README.md](../README.md)，**ID 特有的依据、语料核实状态与口径差异见 [vi_id_support.md](vi_id_support.md)**（同文件的 vi 部分与 [ms_support.md](ms_support.md) 已转存档）。
 
-## 2026-10-29：r30按全量清洗子集继续微调
+## 2026-10-29：r30全量清洗子集实验完成，不通过
 
 用户明确「继续微调」后，使用独立入口`scripts/full_clean_candidate_run.py prepare|run`及`.sh`，
 根`/root/autodl-tmp/full_clean_candidate_20261029/`。只读最终当前子集5788行/12.0352h、val895行；
@@ -18,9 +18,15 @@ lr1e-4、warmup45、wd.01，LM/DiT开、proj关。当前保留行不重平衡，
 训练正常结束后自动四路生成900条（180条件×seed42–46），CFG1.8/20步/large-v3/禁重试；
 复用冻结base/r26/r28/r29，新增r30−r29/r28/base分语种对照，保留原尾静音等门槛，不自动晋级。
 先验所有输入SHA及完整1634行保护val隔离，磁盘开训至少8GiB、运行保留4GiB；相关16测试通过。
-20:53:42开训，20:57:21已到90/459，CUDA bf16、GPU100%/26979MiB、loss/梯度有限；
-初始val loss1.085739，wandb `a8gdknd1`。11份核心产物本机/远端SHA一致，67份训练/推理源码与r29相同。
-状态以TODO顶部及`run/status.json`为准，旧候选`training_approved=false`保持为历史阶段记录；评测结果待完成。
+20:53:42开训，21:07:33正常完成459步，CUDA bf16、loss/梯度有限；
+val loss1.085739→.969930→.898114，wandb `a8gdknd1`。67份训练/推理源码与r29相同。
+22:30:17完成900/900复评：r29→r30 CER为ID1.60%→1.71%、TH4.68%→4.69%、TL1.98%→2.03%，
+各语种配对区间均跨零，没有明确内容收益。尾静音p90 ID.34s/TH.34s/TL.36s，
+相对base+.18/.16/.18s，仍全越既定+.10s门；TH较r29改善20ms也不足以通过。
+**结论不通过、不晋级**；未做声学盲听/母语验收，未切生产或追加训练。
+11,086份输入、完整latest、4500份新旧WAV及6ref验SHA通过，19份完成文件本机/远端一致；
+只读汇总/逐seed分解在`run/postcheck_20261029.json`与`run/severity_20261029.json`，详细结果见`docs/runs.md`。
+状态以TODO顶部及`run/status.json`为准，旧候选`training_approved=false`保持为历史阶段记录。
 
 源码同步显式排除`.venv`、`.git`、`__pycache__`；官方submodule只同步`src/scripts/conf`与元数据，
 不整目录携带本地环境。本次初次传输误带约215MiB本地虚拟环境，已停止并清理本轮新建目录中的部分副本，
