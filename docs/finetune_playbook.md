@@ -4,18 +4,72 @@
 
 本文是可以照着一步步执行的流程，三个语种共用。开发约定与踩坑记录见 [AGENTS.md](../AGENTS.md)，数据源取舍背景见 [README.md](../README.md)，**ID 特有的依据、语料核实状态与口径差异见 [vi_id_support.md](vi_id_support.md)**（同文件的 vi 部分与 [ms_support.md](ms_support.md) 已转存档）。
 
-## 2026-10-29：r29已启动，接续查看日志和自动复评
+## 2026-10-29：与清洗并行的质量诊断
+
+入口 `scripts/audit_training_quality.py prepare|cpu|embed`，封装 `.sh`；独立根
+`/root/autodl-tmp/training_quality_20261029/`。用户已授权利用剩余资源做有明确目的的质量检查。
+只读当前r29的7252行，1429对ref中54对已有CPU声学报警跳过，WavLM审计1375对/2525文件。
+先做64份小样（7.27s、PyTorch峰值588MiB），然后复用缓存继续；单CPU线程、每条暂停50ms、
+CUDA进程内存上限10%，不下载新模型。主清洗status照常读取，不能仅凭显存空闲认定算力空闲。
+
+声纹输出 `run/pair_scores.jsonl` / `reference_summary.json`，单文件嵌入按音频SHA缓存。
+当前同源不同speaker ID只是名义对照，原始身份并未人工复验；最低20对/来源是审查优先级，
+不是新增剔除阈值。不套用生产另一声纹模型的0.45门、不自动改身份/换ref或把TL未知身份配起来。
+17:44:49已完成：ID925对中位.9469、TH450对.9430，名义异人p99为.9481/.9462，明显重叠，
+高分也不能认证同人。接续2461份用时220.56s，PyTorch峰值608MiB；同期间主ASR增加629条，
+约2.86条/s，未停顿；没有同任务对照，不宣称完全无吞吐影响。小样64份未重跑。
+
+CPU结果 `run/padding_summary.json`：官方packer将音频右补齐到2560采样点（160ms）倍数；
+当前ID/TH/TL平均额外补齐77/80/73ms。原尾静音p90均150ms，算术`尾+补齐`的p90为260/260/280ms。
+这一统计说明清单音频的尾静音不等于编码前的实际尾长，但**没有证明它造成r28/r29的+180ms退化**。
+未重测补齐波形/运行实际VAE roundtrip；形状模拟VAE只验证plain/ref两路stop标签在最后目标块、
+EOS不进loss。官方源码只读；停止头冻结这一事实也不等于proj开关能修复停止行为。
+
+源SHA、源码SHA、小样/全量GPU运行信息和原清洗进度快照单独落盘；旧评测/WAV不重跑或重评分。
+全量测试394通过且exit0；新增原生Torch检查隔离到子进程，避免macOS退出时原生库互相影响。
+最终状态见TODO；可信情绪/控制0、TL可信同人ref0仍需新可信语料，不靠GPU空闲伪造补齐。
+
+## 2026-10-29：现有10源全量清洗
+
+用户追加要求「整体清洗一波微调数据呢」。现用10源共50,321条/86.44h，全部train/val和当前r29的target/ref
+进入同一审计，历史完整val继续受保护，旧剔除链必须继承。ID和当前训练数据优先，现有来源范围不扩成采集。
+入口 `scripts/full_corpus_clean.py` / `.sh`，独立根 `/root/autodl-tmp/full_corpus_clean_20261029/`，
+14:24:38后台启动；源码冻结后不回写。四路CPU已扫完50,321文件，1200个带风险/旧排除，49,121个进入ASR。
+用户追加GPU并行要求后，已切 `scripts/full_corpus_parallel.py` / `.sh`：8独立GPU进程×2CPU线程，
+新根 `parallel8/`；保留3759条旧ASR，只接续剩余45,362条。旧进程PID34531已按PID终止并核GPU释放。
+`parallel8/handoff.json`保留原因；旧nohup忽略SIGINT，未落盘的在途任务可重新分配，不重跑成功结果。
+当前状态只读 `parallel8/run/status.json`，驱动日志 `parallel8/driver.log`，每路 `parallel8/run/worker*.log`。
+
+流程：输入SHA/元数据/来源→四路CPU声学→八路CUDA large-v3→联动隔离→候选及最终隔离复核。
+新筛选政策固定CER>.15、时长加权avg_logprob<−1/no_speech_prob>.6或空ASR为疑似；
+ASR无台词提示、不沿用前段文字、beam5/temperature0，仅本轮数据诊断关闭VAD；TL自动识别，其余提示语种。
+保留所有转写与原文本，不自动改台词；语种标签不单独判口音。能量/VAD首尾静音>.5s、连续满幅≥1ms、
+解码/格式/时长异常、旧排除及文本乱码均隔离；不以F0或能量分位差冒充表现力/SNR门槛。
+无可信控制前缀的原行排除，已去前缀的历史候选不因此回写；不补标签/换ref/硬裁音频。
+
+输出 `parallel8/run/candidate/<source>/train.jsonl|val.jsonl` 及 `current/`（r29对应子集），每份附排除记录；
+保留行原字节不变，原split不混。全量文本/身份/session/path/PCM隔离复核通过才写complete，
+精确PCM目标去重、同原音最多3次，疑似文件的target/ref原路径/原音/PCM复用一起排除。
+即使val中发现坏样本，完整旧val仍受保护；未来换val不能沿用旧val loss作同口径比较。
+CPU明细为 `acoustic.jsonl`，旧ASR保留 `retained_asr.jsonl`，八路新记录为 `workers/*/items.jsonl`；
+全部完成再合并新 `asr.jsonl`、写 `summary.json`。成功条目按ID/路径/文件SHA及原分类规则核验后接续。
+同时继承旧plan内的22条剔除和165个历史PCM指纹，补强原路径不在当前池时的PCM别名守卫；
+本次复核没有额外漏标的历史别名。原执行source/plan/报告不改；新代码及输入另冻到parallel8。
+磁盘保留4GiB，
+失败不隐式重启或覆盖已有产物。自动生成的是候选池，**不会自动触发新训练**。
+全量389测试通过；自动检查不完整认证近重复、多人/BGM、母语/录音授权，ASR筛选允许保守误删。
+
+## 2026-10-29：r29已完成，不通过
 
 用户已授权训练和删除过期checkpoint。r29于 **10:41:56（北京时间）** 从原基座冷启动；
 入口 `scripts/suspect_candidate_run.py prepare|run`，环境 `scripts/suspect_candidate_run.sh`。
-本次实际run已启动，**不要再次执行prepare/run或覆盖冻结source**。
+本次run已完成，**不要再次执行prepare/run或覆盖冻结source**。
 
 - 数据7252条/14.6302h；只改变r28的81行排除，保留行与val1148字节不变，仍保护旧val1149。
 - 固定459步≈1.013epoch，seed42、r/alpha64、dropout.05、lr1e-4、batch2×8、warmup45、wd.01；
   LM/DiT开、proj关。与r28配置差异仅train/val/save/tensorboard路径；未加第2epoch。
-- 10:43:58已实测40/459、CUDA bf16、GPU99%/25239 MiB，loss/梯度有限；
-  val起点1.028783，末值pending；wandb `ggxkkng4` 在线。
-- 自动四路900输出（180条件×seed42–46），沿用CFG1.8/20步/禁重试/large-v3，
+- **10:54:36完成459步**，CUDA bf16、loss/梯度有限，val1.028783→.965453（中间.944497）；wandb `ggxkkng4`。
+- **12:17:01四路完成900/900**（180条件×seed42–46），沿用CFG1.8/20步/禁重试/large-v3，
   复用冻结base/r26/r28。新增 `comparison.json` 的 `r29_minus_r28`，不重跑旧WAV。
 
 远端根 `/root/autodl-tmp/suspect_candidate_20261029/`：
@@ -32,7 +86,13 @@
 磁盘已按用户授权清理16个过期step目录，回收6.47GiB；4个run完整latest逐文件SHA未变。
 具体删除项、SHA及回收量见本地/远端 `checkpoint_cleanup_plan.json`、`checkpoint_cleanup_actions.jsonl`、
 `checkpoint_cleanup_result.json` 和 `docs/runs.md`，不删原数据/旧评测或生产权重。
-训练约13分钟、评测约80分钟为r28历史耗时估计；效果、声学盲听、母语验收仍pending，未切生产。
+实际训练约13分钟、评测约82分钟。结果：**不通过、不晋级**，三语种尾静音p90与r28相同，
+ID .34s、TH/TL .36s，相对base均+.18s越既定+.10s门。CER r28→r29为ID1.48%→1.60%、
+TH4.70%→4.68%、TL2.21%→1.98%，配对区间均跨零，不能宣称明确整体收益。
+TL旧65.92s近静音在同case/seed45下本次为10.24s、speech_ratio.9804、CER.0656，不等于已稳定修复。
+19份完成文件本地/远端SHA一致，3600份既有WAV/6ref及完整latest核验通过；
+只读汇总 `run/postcheck_20261029.json`，详细分层/区间/权重SHA见 `docs/runs.md`。
+声学盲听和母语验收未做，生产未切换；已按用户要求转入上面的全量清洗。
 
 ## 2026-10-29：所有本轮报警已隔离，新候选7252条（审计阶段）
 
