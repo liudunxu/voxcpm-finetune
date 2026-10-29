@@ -26,6 +26,7 @@ checkpoints/
 /work/music_audit_20261029/
 /work/near_text_20261029/
 /work/granary_v2_20261029/
+/work/music_excluded_20261029/
 wandb/
 logs/
 *.wav
