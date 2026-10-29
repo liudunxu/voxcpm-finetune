@@ -4,6 +4,49 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## lora_joint3_r30_full_clean_459（2026-10-29，训练中、待验收）
+
+- 用户明确「继续微调」后，**20:53:42（北京时间）从同一原基座冷启动**。
+  只用`music_excluded_20261029/run/candidate/current/`最终子集：5788行/12.0352h，
+  相对r29累计剔除1464行（主清洗1412、音乐新增52；另10个音乐疑似已由主清洗排除）。
+  val895行/1.5965h，完整1634行历史验证保护；保留原行字节/顺序，无原音物理删除或重新采样。
+- 时长份额ID48.935%、TH17.699%、TL25.393%、zh4.932%、en3.041%；ref1218行/21.04%，
+  目标最大曝光1、ref最大复用3；可信控制标签0、TL可信同人ref0。保留这些局限，不用伪标签补量。
+- 与r29相同459步、seed42、batch2×8、r64/alpha64/dropout.05、lr1e-4、warmup45、wd.01，
+  LM/DiT开、proj关。约1.268832epoch；YAML只改train/val/save/tensorboard路径，67份训练/推理源码相同。
+  数据清洗改变了语种/ref份额及有效曝光，且只有一个训练seed，不做强因果外推；val已变，旧val loss不横比。
+- **20:57:21取证90/459**，loss/梯度有限、CUDA bf16、GPU100%/26979MiB；
+  首个val loss **1.085739(step0)**，末值待完成。wandb `a8gdknd1`。
+- 自动四路复评900条（180条件×seed42–46），CFG1.8/20步/large-v3/禁重试。
+  复用base/r26/r28/r29报告和WAV，新增r30−r29/r28/base分语种对照；尾静音等门槛不变。
+  **r30 CER/WER/疑似少读/漏尾与尾静音均待完成；未做声学盲听/母语验收，不晋级、不切生产。**
+- 入口`scripts/full_clean_candidate_run.py` / `.sh`，独立根
+  `/root/autodl-tmp/full_clean_candidate_20261029/`；配置`configs/lora_joint3_r30_full_clean_459.yaml`。
+  11,086份输入SHA与预检通过，11份核心产物本机/远端SHA一致；相关16测试通过/exit0，shell/diff检查通过。
+  完整plan SHA `d5be461816214108423112315b916668fa2d7736b72b33cae2c86305d078644b`。
+  状态`run/status.json`，日志`run/train.log`、`run/driver.log`、`run/eval/worker*.log`。
+
+### 数据源（既有许可声明，不新增录音授权或身份认证）
+
+| source_id | 许可 | 行数 | 小时 |
+|---|---|---:|---:|
+| cv22_id | CC0 | 868 | 1.1181 |
+| cv22_th | CC0 | 350 | .4472 |
+| fleurs_en | CC-BY-4.0 | 150 | .3659 |
+| fleurs_id | CC-BY-4.0 | 516 | 1.4642 |
+| fleurs_th | CC-BY-4.0 | 98 | .2842 |
+| fleurs_tl | CC-BY-4.0 | 890 | 3.0562 |
+| fleurs_zh | CC-BY-4.0 | 260 | .5936 |
+| gigaspeech2_id | Apache-2.0 | 1779 | 3.3071 |
+| gigaspeech2_th | Apache-2.0 | 516 | .9129 |
+| yodas_th | CC-BY-3.0 | 361 | .4858 |
+
+按用户既有授权清理r29无计划/报告引用的`step_0000000/458/459`三个过期目录，
+回收1,303,443,919 bytes（1.214GiB），完整latest五文件SHA前后及开训后复核均一致。
+删除清单与SHA保留在本轮`checkpoint_cleanup_{plan,result}.json`、`checkpoint_cleanup_actions.jsonl`。
+初次同步误带本地venv，已终止、移除本轮目录中的部分副本并按代码子目录重传，见`source_sync_cleanup.json`；
+开训前可用8.93GiB，运行保留4GiB。没有删除原始数据、旧评测/权重；source冻结后交接仅入handoff。
+
 ## lora_joint3_r29_suspect_excluded_459（2026-10-29，已完成、不通过）
 
 - 用户明确授权启动训练及清理过期checkpoint；**10:41:56（北京时间）从原基座冷启动**，训练seed42。

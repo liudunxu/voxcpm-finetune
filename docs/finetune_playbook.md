@@ -4,6 +4,28 @@
 
 本文是可以照着一步步执行的流程，三个语种共用。开发约定与踩坑记录见 [AGENTS.md](../AGENTS.md)，数据源取舍背景见 [README.md](../README.md)，**ID 特有的依据、语料核实状态与口径差异见 [vi_id_support.md](vi_id_support.md)**（同文件的 vi 部分与 [ms_support.md](ms_support.md) 已转存档）。
 
+## 2026-10-29：r30按全量清洗子集继续微调
+
+用户明确「继续微调」后，使用独立入口`scripts/full_clean_candidate_run.py prepare|run`及`.sh`，
+根`/root/autodl-tmp/full_clean_candidate_20261029/`。只读最终当前子集5788行/12.0352h、val895行；
+从与r29相同的基座冷启动，固定459步（约1.269epoch）、seed42、batch2×8、r/alpha64、dropout.05、
+lr1e-4、warmup45、wd.01，LM/DiT开、proj关。当前保留行不重平衡，不从完整候选池新增未覆盖音乐扫描的行。
+
+假设是保守排除ASR错配及声学/音乐疑似样本后，内容错误和生成异常可以改善；是否成立由固定复评检验。
+清洗改变了语言/ref分布，TH实际17.7%、TL同人ref0、控制标签0均保留记录；有效曝光改变而步数不变，
+且只有一个训练seed，不把任何提升过度归因为单一质量原因。新val不同，旧val loss不能直接比较。
+
+训练正常结束后自动四路生成900条（180条件×seed42–46），CFG1.8/20步/large-v3/禁重试；
+复用冻结base/r26/r28/r29，新增r30−r29/r28/base分语种对照，保留原尾静音等门槛，不自动晋级。
+先验所有输入SHA及完整1634行保护val隔离，磁盘开训至少8GiB、运行保留4GiB；相关16测试通过。
+20:53:42开训，20:57:21已到90/459，CUDA bf16、GPU100%/26979MiB、loss/梯度有限；
+初始val loss1.085739，wandb `a8gdknd1`。11份核心产物本机/远端SHA一致，67份训练/推理源码与r29相同。
+状态以TODO顶部及`run/status.json`为准，旧候选`training_approved=false`保持为历史阶段记录；评测结果待完成。
+
+源码同步显式排除`.venv`、`.git`、`__pycache__`；官方submodule只同步`src/scripts/conf`与元数据，
+不整目录携带本地环境。本次初次传输误带约215MiB本地虚拟环境，已停止并清理本轮新建目录中的部分副本，
+后续不改已冻结执行source；交接文档进入`handoff/`。
+
 ## 2026-10-29：全量清洗及音乐62份排除完成
 
 用户明确「直接剔除」后，`scripts/quarantine_music_candidates.py` / `.sh`在独立

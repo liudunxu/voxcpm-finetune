@@ -1,0 +1,16 @@
+{
+  "gpus": 1,
+  "epochs": 1.2688320663441603,
+  "num_iters": 459,
+  "effective_batch": 16,
+  "train_samples": 5788,
+  "langs": {
+    "id": 3163,
+    "tl": 890,
+    "th": 1325,
+    "en": 150,
+    "zh": 260
+  },
+  "train_manifest": "/root/autodl-tmp/full_clean_candidate_20261029/run/train.jsonl",
+  "execution_plan_sha256": "d5be461816214108423112315b916668fa2d7736b72b33cae2c86305d078644b"
+}
