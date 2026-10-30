@@ -240,6 +240,14 @@ r37新source同步250份文件并核SHA；冻结plan `bcbe4df30084a64bc8e02e5e36
 wandb桥接服务403，在线同步未完成；TensorBoard/训练日志保留，不能当作监控成功或训练失败。
 本地`work/r37_dit_original_lr5e5_20261031/launch_verification.json`及`storage_dedupe/`保存证据；最终留出未用，母语未验证。
 
+r37随后在40更新/5条后触发同一声学门停止：TH1844 control时长5.056→6.112s、有声比例.88310→.80196；
+CER .254%→1.012%、尾p90 .14→.18s，疑似多读/少读均0；ID/TL未评，不续训或补抽。
+18,716输入/5WAV/完整快照与optimizer40及CPU声学复核通过，verification
+`e9a8ab4c5d47180800400f26732f59de835f32b365df37e43cbd49ac16469439`。小样本结果不代表三语种验收。
+CPU谱审计确认r37更新幅度中位为r36的.5324，但失败仍在；前32方向能量中位96.69%仅支持新的容量假设。
+下一r38固定其他条件只改DiT rank/alpha64→32、alpha/r=1；假设在r37工作目录`next_hypothesis.json`，尚未实现/启动。
+旧r32的LM+DiT/旧数据/lr1e-4不是此设置对照，形状改变也影响RNG消费，不认证rank因果。最终留出仍未用。
+
 ## 执行卫生
 
 所有长任务独立source/plan、nohup日志、原结果不覆盖；本地只镜像元数据，不下载数据集音频或模型。
