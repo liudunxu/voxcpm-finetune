@@ -23,7 +23,8 @@ R33_DEVELOPMENT_SHA = '12e21245f775913548f262519df6da818a8a4eb2ceb2ce79985c92b3e
 PAIRED = Path('/root/autodl-tmp/quality_reaudit_20261030/paired_candidate_20261031_v2')
 PAIRED_SHA = '60789ed48d2c4c4c4cec3126c3f7c787b1fb75dc52d186fe7b82e434f2781a82'
 PAIRED_COMPLETION_SHA = 'ed647b04198e11da6ee2a7ce1ea1aac8d3c49a7672dad58b2d1d3d6199f56b28'
-ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5', 'dit_original_lr5e5_rank32')
+ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5', 'dit_original_lr5e5_rank32',
+                     'dit_original_lr5e5_rank32_drop0')
 PAIRED_VARIANTS = ('dit_paired', *ORIGINAL_VARIANTS)
 R35 = Path('/root/autodl-tmp/r35_dit_paired_20261031/run')
 R35_SHA = 'c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b'
@@ -33,17 +34,33 @@ R36_VERIFICATION_SHA = '6d5ee04be14fe470725ce6ec89045796176e34c1103646dbb58b55a0
 R37 = Path('/root/autodl-tmp/r37_dit_original_lr5e5_20261031/run')
 R37_SHA = 'bcbe4df30084a64bc8e02e5e367efb54f36ea0f3c71b64cf349a190a0f96a0dc'
 R37_VERIFICATION_SHA = 'e9a8ab4c5d47180800400f26732f59de835f32b365df37e43cbd49ac16469439'
+R38 = Path('/root/autodl-tmp/r38_dit_original_lr5e5_rank32_20261031/run')
+R38_SHA = '7cc5dde336ae8d5642c27e3309d142ced42d37e79a15c6dd3939b676458fdd17'
+R38_VERIFICATION_SHA = 'd628f4239e51473532f16322cd646199404af46436b3a3f515686afd959de63c'
 
 
-def acoustic_gate(rows, baseline):
+def acoustic_gate(rows, baseline, *, paired_extremes=False):
     """Reuse existing absolute-tail, duration and speech-ratio policy before resuming."""
     from voxft.train.runlog import _duration_gates
     matched = [baseline[prior.key(row)] for row in rows]
     reports = [{'label':label, **frozen.evaluation._report_metrics(items)}
                for label, items in (('base', matched), ('candidate', rows))]
     gates = _duration_gates(reports, tail_policy='absolute')['candidate']
-    return {key: values for key, values in gates.items()
-            if values and key != 'tail_silence_observations'}
+    failures = {key: values for key, values in gates.items()
+                if values and key != 'tail_silence_observations'}
+    if paired_extremes:
+        # r38: a >2x take with worse CER escaped the mean "unchanged content" gate.
+        extreme = [f"{row['case_id']}/seed{row['seed']}: duration {old['audio_sec']}→"
+                   f"{row['audio_sec']}s, speech_ratio {old['speech_ratio']}→{row['speech_ratio']}"
+                   for row, old in zip(rows, matched)
+                   if row.get('numeric') is False and old.get('numeric') is False
+                   and old.get('audio_sec') and row.get('audio_sec') is not None
+                   and old.get('speech_ratio') is not None and row.get('speech_ratio') is not None
+                   and round(row['audio_sec'] / old['audio_sec'] - 2., 12) > 0
+                   and round(old['speech_ratio'] - row['speech_ratio'] - .10, 12) > 0]
+        if extreme:
+            failures['paired_extreme_acoustic'] = extreme
+    return failures
 
 
 def cer_observations(rows, base):
@@ -91,6 +108,13 @@ VARIANTS['dit_original_lr5e5_rank32'] = {**VARIANTS['dit_original_lr5e5'],
                  'screened original rows, lr5e-5 and 118-update schedule. The smaller update magnitude '
                  'in r37 did not remove acoustic failure; test capacity, not another LR reduction. '
                  'Concentrated update spectrum does not prove retrained low-rank quality.'}
+VARIANTS['dit_original_lr5e5_rank32_drop0'] = {**VARIANTS['dit_original_lr5e5_rank32'],
+    'changes':{'enable_lm':False, 'r':32, 'alpha':32, 'dropout':0.},
+    'run_name':'lora_joint3_r39_dit_original_lr5e5_rank32_drop0_staged',
+    'hypothesis':'Relative to r38, only remove DiT LoRA dropout .05 to0, matching the official '
+                 'v2 example. Its output-branch dropout adds training stochasticity absent in '
+                 'inference; test sensitivity after rank32 still overread at80 updates. '
+                 'Same data, rank, lr and118-update schedule; RNG consumption changes, no causal proof.'}
 
 
 def candidate_config(parent, work, variant, *, train_rows=None):
@@ -172,9 +196,10 @@ def original_control_rows(rows, mapping, original_pool):
 
 def verify_original_config_control(work, cfg, variant):
     """Bind the intervention to actual parent bytes/settings, not just its recipe."""
-    if variant not in ('dit_original_lr5e5', 'dit_original_lr5e5_rank32'):
+    if variant not in ORIGINAL_VARIANTS[1:]:
         raise ValueError('Undeclared original-audio control')
-    parent_work = R37 if variant == 'dit_original_lr5e5_rank32' else R36
+    parent_work = {'dit_original_lr5e5':R36, 'dit_original_lr5e5_rank32':R37,
+                   'dit_original_lr5e5_rank32_drop0':R38}[variant]
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
         if frozen.sha256(work / name) != frozen.sha256(parent_work / name):
             raise ValueError(f'Original control changed {name}')
@@ -182,7 +207,11 @@ def verify_original_config_control(work, cfg, variant):
     paths = {'train_manifest', 'val_manifest', 'save_path', 'tensorboard'}
     changed = {key for key in set(parent) | set(cfg)
                if key not in paths and parent.get(key) != cfg.get(key)}
-    if variant == 'dit_original_lr5e5_rank32':
+    if variant == 'dit_original_lr5e5_rank32_drop0':
+        if (changed != {'lora'} or parent['lora']['dropout'] != .05
+                or cfg['lora'] != {**parent['lora'], 'dropout':0.}):
+            raise ValueError('Expected only DiT dropout .05 to0 relative to r38')
+    elif variant == 'dit_original_lr5e5_rank32':
         if (changed != {'lora'} or parent['lora']['r'] != 64 or parent['lora']['alpha'] != 64
                 or cfg['lora'] != {**parent['lora'], 'r':32, 'alpha':32}):
             raise ValueError('Expected only DiT rank/alpha 64 to32 relative to r37')
@@ -253,9 +282,9 @@ def prepare(work, variant='rank32'):
             inputs[str(R35 / 'plan.json')] = R35_SHA
             inputs[str(R35 / 'verification.json')] = frozen.sha256(R35 / 'verification.json')
             control_parents = []
-            if variant in ('dit_original_lr5e5', 'dit_original_lr5e5_rank32'):
+            if variant in ORIGINAL_VARIANTS[1:]:
                 control_parents.append((R36, R36_SHA, R36_VERIFICATION_SHA))
-            if variant == 'dit_original_lr5e5_rank32':
+            if variant in ORIGINAL_VARIANTS[2:]:
                 control_parents.append((R37, R37_SHA, R37_VERIFICATION_SHA))
             for previous, plan_sha, verification_sha in control_parents:
                 prior.review.checked(previous / 'plan.json', plan_sha)
@@ -270,6 +299,23 @@ def prepare(work, variant='rank32'):
                 inputs.update(verification['outputs_sha256'])
                 inputs[str(previous / 'plan.json')] = plan_sha
                 inputs[str(previous / 'verification.json')] = verification_sha
+            if variant == 'dit_original_lr5e5_rank32_drop0':
+                prior.review.checked(R38 / 'plan.json', R38_SHA)
+                prior.review.checked(R38 / 'verification.json', R38_VERIFICATION_SHA)
+                verification = read(R38 / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R38_SHA
+                        or verification['optimizer_step_counts'] != {'80':96}
+                        or verification['completed_outputs'] != 47 or verification['unscored_wavs'] != 0
+                        or verification['reason'] != 'new_suspected_overread'):
+                    raise ValueError('Expected verified r38 45+2-output overread failure')
+                inputs.update(read(R38 / 'plan.json')['inputs_sha256'])
+                inputs.update(verification['outputs_sha256'])
+                inputs[str(R38 / 'plan.json')] = R38_SHA
+                inputs[str(R38 / 'verification.json')] = R38_VERIFICATION_SHA
+                official_config = frozen.VOXCPM_REPO / 'conf/voxcpm_v2/voxcpm_finetune_lora.yaml'
+                if yaml.safe_load(official_config.read_text(encoding='utf-8'))['lora']['dropout'] != 0.:
+                    raise ValueError('Official dropout rationale changed')
+                inputs[str(official_config)] = frozen.sha256(official_config)
     if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
         prior.strength.check_inputs(R33_DEVELOPMENT)
@@ -323,7 +369,7 @@ def prepare(work, variant='rank32'):
     save(work / 'base_items.json', base_items)
     cfg = candidate_config(yaml.safe_load((prior.SOURCE / 'train.yaml').read_text(encoding='utf-8')), work,
                            variant, train_rows=mix['train']['rows'] if mix else None)
-    if variant in ('dit_original_lr5e5', 'dit_original_lr5e5_rank32'):
+    if variant in ORIGINAL_VARIANTS[1:]:
         verify_original_config_control(work, cfg, variant)
     gates = gate_steps(cfg, variant)
     updates = {str(step): min(step + 1, cfg['num_iters']) for step in gates}
@@ -347,6 +393,9 @@ def prepare(work, variant='rank32'):
     if variant in PAIRED_VARIANTS:
         early_rejection.remove('stage-end any language mean CER delta>.01')
         early_rejection.append('small-pilot mean CER is observation only; severe per-output checks stay active')
+    if variant == 'dit_original_lr5e5_rank32_drop0':
+        early_rejection.append('at completed groups, any matched nonnumeric seed with duration>2x base '
+                               'AND speech_ratio drop>.10 rejects regardless of CER; old gates unchanged')
     data = {'sources':mix['sources'], 'language_shares':mix['language_shares']} if mix else {}
     save(work / 'plan.json', {**{k: parent[k] for k in ('base_path', 'asr_path', 'speaker_model_path',
             'sources', 'language_shares')}, 'inputs_sha256': inputs, 'rank': cfg['lora']['r'],
@@ -358,6 +407,7 @@ def prepare(work, variant='rank32'):
         'gates': list(gates), 'gate_optimizer_updates': updates,
         'pilot_outputs_per_gate_max': len(jobs), 'new_outputs_max': len(gates) * len(jobs),
         'pilot_mean_cer_observe_only':variant in PAIRED_VARIANTS,
+        'paired_extreme_acoustics':variant == 'dit_original_lr5e5_rank32_drop0',
         'early_rejection': [*early_rejection, 'stage-end existing absolute-tail/duration/speech-ratio gates'],
         'tail_policy':'absolute', 'production_changed': False,
         'hypothesis': settings['hypothesis'],
@@ -464,7 +514,8 @@ def evaluate_gate(work, step):
             reason = probe.reject_reason(rows, base,
                 stage_end=stage_end and not plan.get('pilot_mean_cer_observe_only', False))
             if stage_end:
-                acoustic_failures = acoustic_gate(rows, base)
+                acoustic_failures = acoustic_gate(rows, base,
+                    paired_extremes=plan.get('paired_extreme_acoustics', False))
                 if acoustic_failures and reason is None:
                     reason = 'stage_acoustic_regression'
             frozen.write_json(directory / 'progress.json', {'completed': len(rows), 'reason': reason,

@@ -1,0 +1,52 @@
+{
+  "remote_prepared": true,
+  "training_started": true,
+  "gpus": 1,
+  "effective_batch": 16,
+  "epochs": 1.0037214247740565,
+  "train_samples": 1881,
+  "langs": {
+    "id": 582,
+    "th": 704,
+    "tl": 346,
+    "zh": 169,
+    "en": 80
+  },
+  "parent_r38_plan_sha256": "7cc5dde336ae8d5642c27e3309d142ced42d37e79a15c6dd3939b676458fdd17",
+  "parent_r38_verification_sha256": "d628f4239e51473532f16322cd646199404af46436b3a3f515686afd959de63c",
+  "train_sha256_expected": "ff279bf931ed5b4d969e1b621dcc4b0bbec8bb7a9fb77f8b6904165141b90aa9",
+  "config_sha256": "fee6a858923647f0e9d1eae48e15d3fff9bb51297df72869e9b70ad2ec3588fa",
+  "gates": {
+    "39": 40,
+    "79": 80,
+    "118": 118
+  },
+  "only_training_numeric_change": {
+    "lora.dropout": [
+      0.05,
+      0.0
+    ]
+  },
+  "paired_extreme_acoustics": {
+    "enabled": true,
+    "check_at_completed_groups": true,
+    "nonnumeric_only": true,
+    "duration_ratio_gt": 2.0,
+    "speech_ratio_drop_gt": 0.1,
+    "joint_conditions_required": true,
+    "cer_independent": true,
+    "old_frozen_gates_unchanged": true
+  },
+  "remote_root": "/root/autodl-tmp/r39_drop0_20261031_v2",
+  "failed_environment_attempt": "/root/autodl-tmp/r39_dit_original_lr5e5_rank32_drop0_20261031",
+  "environment_recovery": "Shorter unique directory; AF_UNIX path too long; same training data and hyperparameters, original source/logs preserved.",
+  "driver_started": true,
+  "remote_plan": "/root/autodl-tmp/r39_drop0_20261031_v2/run/plan.json",
+  "remote_plan_sha256": "9b40d522071727eef4163ea70b5662098745c3c27617cd3103ee49074e631b5e",
+  "remote_input_checks": 19346,
+  "source_files_verified": 256,
+  "driver_pid": 105392,
+  "trainer_pid": 105447,
+  "unix_socket_bind_test_bytes": 98,
+  "observed_optimizer_updates": 40
+}

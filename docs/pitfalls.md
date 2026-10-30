@@ -6,6 +6,12 @@
 > 训练记录 `docs/runs.md`、语料调研 `docs/corpus_sourcing.md`、质量实测 `docs/quality_20260917.md`、
 > 推理链 `docs/inference_chain_audit.md`。
 
+- **2026-10-31 长实验名可使DataLoader挂起**：r39首次目录加上`run/runtime/tmp/pymp-XXXXXXXX/listener-XXXXXXXX`达109字节，
+  Python multiprocessing的`resource_sharer`报`OSError: AF_UNIX path too long`，主训练进程仍存活，不等于在更新。
+  该次没有已评分WAV或完整checkpoint；精确SIGINT驱动让原finally终止trainer，保留source/plan/日志。
+  同参数改用独立短目录`r39_drop0_20261031_v2`，最长预期socket路径95字节，启动前实做Linux Listener bind。
+  新长目录预检应计算临时socket路径并实测；不靠进程存在认定训练正常，也不往系统盘挪缓存。
+
 - **Gradio 流式**：按钮必须直接绑定生成器函数；用 `lambda` 包一层会把生成器对象本身渲染进文本框
 - **Gradio 下拉框**：`choices` 只在 `build_ui` 算一次。任何运行后变化的列表（已加工数据集/配置/LoRA/上传目录）必须通过事件输出或 `Tab.select` 刷新
 - **`.env` 加载顺序**：`paths.py` 必须**先** `load_dotenv()` **再**计算路径常量（`VOXFT_CKPT_ROOT`/`VOXFT_DATA_ROOT` 依赖此顺序）

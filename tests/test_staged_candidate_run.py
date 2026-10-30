@@ -61,6 +61,9 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     rank32 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32', train_rows=1881)
     assert rank32 == {**lower_lr, 'lora':{**lower_lr['lora'], 'r':32, 'alpha':32}}
     assert module.gate_steps(rank32, 'dit_original_lr5e5_rank32') == gates
+    drop0 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0', train_rows=1881)
+    assert drop0 == {**rank32, 'lora':{**rank32['lora'], 'dropout':0.}}
+    assert module.gate_steps(drop0, 'dit_original_lr5e5_rank32_drop0') == gates
 
 
 def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
@@ -108,6 +111,44 @@ def test_original_rank_control_binds_all_parent_inputs(module, tmp_path, monkeyp
         module.verify_original_config_control(work, after, variant)
 
 
+@pytest.mark.parametrize('changed_file', [
+    'train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'])
+def test_dropout_control_binds_all_parent_inputs(module, tmp_path, monkeypatch, changed_file):
+    parent, work = tmp_path / 'r38', tmp_path / 'r39'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R38', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path('configs/lora_joint3_r38_dit_original_lr5e5_rank32_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'lora':{**before['lora'], 'dropout':0.}, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank32_drop0'
+    module.verify_original_config_control(work, after, variant)
+    for change in ({'learning_rate':1e-4}, {'num_iters':459}, {'warmup_steps':45},
+                   {'lora':{**after['lora'], 'r':64}}, {'lora':{**after['lora'], 'enable_lm':True}},
+                   {'lora':{**after['lora'], 'dropout':.05}}):
+        with pytest.raises(ValueError, match='only DiT dropout'):
+            module.verify_original_config_control(work, {**after, **change}, variant)
+    (work / changed_file).write_text('changed bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match=changed_file):
+        module.verify_original_config_control(work, after, variant)
+
+
+@pytest.mark.parametrize('duration,ratio,numeric,expected', [
+    (10.88,.7901,False,True), (9.6,.7901,False,False),
+    (10.88,.854,False,False), (10.88,.7901,True,False)])
+def test_extreme_pair_guard_does_not_depend_on_mean_cer(module, duration, ratio, numeric, expected):
+    old = {'case_id':'th1844', 'seed':43, 'lang':'th', 'numeric':numeric,
+           'audio_sec':4.8, 'speech_ratio':.954, 'cer':0., 'f0_std_st':0., 'wer':None}
+    row = {**old, 'audio_sec':duration, 'speech_ratio':ratio, 'cer':.0253}
+    base = {module.prior.key(old):old}
+    assert 'paired_extreme_acoustic' not in module.acoustic_gate([row], base)
+    result = module.acoustic_gate([row], base, paired_extremes=True)
+    assert bool(result.get('paired_extreme_acoustic')) == expected
+
+
 def test_original_control_only_reverses_frozen_paths_and_preserves_order(module):
     first = {'audio':'raw_a','ref_audio':'raw_b','text':'same','origin_audio':'origin_a',
              'ref_origin_audio':'origin_b','speaker':'person_a','source_id':'source','duration':5}
@@ -146,13 +187,15 @@ def test_paired_risks_use_all_seeds_once_before_old_guards(module):
 
 @pytest.mark.parametrize('failure,expected,count', [
     ('small_cer',None,5), ('tail','stage_acoustic_regression',5),
+    ('extreme','stage_acoustic_regression',5),
     ('overread','new_suspected_overread',1), ('large_cer','two_large_paired_cer_regressions',2)])
 def test_new_pilot_observes_cer_but_stops_content_and_acoustic_failures(
         module, tmp_path, monkeypatch, failure, expected, count):
     directory = tmp_path / 'gate_39'
     directory.mkdir()
     module.save(tmp_path / 'plan.json', {'gates':[39,79,118], 'asr_path':'asr',
-        'speaker_model_path':'speaker', 'base_path':'base', 'pilot_mean_cer_observe_only':True})
+        'speaker_model_path':'speaker', 'base_path':'base', 'pilot_mean_cer_observe_only':True,
+        'paired_extreme_acoustics':failure == 'extreme'})
     module.save(directory / 'checkpoint.json', {'target':'candidate', 'inputs_sha256':{}})
     case = {'case_id':'a', 'lang':'th', 'text':'text'}
     jobs = [{'case':case, 'seed':seed, 'stage':'new_risk'} for seed in range(42,47)]
@@ -176,6 +219,8 @@ def test_new_pilot_observes_cer_but_stops_content_and_acoustic_failures(
         if failure == 'tail': row['tail_silence_sec'] = 1.02
         if failure == 'overread': row['over_read'] = True
         if failure == 'large_cer': row['cer'] = .3
+        if failure == 'extreme' and seeds[0] == 43:
+            row.update(audio_sec=11., speech_ratio=.79, cer=.08)
         wav = directory / f'{seeds[0]}.wav'
         wav.write_bytes(b'preserved failed or successful output')
         row['wav'] = str(wav)
