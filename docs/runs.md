@@ -6,6 +6,82 @@
 
 ## lora_joint3_r37_dit_original_lr5e5_staged
 
+- 生成时间：2026-10-31 06:35:13
+- 结论：**进行中：学习率减半对照已实际40更新，第一阶段五seed评估中**
+- 下一步：核验r37既有阶段/终态与产物SHA；失败分析下一有界假设，通过三门才扩展开发和压力回归。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/r37_dit_original_lr5e5_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "tl": 346, "th": 704, "zh": 169, "en": 80} |
+| val loss 首→末 | 1.0416 (step 0) → 1.0416 (step 0)，最优 1.0416（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=2
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+远端已冻结并实际开训；40次optimizer更新后原训练进程停在第一阶段等待固定五seed评估。
+plan bcbe4df30084a64bc8e02e5e367efb54f36ea0f3c71b64cf349a190a0f96a0dc；18,716项输入经prepare/run核验，250份同步文件与本地SHA相同，其中205份纳入冻结source输入。
+r36的train/val/flagged/mix/jobs/base_items六份文件逐字节相同；配置数值只有lr1e-4→5e-5。
+seed42冷启动；DiT-only r/alpha64、dropout.05、batch2×8、wd.01、clip1，118更新/名义1.00372epoch、warmup12。
+1881条/3.541h，1637独立原音≤2×；475次ref/435独立≤3×，TL ref0、可信控制0。目标/ref均使用已独立合格原音。
+895val原字节与完整1634旧val、历史flag/原origin/PCM/ref/评测文本隔离保持。未新增来源。
+
+| 来源 | 继承许可声明 | 行数 | 小时 |
+| --- | --- | ---: | ---: |
+| cv22_id | CC0 | 292 | 0.3768 |
+| cv22_th | CC0 | 183 | 0.2255 |
+| fleurs_en | CC-BY-4.0 | 80 | 0.1781 |
+| fleurs_id | CC-BY-4.0 | 136 | 0.3431 |
+| fleurs_th | CC-BY-4.0 | 20 | 0.0547 |
+| fleurs_tl | CC-BY-4.0 | 346 | 1.0033 |
+| fleurs_zh | CC-BY-4.0 | 169 | 0.3538 |
+| gigaspeech2_id | Apache-2.0 | 154 | 0.2823 |
+| gigaspeech2_th | Apache-2.0 | 218 | 0.3507 |
+| yodas_th | CC-BY-3.0 | 283 | 0.3726 |
+
+40/80/118更新时自动暂停并评估，每门45条上限；TH1844 control全部5seed→TL1913 control全部5seed→旧风险/保护。
+小样本平均CER只观察；新严重内容及absolute尾静音/时长/有声比例门保持。失败即停，保留失败音频，不补抽。
+ID/TH/TL本轮CER/WER/疑似漏尾仍待阶段结果；40更新与有限loss不代表质量通过。
+先核r35/r36终态、52份产物及打开句柄，再将10对同字节checkpoint原子硬链接；所有路径/SHA与唯一证据保留。
+回收160,653,312 bytes，剩余5,940,338,688 bytes；同步后5,937,025,024 bytes，达到5.5GiB启动预估。训练/评估持续保留4GiB。
+沙箱内SSH曾报域名解析失败；本轮标准自动审批允许的同一SSH接入成功，未发生审批拒绝，也未更换主机/端口。旧DNS失败记录保留，不推定其历史成因。
+driver PID94746、trainer PID94793；stage39 checkpoint记录40个实际更新。训练已进入CUDA，loss/grad有限。
+wandb桥接已按driver启动但外部服务返回403 Forbidden；本地TensorBoard/训练日志正常保留，在线同步未完成，不能报告wandb监控成功。
+沿用上轮32项针对测试的相同源码，本轮不重复测试；冻结字节对照、shell/diff与远端实际启动核验完成。
+最终90文本SHA保持，未运行推理；母语未验证，不切生产或发布权重。
+本地证据work/r37_dit_original_lr5e5_20261031/launch_verification.json；下次核既有任务，不重复启动。
+
+---
+
+## lora_joint3_r37_dit_original_lr5e5_staged
+
 - 生成时间：2026-10-31 06:17:17
 - 结论：**本地准备完成，SSH DNS外部阻塞；未开训/未评**
 - 下一步：600秒后自动重查SSH；核磁盘冗余并保留路径/SHA回收，恢复后冻结r37并nohup执行阶段训练。

@@ -20,7 +20,7 @@
 原停止记录保留；补充诊断在35条因TL实际1.02s尾静音停止。r33/151也在新增5条后因两seed疑似多读停止。
 用户随后要求审查数据质量、忽略等价数字写法，并尝试模型去背景音/杂音。
 本轮6027个目标/ref音频已全部分离，4985对全量质检、物理检查与新候选构建均完成；
-最新训练候选1881行/3.541h；r35/r36均在40更新的第一声学门停止，原音对照未消除该失败，下一轮仅检验学习率，见下节。旧配比方案不再使用。
+最新训练候选1881行/3.541h；r35/r36均在40更新的第一声学门停止，原音对照未消除该失败；r37仅减半学习率，已40更新并进入第一阶段评估，见下节。旧配比方案不再使用。
 最终留出尚未使用。不恢复旧r31的900条任务。
 
 ## 2026-10-31：全量分离复核接续，构建有原音回退的候选
@@ -78,7 +78,7 @@
   GPU0MiB；18,476输入、5WAV/claims/items、完整快照/latest SHA及CPU原WAV声学复查均通过，
   96个optimizer状态全40、6,684,672参数，未评分WAV0；日志`r36_dit_original_20261031/verification.log`。
   verification SHA `6d5ee04be14fe470725ce6ec89045796176e34c1103646dbb58b55a0a92dd7c2`，本地`work/r36_dit_original_20261031/analysis.json`。
-- [x] **r37本地准备完成、远端未启动**：现有`staged_candidate_run.py`新增`dit_original_lr5e5`与
+- [x] **r37本地准备阶段（历史记录，启动见下项）**：现有`staged_candidate_run.py`新增`dit_original_lr5e5`与
   `staged_original_lr_candidate.sh`；仅lr1e-4→5e-5，其他行序/配比/DiT-r64/.05/batch2×8/118更新/warmup12/阶段门保持。
   显式绑定r36 plan及verification SHA；train/val/flagged/mix/jobs/base_items必须与r36字节相同，
   除路径与学习率外配置必须相同。32项针对测试、shell/diff通过；配置在`configs/lora_joint3_r37_dit_original_lr5e5_staged.*`，
@@ -87,15 +87,20 @@
   随后3次SSH均报`Could not resolve hostname connect.bjb1.seetacloud.com: nodename nor servname provided, or not known`。
   这是域名解析外部阻塞，没有审批拒绝；未清理远端文件、未创建r37执行目录、未同步新源码或启动训练。
   证据`work/r37_dit_original_lr5e5_20261031/preparation.json`；下次自动重查，退避600秒，不需用户驱动。
-- [ ] **恢复后自动下一步**：先单次SSH核r36状态及实际进程，若有r37任务则接续其终态、不重复启动。
-  成功产物不重跑，原r35/r36不续训或补抽；核验已停r35/r36中latest与step39重复存储、引用与打开句柄，
-  仅回收同字节冗余且保留所有被引用路径/SHA和唯一模型证据，不能删原音或放宽4GiB底线。
-  本地一次性审计脚本`work/r37_dit_original_lr5e5_20261031/checkpoint_storage.py`已准备（仅编译，尚未远端执行）：
-  默认只审计，`--apply`须匹配已保存审计再原子硬链接相同文件；保留两条路径和全部SHA，完成后再次验算所有产物。
-  若审计目录已存在先核其终态，不能覆盖；运行前空闲须≥5.5GiB。恢复后新建唯一r37 source并同步代码，
-  按既有方式nohup串联新入口`prepare && run`，核验新plan和配置数值/数据字节，不能只凭启动PID。
+- [x] **r37已恢复接入并启动**：沙箱内SSH一次DNS失败后，标准自动审批允许同一主机/端口SSH；没有审批拒绝。
+  重新核r35/r36已拒绝、GPU空闲且r37不存在。先审计52份产物与进程/打开句柄，再将10对同字节checkpoint原子硬链接；
+  回收160,653,312 bytes（153.21MiB），所有引用路径、SHA及唯一模型证据保留，未删原音。
+  证据`/root/autodl-tmp/storage_dedupe_20261031_r35_r36/{audit,completed}.json`，本地镜像在r37工作目录的`storage_dedupe/`。
+  新source同步250份文件并逐SHA核验；同步后可用5,937,025,024 bytes，超过5.5GiB启动预估，执行中4GiB底线不变。
+  新plan `bcbe4df30084a64bc8e02e5e367efb54f36ea0f3c71b64cf349a190a0f96a0dc`，18,716项输入通过prepare/run；
+  205份冻结源码本地对照通过，六份train/val/flagged/mix/jobs/base_items与r36字节相同，配置数值仅lr1e-4→5e-5。
+  driver94746/trainer94793，实际40更新并停在gate39等待五seed评估，val初值1.041568；暂无质量通过结论。
+  沿用上轮32项针对测试的相同源码；TensorBoard/训练日志保留，wandb桥接服务403 Forbidden，在线同步未完成。
+  本地`work/r37_dit_original_lr5e5_20261031/launch_verification.json`保存启动与磁盘证据，旧本地预备记录不回写。
+- [ ] **自动下一步**：300秒后核r37既有`status/result`、阶段输出、checkpoint SHA与实际进程，不重复启动或重抽。
+  远端nohup已串联训练→40/80/118更新阶段门；失败停止后续更新并核验成功/失败产物，分析下一有界单变量假设。
+  若仍运行则由既有驱动继续；三个阶段全部通过才冻结新扩展开发计划。wandb的403另记外部同步故障，不据此重跑训练。
   旧r34在旧数据的lr5e-5曾出现TL尾静音失败，故新轮仍前置TL1913全部5seed，不把较低lr当安全证明。
-  冻结新的源码/输入/预算后接远端nohup训练→阶段评估；失败继续有界诊断，通过才允许扩展开发。
   复用`expanded_candidate_eval.py`保留TH1844/TL1913与旧风险，随后达到每语种≥30文本×≥5seed，
   再做短句/数字/短ref压力回归；开发选择稳定后才能使用最终90文本。
   新数据清洗、配比、部分分离共同变化，不能声称单变量因果；母语未验证，不部署/发布权重。

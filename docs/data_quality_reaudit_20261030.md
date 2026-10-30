@@ -232,6 +232,14 @@ r37本地准备已完成：现有driver新增`dit_original_lr5e5`，绑定r36终
 后续3次因主机DNS解析失败退出。未执行checkpoint回收、未远端冻结r37/开训；本地候选配置明确标为预备态。
 自动退避600秒后重查SSH，恢复后先核磁盘与重复checkpoint的SHA/打开句柄，保留路径和唯一证据再启动。
 
+接续已完成：标准自动审批允许的同一SSH连接成功，r35/r36终态与52份产物SHA、进程/打开句柄检查通过。
+10对同字节checkpoint原子硬链接回收160,653,312 bytes，所有路径/SHA保留，未删原音或唯一模型证据。
+r37新source同步250份文件并核SHA；冻结plan `bcbe4df30084a64bc8e02e5e367efb54f36ea0f3c71b64cf349a190a0f96a0dc`，
+18,716项输入验证完成，六份数据/基线/任务文件与r36字节一致，配置数值仅lr1e-4→5e-5。
+已实际40更新并进入第一阶段五seed评估；118更新/warmup12及40/80/118阶段门由远端nohup驱动，失败即停。
+wandb桥接服务403，在线同步未完成；TensorBoard/训练日志保留，不能当作监控成功或训练失败。
+本地`work/r37_dit_original_lr5e5_20261031/launch_verification.json`及`storage_dedupe/`保存证据；最终留出未用，母语未验证。
+
 ## 执行卫生
 
 所有长任务独立source/plan、nohup日志、原结果不覆盖；本地只镜像元数据，不下载数据集音频或模型。
