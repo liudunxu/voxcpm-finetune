@@ -51,6 +51,26 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     with pytest.raises(ValueError, match='1881'):
         module.candidate_config(parent, tmp_path, 'dit_paired', train_rows=5015)
     assert module.gate_steps(parent, 'dit_only') == (150, 300, 459)
+    original = module.candidate_config(parent, tmp_path, 'dit_original', train_rows=1881)
+    assert original == cfg
+    assert module.gate_steps(original, 'dit_original') == gates
+
+
+def test_original_control_only_reverses_frozen_paths_and_preserves_order(module):
+    first = {'audio':'raw_a','ref_audio':'raw_b','text':'same','origin_audio':'origin_a',
+             'ref_origin_audio':'origin_b','speaker':'person_a','source_id':'source','duration':5}
+    second = {'audio':'raw_c','text':'second','origin_audio':'origin_c','source_id':'source','duration':4}
+    mapping = {'raw_a':{'selected':'vocal_a'}, 'raw_b':{'selected':'vocal_b'}, 'raw_c':{'selected':'raw_c'}}
+    derived = {**first, 'audio':'vocal_a','ref_audio':'vocal_b'}
+    rows = [derived,second,derived]
+    assert module.original_control_rows(rows,mapping,[first,second]) == [first,second,first]
+    assert rows[0] == derived
+    with pytest.raises(ValueError,match='metadata'):
+        module.original_control_rows([{**derived,'text':'changed'}],mapping,[first,second])
+    with pytest.raises(ValueError,match='pairing'):
+        module.original_control_rows([{**derived,'ref_audio':'raw_c'}],mapping,[first,second])
+    with pytest.raises(KeyError):
+        module.original_control_rows([{**derived,'audio':'unknown'}],mapping,[first,second])
 
 
 def test_paired_risks_use_all_seeds_once_before_old_guards(module):

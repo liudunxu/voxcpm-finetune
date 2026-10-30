@@ -23,6 +23,9 @@ R33_DEVELOPMENT_SHA = '12e21245f775913548f262519df6da818a8a4eb2ceb2ce79985c92b3e
 PAIRED = Path('/root/autodl-tmp/quality_reaudit_20261030/paired_candidate_20261031_v2')
 PAIRED_SHA = '60789ed48d2c4c4c4cec3126c3f7c787b1fb75dc52d186fe7b82e434f2781a82'
 PAIRED_COMPLETION_SHA = 'ed647b04198e11da6ee2a7ce1ea1aac8d3c49a7672dad58b2d1d3d6199f56b28'
+PAIRED_VARIANTS = ('dit_paired', 'dit_original')
+R35 = Path('/root/autodl-tmp/r35_dit_paired_20261031/run')
+R35_SHA = 'c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b'
 
 
 def acoustic_gate(rows, baseline):
@@ -62,6 +65,12 @@ VARIANTS = {
                                 'one nominal epoch with r33 DiT-only optimizer settings. Cleaning, mixing '
                                 'and partial separation change together; no single-factor causal claim.'},
 }
+VARIANTS['dit_original'] = {**VARIANTS['dit_paired'],
+    'run_name':'lora_joint3_r36_dit_original_staged',
+    'hypothesis':'Relative to r35, replace admitted separated target/ref bytes with their independently '
+                 'screened originals. Keep exact row order/repetition, text, identity, mixing, optimizer '
+                 'and 118-update schedule. Test separation sensitivity after early duration/speech-ratio '
+                 'failure; one training seed cannot establish general causality.'}
 
 
 def candidate_config(parent, work, variant, *, train_rows=None):
@@ -74,7 +83,7 @@ def candidate_config(parent, work, variant, *, train_rows=None):
             'train_manifest': str(work / 'train.jsonl'), 'val_manifest': str(work / 'val.jsonl'),
             'save_path': str(work / 'checkpoint'), 'tensorboard': str(work / 'checkpoint/logs'),
             'save_interval': 150}
-    if variant == 'dit_paired':
+    if variant in PAIRED_VARIANTS:
         if train_rows != 1881:
             raise ValueError('Expected the frozen 1881-row paired candidate')
         updates = math.ceil(train_rows / (parent['batch_size'] * parent['grad_accum_steps']))
@@ -84,7 +93,7 @@ def candidate_config(parent, work, variant, *, train_rows=None):
 
 
 def gate_steps(cfg, variant):
-    if variant != 'dit_paired':
+    if variant not in PAIRED_VARIANTS:
         return GATES
     block = math.ceil(cfg['num_iters'] / 3)
     return (block - 1, 2 * block - 1, cfg['num_iters'])
@@ -126,6 +135,19 @@ def paired_inputs():
     if frozen.sha256(PAIRED / 'val.jsonl') != frozen.sha256(prior.SOURCE / 'val.jsonl'):
         raise ValueError('Original validation changed')
     return inputs, mix
+
+
+def original_control_rows(rows, mapping, original_pool):
+    """Same admitted rows and order, only reverse the recorded target/ref byte choice."""
+    selected = {value['selected']:raw for raw, value in mapping.items()}
+    originals = {r['audio']:r for r in original_pool}
+    result = []
+    for row in rows:
+        restored = {**row, **{field:selected[row[field]] for field in ('audio', 'ref_audio') if row.get(field)}}
+        if restored != originals[restored['audio']]:
+            raise ValueError('Original control changed metadata or admitted reference pairing')
+        result.append(restored)
+    return result
 
 
 def add_failure_canary(jobs, base_items, cases, baseline):
@@ -173,13 +195,24 @@ def prepare(work, variant='rank32'):
     inputs = {**parent['inputs_sha256'], **pilot['inputs_sha256']}
     jobs, base_items = read(PILOT / 'jobs.json'), read(PILOT / 'base_items.json')
     data_source, mix = prior.SOURCE, None
-    if variant == 'dit_paired':
+    if variant in PAIRED_VARIANTS:
         candidate_inputs, mix = paired_inputs()
         if any(path in inputs and inputs[path] != digest for path, digest in candidate_inputs.items()):
             raise ValueError('Candidate provenance SHA conflict')
         inputs.update(candidate_inputs)
         data_source = PAIRED
-    if variant in ('dit_lr5e5', 'dit_paired'):
+        if variant == 'dit_original':
+            prior.review.checked(R35 / 'plan.json', R35_SHA)
+            verification = read(R35 / 'verification.json')
+            if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R35_SHA
+                    or verification['optimizer_step_counts'] != {'40':96}
+                    or verification['completed_outputs'] != 5 or verification['unscored_wavs'] != 0
+                    or verification['reason'] != 'stage_acoustic_regression'):
+                raise ValueError('Expected verified five-output r35 acoustic failure')
+            inputs.update(verification['outputs_sha256'])
+            inputs[str(R35 / 'plan.json')] = R35_SHA
+            inputs[str(R35 / 'verification.json')] = frozen.sha256(R35 / 'verification.json')
+    if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
         prior.strength.check_inputs(R33_DEVELOPMENT)
         result = read(R33_DEVELOPMENT / 'result.json')
@@ -197,7 +230,7 @@ def prepare(work, variant='rank32'):
             frozen._read_manifest(prior.SOURCE / 'cases.jsonl'), baseline['items'])
         for row in base_items:
             inputs[row['wav']] = baseline['wav_sha256'][row['wav']]
-        if variant == 'dit_paired':
+        if variant in PAIRED_VARIANTS:
             jobs = prioritize_tail_risk(jobs)
     reserved = frozen.ROOT / 'eval_cases/reserved_final_20261030.jsonl'
     digest = 'cc7da8b05f6e78c92b5a7789e9cc95b0eadfb5047caf3287f3acf47b6b55fd0c'
@@ -218,8 +251,16 @@ def prepare(work, variant='rank32'):
     work.mkdir()
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json'):
         shutil.copyfile(data_source / name, work / name)
+    if variant == 'dit_original':
+        from voxft.data.pipeline import _write_jsonl
+        original_rows = original_control_rows(frozen._read_manifest(work / 'train.jsonl'),
+            read(PAIRED / 'audio_mapping.json'), frozen._read_manifest(PAIRED / 'original_pool.jsonl'))
+        _write_jsonl(original_rows, work / 'train.jsonl')
+        mix = {**mix, 'training_audio_view':'screened_original_only',
+               'parent_mix_sha256':frozen.sha256(PAIRED / 'mix.json'),
+               'selected_versions':{'original':mix['eligible_pool']['rows']}}
     if mix is not None:
-        shutil.copyfile(data_source / 'mix.json', work / 'mix.json')
+        save(work / 'mix.json', mix)
     save(work / 'jobs.json', jobs)
     save(work / 'base_items.json', base_items)
     cfg = candidate_config(yaml.safe_load((prior.SOURCE / 'train.yaml').read_text(encoding='utf-8')), work,
@@ -243,7 +284,7 @@ def prepare(work, variant='rank32'):
     inputs[str(prior.SOURCE / 'plan.json')] = prior.SOURCE_PLAN_SHA
     inputs[str(PILOT / 'plan.json')] = PILOT_SHA
     early_rejection = list(pilot['early_rejection'])
-    if variant == 'dit_paired':
+    if variant in PAIRED_VARIANTS:
         early_rejection.remove('stage-end any language mean CER delta>.01')
         early_rejection.append('small-pilot mean CER is observation only; severe per-output checks stay active')
     data = {'sources':mix['sources'], 'language_shares':mix['language_shares']} if mix else {}
@@ -256,7 +297,7 @@ def prepare(work, variant='rank32'):
         'training_authorized': True, 'authorization': 'User continuous iteration and hyperparameter optimization',
         'gates': list(gates), 'gate_optimizer_updates': updates,
         'pilot_outputs_per_gate_max': len(jobs), 'new_outputs_max': len(gates) * len(jobs),
-        'pilot_mean_cer_observe_only':variant == 'dit_paired',
+        'pilot_mean_cer_observe_only':variant in PAIRED_VARIANTS,
         'early_rejection': [*early_rejection, 'stage-end existing absolute-tail/duration/speech-ratio gates'],
         'tail_policy':'absolute', 'production_changed': False,
         'hypothesis': settings['hypothesis'],

@@ -1,0 +1,23 @@
+{
+  "gpus": 1,
+  "effective_batch": 16,
+  "epochs": 1.0037214247740565,
+  "train_samples": 1881,
+  "langs": {
+    "id": 582,
+    "tl": 346,
+    "th": 704,
+    "zh": 169,
+    "en": 80
+  },
+  "remote_plan": "/root/autodl-tmp/r36_dit_original_20261031/run/plan.json",
+  "remote_plan_sha256": "d63c55bd5d982b8c509903405fdcf5edcbf9a4c1c5e4c5772ad7729bccbf48be",
+  "train_sha256": "ff279bf931ed5b4d969e1b621dcc4b0bbec8bb7a9fb77f8b6904165141b90aa9",
+  "gates": {
+    "39": 40,
+    "79": 80,
+    "118": 118
+  },
+  "parent_r35_plan_sha256": "c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b",
+  "original_control_same_rows_and_order": true
+}
