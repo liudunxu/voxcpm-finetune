@@ -58,6 +58,9 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     assert {k for k in original if original[k] != lower_lr[k]} == {'learning_rate'}
     assert lower_lr['learning_rate'] == 5e-5
     assert module.gate_steps(lower_lr, 'dit_original_lr5e5') == gates
+    rank32 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32', train_rows=1881)
+    assert rank32 == {**lower_lr, 'lora':{**lower_lr['lora'], 'r':32, 'alpha':32}}
+    assert module.gate_steps(rank32, 'dit_original_lr5e5_rank32') == gates
 
 
 def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
@@ -71,14 +74,38 @@ def test_original_lr_control_binds_parent_data_and_single_config_change(module, 
     before = {'learning_rate':1e-4, 'num_iters':118, 'warmup_steps':12, 'save_path':str(parent)}
     (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
     after = {**before, 'learning_rate':5e-5, 'save_path':str(work)}
-    module.verify_original_lr_control(work, after)
+    module.verify_original_config_control(work, after, 'dit_original_lr5e5')
     with pytest.raises(ValueError, match='only learning rate'):
-        module.verify_original_lr_control(work, {**after, 'num_iters':459})
+        module.verify_original_config_control(work, {**after, 'num_iters':459}, 'dit_original_lr5e5')
     with pytest.raises(ValueError, match='only learning rate'):
-        module.verify_original_lr_control(work, {**after, 'learning_rate':1e-4})
+        module.verify_original_config_control(work, {**after, 'learning_rate':1e-4}, 'dit_original_lr5e5')
     (work / 'train.jsonl').write_text('changed row order or bytes', encoding='utf-8')
     with pytest.raises(ValueError, match='train.jsonl'):
-        module.verify_original_lr_control(work, after)
+        module.verify_original_config_control(work, after, 'dit_original_lr5e5')
+
+
+@pytest.mark.parametrize('changed_file', [
+    'train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'])
+def test_original_rank_control_binds_all_parent_inputs(module, tmp_path, monkeypatch, changed_file):
+    parent, work = tmp_path / 'r37', tmp_path / 'r38'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R37', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path('configs/lora_joint3_r37_dit_original_lr5e5_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'lora':{**before['lora'], 'r':32, 'alpha':32}, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank32'
+    module.verify_original_config_control(work, after, variant)
+    for change in ({'learning_rate':1e-4}, {'num_iters':459}, {'warmup_steps':45},
+                   {'lora':{**after['lora'], 'alpha':64}}, {'lora':{**after['lora'], 'enable_lm':True}}):
+        with pytest.raises(ValueError, match='only DiT rank/alpha'):
+            module.verify_original_config_control(work, {**after, **change}, variant)
+    (work / changed_file).write_text('changed bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match=changed_file):
+        module.verify_original_config_control(work, after, variant)
 
 
 def test_original_control_only_reverses_frozen_paths_and_preserves_order(module):

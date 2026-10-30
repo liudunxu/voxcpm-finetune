@@ -4,6 +4,79 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+
+## lora_joint3_r38_dit_original_lr5e5_rank32_staged
+
+- 生成时间：2026-10-31 06:52:30
+- 结论：**进行中：rank32对照已实际40更新，第一阶段五seed评估中**
+- 下一步：核对既有r38 plan/status/result及SHA，不重复启动；失败保留结果并分析下一有界假设，三门通过才扩展开发。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 32/32/0.05 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/r38_dit_original_lr5e5_rank32_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "tl": 346, "th": 704, "zh": 169, "en": 80} |
+| val loss 首→末 | 1.0294 (step 0) → 1.0294 (step 0)，最优 1.0294（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=2
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+现有staged_candidate_run.py新增dit_original_lr5e5_rank32，入口staged_original_rank_candidate.sh。
+只改变r37的DiT rank/alpha64→32，alpha/r仍1；原音、1881行顺序、身份/ref、配比、lr5e-5、seed42、118更新/warmup12全部保持。
+38项针对测试、shell/compile/diff和251份远端冻结源码SHA通过，r37终态26份输出SHA再次核验。
+远端nohup driver PID98271、trainer PID98329，已实际40更新并停在gate39等待五seed评估；ID/TH/TL本轮CER/WER/疑似漏尾尚无完整组结果。
+plan 7cc5dde336ae8d5642c27e3309d142ced42d37e79a15c6dd3939b676458fdd17；18,957份输入经prepare/run核验，206份冻结source与本地SHA一致。
+六份数据/任务/基线文件与r37字节相同；配置数值仅rank/alpha64→32。val loss记录[(0, 1.029398)]，随机子集不作晋级证据。
+每门45条上限，TH1844 control全部5seed→TL1913 control全部5seed→旧风险/保护；严重内容和absolute声学失败立即判退，小样本CER只观察。
+3,342,336参数，四份快照预算164,626,432 bytes、评估/运行时/元数据余量768MiB；启动门5GiB、同步后5,677,703,168 bytes可用，保留4GiB，无需删除/硬链接。
+1881条/3.541h、1637独立原音≤2×；ref475次/435独立≤3×，TL ref0、可信控制0。895val/完整1634旧val和历史origin/PCM/ref/评测文本隔离保持。
+
+| 来源 | 继承许可声明 | 行数 | 小时 |
+| --- | --- | ---: | ---: |
+| cv22_id | CC0 | 292 | 0.3768 |
+| cv22_th | CC0 | 183 | 0.2255 |
+| fleurs_en | CC-BY-4.0 | 80 | 0.1781 |
+| fleurs_id | CC-BY-4.0 | 136 | 0.3431 |
+| fleurs_th | CC-BY-4.0 | 20 | 0.0547 |
+| fleurs_tl | CC-BY-4.0 | 346 | 1.0033 |
+| fleurs_zh | CC-BY-4.0 | 169 | 0.3538 |
+| gigaspeech2_id | Apache-2.0 | 154 | 0.2823 |
+| gigaspeech2_th | Apache-2.0 | 218 | 0.3507 |
+| yodas_th | CC-BY-3.0 | 283 | 0.3726 |
+
+rank变化改变初始化RNG消费，不据谱能量认证低rank可保质量；旧r32数据/LM/lr不同。
+本轮SSH短暂DNS失败经标准自动审批恢复；预检尚未生成run目录时一次元数据rsync返回23，无远端改变。
+最终90文本未用，母语未验证，不部署/上传权重；wandb本轮也返回403、在线同步未完成，TensorBoard/日志保留，不因此重训。
+本地work/r38_dit_original_lr5e5_rank32_20261031/launch_verification.json，plan与启动状态已核验；后续核既有阶段/终态，不重复开任务。
+
+---
+
 ## lora_joint3_r37_dit_original_lr5e5_staged
 
 - 生成时间：2026-10-31 06:41:06

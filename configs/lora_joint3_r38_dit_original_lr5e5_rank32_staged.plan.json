@@ -1,0 +1,39 @@
+{
+  "remote_prepared": true,
+  "training_started": true,
+  "driver_started": true,
+  "gpus": 1,
+  "effective_batch": 16,
+  "epochs": 1.0037214247740565,
+  "train_samples": 1881,
+  "langs": {
+    "id": 582,
+    "tl": 346,
+    "th": 704,
+    "zh": 169,
+    "en": 80
+  },
+  "parent_r37_plan_sha256": "bcbe4df30084a64bc8e02e5e367efb54f36ea0f3c71b64cf349a190a0f96a0dc",
+  "parent_r37_verification_sha256": "e9a8ab4c5d47180800400f26732f59de835f32b365df37e43cbd49ac16469439",
+  "train_sha256_expected": "ff279bf931ed5b4d969e1b621dcc4b0bbec8bb7a9fb77f8b6904165141b90aa9",
+  "config_sha256": "99f744ee88157909ef41aab23ea71af3d9f778fb02dbbbc66f9773020d98ea89",
+  "gates": {
+    "39": 40,
+    "79": 80,
+    "118": 118
+  },
+  "only_numeric_change": {
+    "lora.r": [
+      64,
+      32
+    ],
+    "lora.alpha": [
+      64,
+      32
+    ]
+  },
+  "remote_plan": "/root/autodl-tmp/r38_dit_original_lr5e5_rank32_20261031/run/plan.json",
+  "remote_plan_sha256": "7cc5dde336ae8d5642c27e3309d142ced42d37e79a15c6dd3939b676458fdd17",
+  "train_sha256": "ff279bf931ed5b4d969e1b621dcc4b0bbec8bb7a9fb77f8b6904165141b90aa9",
+  "observed_optimizer_updates": 40
+}

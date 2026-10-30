@@ -20,7 +20,7 @@
 原停止记录保留；补充诊断在35条因TL实际1.02s尾静音停止。r33/151也在新增5条后因两seed疑似多读停止。
 用户随后要求审查数据质量、忽略等价数字写法，并尝试模型去背景音/杂音。
 本轮6027个目标/ref音频已全部分离，4985对全量质检、物理检查与新候选构建均完成；
-最新训练候选1881行/3.541h；r35/r36/r37均在40更新的第一声学门停止，原音对照与学习率减半均未消除失败。r37终态已核验，下一r38固定其他条件只检验DiT rank/alpha32，见下节。旧配比方案不再使用。
+最新训练候选1881行/3.541h；r35/r36/r37均在40更新的第一声学门停止，原音对照与学习率减半均未消除失败。r37终态已核验，r38仅DiT rank/alpha32的代码/测试已完成，远端nohup驱动已启动，见下节。旧配比方案不再使用。
 最终留出尚未使用。不恢复旧r31的900条任务。
 
 ## 2026-10-31：全量分离复核接续，构建有原音回退的候选
@@ -106,11 +106,20 @@
   CPU复用`spectrum()`核三个停止快照各48个DiT模块：r36→r37更新Frobenius中位.081656→.043473（比值.5324），
   r37 rank95中位26.5、前32方向能量中位96.69%；幅度下降没有消除失败，不继续机械降lr。
   容量审计SHA `c9af5abb6a8b1923c6f56d3fb98f13bf2a187a21ea71e601b7631b93e43abba1`；无新音频或重评分，ID/TL未评，不认证三语种质量。
-- [ ] **自动下一步r38**：假设已冻结在r37工作目录`next_hypothesis.json`，代码/配置未实现、远端未开训。
+- [x] **r38已实现并启动后台驱动**：沿用r37工作目录`next_hypothesis.json`冻结假设；
+  根`/root/autodl-tmp/r38_dit_original_lr5e5_rank32_20261031/`，日志`driver.log`，driver PID98271。
   固定同1881原音行序/配比/身份/ref/基线/jobs、lr5e-5、seed42、118更新/warmup12，只将DiT rank/alpha64→32、alpha/r保持1。
-  复用`staged_candidate_run.py`，先绑定r37 plan/verification和六份数据/任务字节、补针对守卫测试，再新建source/plan并nohup串联训练与阶段门。
+  复用`staged_candidate_run.py`与新入口`staged_original_rank_candidate.sh`，绑定r37 plan/verification及六份数据/任务字节；
+  38项针对测试、shell/compile/diff与251份远端源码SHA全部通过；nohup已串联完整输入预检→新plan→冷启动→阶段门。
+  plan `7cc5dde336ae8d5642c27e3309d142ced42d37e79a15c6dd3939b676458fdd17`；18,957项输入经prepare/run核验，
+  206份冻结源码与本地SHA一致；六份数据/基线/任务文件与r37字节相同，配置数值仅rank/alpha64→32。
+  trainer PID98329已实际40更新并暂停于gate39五seed评估；val初值1.029398，尚无分语种通过结论。
+  r37真实终态、26份输出SHA和空闲GPU已复核；不重跑旧结果。输入预检中尚未生成run目录时，元数据同步一次返回目录不存在，未影响远端执行。
   rank改变会改变初始化RNG消耗，谱能量不证明低rank重训质量；旧r32是LM+DiT/旧数据/lr1e-4，不能据其失败否定此对照。
-  起步先核r37真实进程/GPU与输入输出SHA；按3,342,336参数重新算快照空间、保留4GiB，必要时仅核验后硬链接已停任务同字节冗余。
+  3,342,336参数按FP32权重/Adam两moment保守计算：三阶段加latest四份共164,626,432 bytes预算（含序列化余量），
+  另留768MiB给评估/运行时/元数据；启动门5GiB，实际同步后5,677,703,168 bytes，执行中4GiB底线不变，无需删除/硬链接。
+  本地证据`work/r38_dit_original_lr5e5_rank32_20261031/launch_verification.json`；本轮SSH间歇DNS失败后标准自动审批接入成功，无审批拒绝。
+- [ ] **自动下一步：核验既有r38阶段结果/终态**，不要重新启动同目录；按真实status/result/optimizer、完整快照及WAV/items/claims SHA判断。
   r35/r36/r37均不续训或补抽；新轮失败继续有界诊断，三个阶段全部通过才冻结新扩展开发计划。wandb的403另记外部同步故障，不据此重跑训练。
   旧r34在旧数据的lr5e-5曾出现TL尾静音失败，故新轮仍前置TL1913全部5seed，不把较低lr当安全证明。
   复用`expanded_candidate_eval.py`保留TH1844/TL1913与旧风险，随后达到每语种≥30文本×≥5seed，

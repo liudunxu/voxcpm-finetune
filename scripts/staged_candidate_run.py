@@ -23,13 +23,16 @@ R33_DEVELOPMENT_SHA = '12e21245f775913548f262519df6da818a8a4eb2ceb2ce79985c92b3e
 PAIRED = Path('/root/autodl-tmp/quality_reaudit_20261030/paired_candidate_20261031_v2')
 PAIRED_SHA = '60789ed48d2c4c4c4cec3126c3f7c787b1fb75dc52d186fe7b82e434f2781a82'
 PAIRED_COMPLETION_SHA = 'ed647b04198e11da6ee2a7ce1ea1aac8d3c49a7672dad58b2d1d3d6199f56b28'
-ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5')
+ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5', 'dit_original_lr5e5_rank32')
 PAIRED_VARIANTS = ('dit_paired', *ORIGINAL_VARIANTS)
 R35 = Path('/root/autodl-tmp/r35_dit_paired_20261031/run')
 R35_SHA = 'c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b'
 R36 = Path('/root/autodl-tmp/r36_dit_original_20261031/run')
 R36_SHA = 'd63c55bd5d982b8c509903405fdcf5edcbf9a4c1c5e4c5772ad7729bccbf48be'
 R36_VERIFICATION_SHA = '6d5ee04be14fe470725ce6ec89045796176e34c1103646dbb58b55a0a92dd7c2'
+R37 = Path('/root/autodl-tmp/r37_dit_original_lr5e5_20261031/run')
+R37_SHA = 'bcbe4df30084a64bc8e02e5e367efb54f36ea0f3c71b64cf349a190a0f96a0dc'
+R37_VERIFICATION_SHA = 'e9a8ab4c5d47180800400f26732f59de835f32b365df37e43cbd49ac16469439'
 
 
 def acoustic_gate(rows, baseline):
@@ -81,6 +84,13 @@ VARIANTS['dit_original_lr5e5'] = {**VARIANTS['dit_original'], 'learning_rate':5e
                  '1881 rows, DiT-only rank64 and 118-update schedule. Test smaller adaptation after '
                  'both original/derived views failed the TH acoustic gate. Old-data r34 had a TL '
                  'tail failure at this learning rate; retain all five TL1913 seeds and all gates.'}
+VARIANTS['dit_original_lr5e5_rank32'] = {**VARIANTS['dit_original_lr5e5'],
+    'changes':{'enable_lm':False, 'r':32, 'alpha':32}, 'free_gib':5.,
+    'run_name':'lora_joint3_r38_dit_original_lr5e5_rank32_staged',
+    'hypothesis':'Relative to r37, only reduce DiT rank/alpha64 to32, keeping alpha/r=1, identical '
+                 'screened original rows, lr5e-5 and 118-update schedule. The smaller update magnitude '
+                 'in r37 did not remove acoustic failure; test capacity, not another LR reduction. '
+                 'Concentrated update spectrum does not prove retrained low-rank quality.'}
 
 
 def candidate_config(parent, work, variant, *, train_rows=None):
@@ -160,16 +170,23 @@ def original_control_rows(rows, mapping, original_pool):
     return result
 
 
-def verify_original_lr_control(work, cfg):
-    """Bind the LR intervention to actual r36 bytes and settings, not just its recipe."""
+def verify_original_config_control(work, cfg, variant):
+    """Bind the intervention to actual parent bytes/settings, not just its recipe."""
+    if variant not in ('dit_original_lr5e5', 'dit_original_lr5e5_rank32'):
+        raise ValueError('Undeclared original-audio control')
+    parent_work = R37 if variant == 'dit_original_lr5e5_rank32' else R36
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
-        if frozen.sha256(work / name) != frozen.sha256(R36 / name):
-            raise ValueError(f'Original LR control changed {name}')
-    parent = yaml.safe_load((R36 / 'train.yaml').read_text(encoding='utf-8'))
+        if frozen.sha256(work / name) != frozen.sha256(parent_work / name):
+            raise ValueError(f'Original control changed {name}')
+    parent = yaml.safe_load((parent_work / 'train.yaml').read_text(encoding='utf-8'))
     paths = {'train_manifest', 'val_manifest', 'save_path', 'tensorboard'}
     changed = {key for key in set(parent) | set(cfg)
                if key not in paths and parent.get(key) != cfg.get(key)}
-    if changed != {'learning_rate'} or parent['learning_rate'] != 1e-4 or cfg['learning_rate'] != 5e-5:
+    if variant == 'dit_original_lr5e5_rank32':
+        if (changed != {'lora'} or parent['lora']['r'] != 64 or parent['lora']['alpha'] != 64
+                or cfg['lora'] != {**parent['lora'], 'r':32, 'alpha':32}):
+            raise ValueError('Expected only DiT rank/alpha 64 to32 relative to r37')
+    elif changed != {'learning_rate'} or parent['learning_rate'] != 1e-4 or cfg['learning_rate'] != 5e-5:
         raise ValueError('Expected only learning rate 1e-4 to 5e-5 relative to r36')
 
 
@@ -235,19 +252,24 @@ def prepare(work, variant='rank32'):
             inputs.update(verification['outputs_sha256'])
             inputs[str(R35 / 'plan.json')] = R35_SHA
             inputs[str(R35 / 'verification.json')] = frozen.sha256(R35 / 'verification.json')
-            if variant == 'dit_original_lr5e5':
-                prior.review.checked(R36 / 'plan.json', R36_SHA)
-                prior.review.checked(R36 / 'verification.json', R36_VERIFICATION_SHA)
-                verification = read(R36 / 'verification.json')
-                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R36_SHA
+            control_parents = []
+            if variant in ('dit_original_lr5e5', 'dit_original_lr5e5_rank32'):
+                control_parents.append((R36, R36_SHA, R36_VERIFICATION_SHA))
+            if variant == 'dit_original_lr5e5_rank32':
+                control_parents.append((R37, R37_SHA, R37_VERIFICATION_SHA))
+            for previous, plan_sha, verification_sha in control_parents:
+                prior.review.checked(previous / 'plan.json', plan_sha)
+                prior.review.checked(previous / 'verification.json', verification_sha)
+                verification = read(previous / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != plan_sha
                         or verification['optimizer_step_counts'] != {'40':96}
                         or verification['completed_outputs'] != 5 or verification['unscored_wavs'] != 0
                         or verification['reason'] != 'stage_acoustic_regression'):
-                    raise ValueError('Expected verified five-output r36 acoustic failure')
-                inputs.update(read(R36 / 'plan.json')['inputs_sha256'])
+                    raise ValueError(f'Expected verified five-output acoustic failure: {previous}')
+                inputs.update(read(previous / 'plan.json')['inputs_sha256'])
                 inputs.update(verification['outputs_sha256'])
-                inputs[str(R36 / 'plan.json')] = R36_SHA
-                inputs[str(R36 / 'verification.json')] = R36_VERIFICATION_SHA
+                inputs[str(previous / 'plan.json')] = plan_sha
+                inputs[str(previous / 'verification.json')] = verification_sha
     if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
         prior.strength.check_inputs(R33_DEVELOPMENT)
@@ -301,8 +323,8 @@ def prepare(work, variant='rank32'):
     save(work / 'base_items.json', base_items)
     cfg = candidate_config(yaml.safe_load((prior.SOURCE / 'train.yaml').read_text(encoding='utf-8')), work,
                            variant, train_rows=mix['train']['rows'] if mix else None)
-    if variant == 'dit_original_lr5e5':
-        verify_original_lr_control(work, cfg)
+    if variant in ('dit_original_lr5e5', 'dit_original_lr5e5_rank32'):
+        verify_original_config_control(work, cfg, variant)
     gates = gate_steps(cfg, variant)
     updates = {str(step): min(step + 1, cfg['num_iters']) for step in gates}
     (work / 'train.yaml').write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding='utf-8')

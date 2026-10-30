@@ -248,6 +248,15 @@ CPU谱审计确认r37更新幅度中位为r36的.5324，但失败仍在；前32�
 下一r38固定其他条件只改DiT rank/alpha64→32、alpha/r=1；假设在r37工作目录`next_hypothesis.json`，尚未实现/启动。
 旧r32的LM+DiT/旧数据/lr1e-4不是此设置对照，形状改变也影响RNG消费，不认证rank因果。最终留出仍未用。
 
+r38接续已实现：保持同1881条合格原音、顺序、配比、身份/ref和lr5e-5，仅将DiT rank/alpha64→32。
+38项针对测试和251份远端源码SHA通过，`r38_dit_original_lr5e5_rank32_20261031/driver.log`对应的nohup驱动
+已串联输入核验→冷启动→40/80/118更新质量门；不新增来源、不重评分旧输出。
+六份train/val/flagged/mix/jobs/base_items必须与r37字节相同；训练/验证的origin/PCM/ref及最终文本隔离继续继承。
+启动前26份r37终态产物再次核验，GPU空闲、约5.29GiB可用；r38四份快照保守预算约157MiB，不需清理旧数据。
+本地`work/r38_dit_original_lr5e5_rank32_20261031/launch_verification.json`记录实际阶段；最终90文本仍未使用，母语未验证。
+预检/启动已核验：plan `7cc5dde336ae8d5642c27e3309d142ced42d37e79a15c6dd3939b676458fdd17`，18,957输入、206份本地源码对照通过；
+六份数据/任务/基线与r37字节相同，实际40更新后gate39评估中。val初值1.029398仅随机子集观察，wandb仍403，TensorBoard/日志保留。
+
 ## 执行卫生
 
 所有长任务独立source/plan、nohup日志、原结果不覆盖；本地只镜像元数据，不下载数据集音频或模型。

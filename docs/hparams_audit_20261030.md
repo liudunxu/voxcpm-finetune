@@ -10,7 +10,10 @@ r37仅将r36学习率减半，完整输入/输出/optimizer40核验通过；CPU�
 | r37 同行原音/lr5e-5 | 48 | 26.5 | 96.69% | .043473 |
 
 r37更新幅度确已降至r36的.5324，但平均时长5.056→6.112s、有声比例.88310→.80196仍失败，故不机械继续减lr。
-下一假设仅DiT rank/alpha64→32、保持比例1；其余数据/优化器/118更新/五seed阶段门保持，代码与远端执行未开始。
+下一假设仅DiT rank/alpha64→32、保持比例1；其余数据/优化器/118更新/五seed阶段门保持。
+r38代码与配置已实现，38项针对测试、251份远端源码SHA通过，nohup驱动已连接预检→训练→阶段评估。
+冻结r37 plan/verification及六份数据/任务字节，拒绝额外超参变化；3,342,336参数、四份快照预算约157MiB，4GiB底线保持。
+实际状态与计划SHA以TODO及`work/r38_dit_original_lr5e5_rank32_20261031/launch_verification.json`为准，尚无r38质量结论。
 谱集中不证明低rank重训可保质量，形状改变会改变初始化RNG消耗；旧r32启用LM且数据/lr不同，不是此对照。
 容量证据`work/r37_dit_original_lr5e5_20261031/capacity_audit.json`，SHA
 `c9af5abb6a8b1923c6f56d3fb98f13bf2a187a21ea71e601b7631b93e43abba1`；完整终态与逐seed数据见TODO/runs。
