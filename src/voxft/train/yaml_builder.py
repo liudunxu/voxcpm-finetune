@@ -9,13 +9,13 @@ import yaml
 
 from ..paths import CHECKPOINT_DIR, CONFIG_DIR, env
 
-# 官方推荐默认值（VoxCPM 2）
+# 工作台起点；部分来自官方示例，不能代替当前语料的单变量验证。
 DEFAULTS = {
     "sample_rate": 16000,        # AudioVAE 编码器输入，勿改成输出采样率
     "out_sample_rate": 48000,    # 仅推理用
-    "batch_size": 2,             # 官方示例值；音频序列长，激活显存大，勿调大
+    "batch_size": 2,             # 官方示例值；放大前实测峰值显存和token过滤影响
     "grad_accum_steps": 8,       # 等效 batch = 2 × 8 = 16
-    "num_workers": 8,           # 官方 v2 配置值；音频解码是瓶颈，别调小
+    "num_workers": 8,           # 官方 v2 示例值；吞吐瓶颈需实测
     "num_iters": 1000,
     "log_interval": 10,
     "valid_interval": 250,
@@ -28,8 +28,8 @@ DEFAULTS = {
     "stop_loss_weight": 1.0,
 }
 
-# r=64/alpha=64：语言 + 风格双适配（纯说话人适配用 32 就够）；
-# dropout 0.05：情感语料体量小（万级），0 容易几百步就过拟合到固定腔调
+# 历史工作台配方；官方v2示例是r/alpha=32、dropout=0。
+# rank、dropout的质量收益须分别验证，不能从语言数量或数据规模直接推定。
 LORA_PRESET = {"learning_rate": 1e-4, "r": 64, "alpha": 64, "dropout": 0.05}
 FULL_PRESET = {"learning_rate": 1e-5}  # 约为 LoRA 的 1/10，防灾难性遗忘
 
@@ -82,7 +82,7 @@ def build_yaml(run_name: str, pretrained_path: str, train_manifest: str,
         cfg["learning_rate"] = LORA_PRESET["learning_rate"]
         cfg["lora"] = {
             "enable_lm": True,
-            "enable_dit": True,      # 对音质至关重要
+            "enable_dit": True,      # 沿用历史配方；与LM的影响需拆分验证
             "enable_proj": False,
             "r": LORA_PRESET["r"],
             "alpha": LORA_PRESET["alpha"],

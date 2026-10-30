@@ -1,0 +1,19 @@
+{
+  "gpus": 1,
+  "epochs": 1.464406779661017,
+  "num_iters": 459,
+  "effective_batch": 16,
+  "train_samples": 5015,
+  "gates": [
+    150,
+    300,
+    459
+  ],
+  "gate_optimizer_updates": {
+    "150": 151,
+    "300": 301,
+    "459": 459
+  },
+  "production_changed": false,
+  "plan_sha256": "9abcdb072759654dd8e5e3e869bf84ef7eecf1b694e548d9ce5d42777245f2f9"
+}

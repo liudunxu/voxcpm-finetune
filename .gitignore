@@ -30,6 +30,9 @@ checkpoints/
 /work/full_clean_candidate_20261029/
 /work/granary_pilot_20261030/
 /work/r31_failure_probe_20261030/
+/work/r31_component_probe_20261030/
+/work/hparams_audit_20261030/
+/work/r32_rank32_20261030/
 wandb/
 logs/
 *.wav
