@@ -197,9 +197,16 @@ completion SHA `ed647b04198e11da6ee2a7ce1ea1aac8d3c49a7672dad58b2d1d3d6199f56b28
 独立复核在同根`paired_candidate_20261031_v2_verification.json`，本地元数据镜像
 `work/quality_reaudit_20261031/candidate/`；计算进程已退出、剩余约5.86GiB，未清理任何原音或唯一模型证据。
 
-接着自动按新清单重算epoch/步数（1epoch名义118更新），
-复用分阶段DiT-only训练，前置TH1844 control五seed及TL1913尾部风险；小样本CER只观察，
-严重内容/absolute声学失败仍立即停止。最终留出未使用，母语未验证，无新训练或生产变更。
+接续r35已使用既有分阶段driver，入口`staged_paired_candidate.sh`，执行根
+`/root/autodl-tmp/r35_dit_paired_20261031/`。独立`source/`、`driver.log`和新plan，
+先重核准入completion全部输出SHA、所选原音/派生音字节和原origin映射，再冷启动；不重复ASR或分离。
+保留DiT-only/rank64/alpha64/dropout.05/lr1e-4/batch2×8/wd.01/clip1；
+按1881行缩到118更新/名义1.00372epoch，warmup12，40/80/118更新后等待同输入五seed质量门。
+官方保存回调只在声明阶段写完整快照，非阶段调用不写盘；官方submodule未改。
+每阶段TH1844 control全部5seed和TL1913 control全部5seed前置，原风险与保护样本保留，45条上限。
+小样本平均CER按原CER_NOISE=.05记观察；新空转写/近静音/疑似多读、两条严重CER差异、
+absolute尾部/时长/有声比例门仍有效。38项针对测试、shell/diff通过，实际执行终态与记录见TODO/runs。
+清洗、混合、部分分离共同改变，不认证单变量因果。最终90文本未使用，母语未验证，无生产变更。
 
 ## 执行卫生
 

@@ -225,11 +225,7 @@ def decision(rows, base, *, stage_end=False, diagnostic=False):
 
 
 def cer_observations(rows, base):
-    from voxft.train.runlog import CER_NOISE, _regressed
-    reports = [{'label':name, **frozen.evaluation._report_metrics(items)} for name, items in
-               (('base', [base[prior.key(r)] for r in rows]), ('candidate', rows))]
-    return {'noise_threshold':CER_NOISE, 'classification':_regressed(reports)['candidate'],
-            'interpretation':'Review evidence only; below threshold does not establish non-regression.'}
+    return staged.cer_observations(rows, base)
 
 
 def terminal_decision(reason, diagnostic):

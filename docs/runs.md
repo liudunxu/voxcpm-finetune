@@ -4,6 +4,79 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## lora_joint3_r35_dit_paired_staged
+
+- 生成时间：2026-10-31 05:50:50
+- 结论：**进行中：40次更新后等待第一质量门，未晋级**
+- 下一步：自动完成40/80/118更新门；失败复核并进入下一有界假设，通过后扩展开发/压力回归，再评独立最终留出。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 0.0001 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/r35_dit_paired_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "tl": 346, "th": 704, "zh": 169, "en": 80} |
+| val loss 首→末 | 1.0416 (step 0) → 1.0416 (step 0)，最优 1.0416（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=2（原音上限）
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+新run，冷启动seed42。数据筛选、配比、部分分离共同改变，不作单变量因果结论。
+数据原音1637、最多2×；ref475次/435独立原音、最多3×；TL可信ref0、可信控制0。895原val字节不变、1634完整旧val继续保护。
+目标1522派生+359原音，ref408派生+67原音。许可声明继承，不等同新增真人授权认证。
+
+| 来源 | 许可声明 | 行数 | 小时 |
+| --- | --- | ---: | ---: |
+| cv22_id | CC0 | 292 | 0.3768 |
+| cv22_th | CC0 | 183 | 0.2255 |
+| fleurs_en | CC-BY-4.0 | 80 | 0.1781 |
+| fleurs_id | CC-BY-4.0 | 136 | 0.3431 |
+| fleurs_th | CC-BY-4.0 | 20 | 0.0547 |
+| fleurs_tl | CC-BY-4.0 | 346 | 1.0033 |
+| fleurs_zh | CC-BY-4.0 | 169 | 0.3538 |
+| gigaspeech2_id | Apache-2.0 | 154 | 0.2823 |
+| gigaspeech2_th | Apache-2.0 | 218 | 0.3507 |
+| yodas_th | CC-BY-3.0 | 283 | 0.3726 |
+
+计划118更新，40/80/118更新后等待质量门。YAML save_interval=1只触发包装回调，实际只保存39/79/118三个声明快照，官方源码不改。
+每门45条：TH1844 control五seed（44先）→TL1913 control五seed（43先）→旧风险和三语种保护。
+每门覆盖ID10/TH25/TL10条、6个独立文本；只作开发pilot，不冒充每语种30文本验收。
+新计划取消单句平均CER增1pp即停；按CER_NOISE=.05记录观察，小变化不证明无退化。
+新空转写/近静音/疑似多读、两条CER>.20且配对增加>.10、absolute尾/时长/有声比例仍判退。失败后不再更新，全部失败WAV保留。
+冻结plan `c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b`；18,447输入SHA经远端prepare及run检查，当前源码203项本地对照通过。
+根`/root/autodl-tmp/r35_dit_paired_20261031/`；`source/`冻结，文档仅同步handoff；`driver.log`、`run/status.json`为接续入口。
+最新镜像已完成40次更新、训练进程等待gate_39评测；CUDA bf16、loss/grad有限。val仅初值，是随机小批观测。
+固定pilot基线（配对45条，无新生成）：{"id": {"outputs": 10, "mean_cer": 0.0, "mean_wer": 0.0, "suspected_truncation_rate": 0.0}, "th": {"outputs": 25, "mean_cer": 0.0574, "mean_wer": null, "suspected_truncation_rate": 0.04}, "tl": {"outputs": 10, "mean_cer": 0.0246, "mean_wer": 0.0961, "suspected_truncation_rate": 0.0}}
+候选ID/TH/TL CER/WER/疑似少读尚待阶段结果，不给收益结论；原r33/34停止记录和源码保持。
+38项针对测试、shell/diff通过；最终90文本未使用，母语未验证，不切生产、不上传权重。
+
+---
+
 ## 2026-10-31 新联合候选数据准备（尚未训练）
 
 4985对完整分离复核已结束；顶层SHA核对通过，125文件分离后RMS损失>6dB、20无能量边界、
