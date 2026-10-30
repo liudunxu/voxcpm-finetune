@@ -48,5 +48,9 @@
   "driver_pid": 105392,
   "trainer_pid": 105447,
   "unix_socket_bind_test_bytes": 98,
-  "observed_optimizer_updates": 40
+  "observed_optimizer_updates": 118,
+  "terminal_status": "rejected",
+  "terminal_reason": "new_suspected_overread",
+  "completed_outputs": 93,
+  "verification_sha256": "3a9ab7f53efdad4206fed2646b347ccb73e96d6ee87a826220c8e2b26f53f8ea"
 }

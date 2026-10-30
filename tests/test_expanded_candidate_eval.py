@@ -156,3 +156,46 @@ def test_diagnostic_reuses_all_five_r34_outputs_with_same_preselected_coverage(m
     assert {j['case']['sentence_id'] for j in early if j['stage'] == 0} == {
         'fresh_id_1808', 'fresh_tl_1913', 'fresh_th_1844'}
     assert Counter(j['stage'] for j in early) == {s:30 for s in range(10)}
+
+
+def test_r39_diagnostic_requires_exact_stopped_parent_and_reuses_all_45(module):
+    gates = {s:{'decision':'pilot_pass', 'reason':None, 'completed':45, 'skipped':0}
+             for s in ('39', '79')}
+    gates['118'] = {'decision':'rejected', 'reason':'new_suspected_overread',
+                    'completed':3, 'skipped':42}
+    result = {'decision':'rejected', 'gates':gates}
+    assert module.parent_gate('r39_early_diagnostic', {'stage':'rejected'}, result) == (79, 80, 45)
+    for invalid in ({'stage':'pilot_complete'}, {'stage':'training'}):
+        with pytest.raises(ValueError, match='r39'):
+            module.parent_gate('r39_early_diagnostic', invalid, result)
+    gates['79']['reason'] = 'stage_acoustic_regression'
+    with pytest.raises(ValueError, match='r39'):
+        module.parent_gate('r39_early_diagnostic', {'stage':'rejected'}, result)
+    cases = module.frozen._read_manifest(Path('eval_cases/fresh_text_holdout_20261028.jsonl'))
+    guard_ids = {'fresh_id_1808', 'fresh_th_1689', 'fresh_tl_1913'}
+    pilot = [{'case':c, 'seed':s, 'stage':'guard' if c['sentence_id'] in guard_ids else 'risk'}
+             for c in cases if c['sentence_id'] in guard_ids or c['case_id'] in {
+                 'fresh_th_1844_control', 'fresh_th_1983_control', 'fresh_th_1994_control'}
+             for s in module.frozen.SEEDS]
+    assert len(pilot) == 45
+    jobs = module.select_jobs(cases, pilot, canary_first=True)
+    assert {(p['case']['case_id'], p['seed']) for p in pilot} <= {
+        (j['case']['case_id'], j['seed']) for j in jobs}
+    assert len(jobs) - len(pilot) == 255
+    assert {j['case']['sentence_id'] for j in jobs if j['stage'] == 0} == {
+        'fresh_id_1808', 'fresh_th_1844', 'fresh_tl_1913'}
+
+
+def test_r39_diagnostic_inherits_cer_independent_extreme_acoustic_gate(module):
+    base = [{'case_id':f'a{i}', 'seed':42, 'lang':'th', 'cer':0., 'hyp':'text',
+             'text':'text', 'over_read':False, 'rms_dbfs':-20, 'speech_ratio':.95,
+             'audio_sec':5., 'tail_silence_sec':.1, 'numeric':False, 'f0_std_st':0,
+             'wer':None} for i in range(20)]
+    lookup = {module.prior.key(r):r for r in base}
+    rows = [dict(r) for r in base]
+    rows[0].update(audio_sec=10.01, speech_ratio=.849, cer=.15)
+    assert module.decision(rows, lookup, stage_end=True, diagnostic=True) == (None, {})
+    reason, acoustics = module.decision(rows, lookup, stage_end=True, diagnostic=True,
+                                       paired_extremes=True)
+    assert reason == 'stage_acoustic_regression'
+    assert acoustics['paired_extreme_acoustic']
