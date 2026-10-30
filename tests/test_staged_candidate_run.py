@@ -54,6 +54,31 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     original = module.candidate_config(parent, tmp_path, 'dit_original', train_rows=1881)
     assert original == cfg
     assert module.gate_steps(original, 'dit_original') == gates
+    lower_lr = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5', train_rows=1881)
+    assert {k for k in original if original[k] != lower_lr[k]} == {'learning_rate'}
+    assert lower_lr['learning_rate'] == 5e-5
+    assert module.gate_steps(lower_lr, 'dit_original_lr5e5') == gates
+
+
+def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
+    parent, work = tmp_path / 'r36', tmp_path / 'r37'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R36', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = {'learning_rate':1e-4, 'num_iters':118, 'warmup_steps':12, 'save_path':str(parent)}
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'learning_rate':5e-5, 'save_path':str(work)}
+    module.verify_original_lr_control(work, after)
+    with pytest.raises(ValueError, match='only learning rate'):
+        module.verify_original_lr_control(work, {**after, 'num_iters':459})
+    with pytest.raises(ValueError, match='only learning rate'):
+        module.verify_original_lr_control(work, {**after, 'learning_rate':1e-4})
+    (work / 'train.jsonl').write_text('changed row order or bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match='train.jsonl'):
+        module.verify_original_lr_control(work, after)
 
 
 def test_original_control_only_reverses_frozen_paths_and_preserves_order(module):

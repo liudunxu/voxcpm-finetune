@@ -23,9 +23,13 @@ R33_DEVELOPMENT_SHA = '12e21245f775913548f262519df6da818a8a4eb2ceb2ce79985c92b3e
 PAIRED = Path('/root/autodl-tmp/quality_reaudit_20261030/paired_candidate_20261031_v2')
 PAIRED_SHA = '60789ed48d2c4c4c4cec3126c3f7c787b1fb75dc52d186fe7b82e434f2781a82'
 PAIRED_COMPLETION_SHA = 'ed647b04198e11da6ee2a7ce1ea1aac8d3c49a7672dad58b2d1d3d6199f56b28'
-PAIRED_VARIANTS = ('dit_paired', 'dit_original')
+ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5')
+PAIRED_VARIANTS = ('dit_paired', *ORIGINAL_VARIANTS)
 R35 = Path('/root/autodl-tmp/r35_dit_paired_20261031/run')
 R35_SHA = 'c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b'
+R36 = Path('/root/autodl-tmp/r36_dit_original_20261031/run')
+R36_SHA = 'd63c55bd5d982b8c509903405fdcf5edcbf9a4c1c5e4c5772ad7729bccbf48be'
+R36_VERIFICATION_SHA = '6d5ee04be14fe470725ce6ec89045796176e34c1103646dbb58b55a0a92dd7c2'
 
 
 def acoustic_gate(rows, baseline):
@@ -71,6 +75,12 @@ VARIANTS['dit_original'] = {**VARIANTS['dit_paired'],
                  'screened originals. Keep exact row order/repetition, text, identity, mixing, optimizer '
                  'and 118-update schedule. Test separation sensitivity after early duration/speech-ratio '
                  'failure; one training seed cannot establish general causality.'}
+VARIANTS['dit_original_lr5e5'] = {**VARIANTS['dit_original'], 'learning_rate':5e-5,
+    'run_name':'lora_joint3_r37_dit_original_lr5e5_staged',
+    'hypothesis':'Relative to r36, only halve learning rate to 5e-5 on the identical screened original '
+                 '1881 rows, DiT-only rank64 and 118-update schedule. Test smaller adaptation after '
+                 'both original/derived views failed the TH acoustic gate. Old-data r34 had a TL '
+                 'tail failure at this learning rate; retain all five TL1913 seeds and all gates.'}
 
 
 def candidate_config(parent, work, variant, *, train_rows=None):
@@ -150,6 +160,19 @@ def original_control_rows(rows, mapping, original_pool):
     return result
 
 
+def verify_original_lr_control(work, cfg):
+    """Bind the LR intervention to actual r36 bytes and settings, not just its recipe."""
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        if frozen.sha256(work / name) != frozen.sha256(R36 / name):
+            raise ValueError(f'Original LR control changed {name}')
+    parent = yaml.safe_load((R36 / 'train.yaml').read_text(encoding='utf-8'))
+    paths = {'train_manifest', 'val_manifest', 'save_path', 'tensorboard'}
+    changed = {key for key in set(parent) | set(cfg)
+               if key not in paths and parent.get(key) != cfg.get(key)}
+    if changed != {'learning_rate'} or parent['learning_rate'] != 1e-4 or cfg['learning_rate'] != 5e-5:
+        raise ValueError('Expected only learning rate 1e-4 to 5e-5 relative to r36')
+
+
 def add_failure_canary(jobs, base_items, cases, baseline):
     """Put all five seeds of the newly observed r33 failure ahead of old pilot work."""
     case, = [c for c in cases if c['case_id'] == 'fresh_th_1844_control']
@@ -201,7 +224,7 @@ def prepare(work, variant='rank32'):
             raise ValueError('Candidate provenance SHA conflict')
         inputs.update(candidate_inputs)
         data_source = PAIRED
-        if variant == 'dit_original':
+        if variant in ORIGINAL_VARIANTS:
             prior.review.checked(R35 / 'plan.json', R35_SHA)
             verification = read(R35 / 'verification.json')
             if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R35_SHA
@@ -212,6 +235,19 @@ def prepare(work, variant='rank32'):
             inputs.update(verification['outputs_sha256'])
             inputs[str(R35 / 'plan.json')] = R35_SHA
             inputs[str(R35 / 'verification.json')] = frozen.sha256(R35 / 'verification.json')
+            if variant == 'dit_original_lr5e5':
+                prior.review.checked(R36 / 'plan.json', R36_SHA)
+                prior.review.checked(R36 / 'verification.json', R36_VERIFICATION_SHA)
+                verification = read(R36 / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R36_SHA
+                        or verification['optimizer_step_counts'] != {'40':96}
+                        or verification['completed_outputs'] != 5 or verification['unscored_wavs'] != 0
+                        or verification['reason'] != 'stage_acoustic_regression'):
+                    raise ValueError('Expected verified five-output r36 acoustic failure')
+                inputs.update(read(R36 / 'plan.json')['inputs_sha256'])
+                inputs.update(verification['outputs_sha256'])
+                inputs[str(R36 / 'plan.json')] = R36_SHA
+                inputs[str(R36 / 'verification.json')] = R36_VERIFICATION_SHA
     if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
         prior.strength.check_inputs(R33_DEVELOPMENT)
@@ -251,7 +287,7 @@ def prepare(work, variant='rank32'):
     work.mkdir()
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json'):
         shutil.copyfile(data_source / name, work / name)
-    if variant == 'dit_original':
+    if variant in ORIGINAL_VARIANTS:
         from voxft.data.pipeline import _write_jsonl
         original_rows = original_control_rows(frozen._read_manifest(work / 'train.jsonl'),
             read(PAIRED / 'audio_mapping.json'), frozen._read_manifest(PAIRED / 'original_pool.jsonl'))
@@ -265,6 +301,8 @@ def prepare(work, variant='rank32'):
     save(work / 'base_items.json', base_items)
     cfg = candidate_config(yaml.safe_load((prior.SOURCE / 'train.yaml').read_text(encoding='utf-8')), work,
                            variant, train_rows=mix['train']['rows'] if mix else None)
+    if variant == 'dit_original_lr5e5':
+        verify_original_lr_control(work, cfg)
     gates = gate_steps(cfg, variant)
     updates = {str(step): min(step + 1, cfg['num_iters']) for step in gates}
     (work / 'train.yaml').write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding='utf-8')

@@ -4,6 +4,79 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## lora_joint3_r37_dit_original_lr5e5_staged
+
+- 生成时间：2026-10-31 06:17:17
+- 结论：**本地准备完成，SSH DNS外部阻塞；未开训/未评**
+- 下一步：600秒后自动重查SSH；核磁盘冗余并保留路径/SHA回收，恢复后冻结r37并nohup执行阶段训练。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 64/64/0.05 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/r37_dit_original_lr5e5_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "tl": 346, "th": 704, "zh": 169, "en": 80} |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=2
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+本地预备记录，尚未远端冻结plan或开训；以下数据为已核验r36候选的镜像，实际r37更新0，val loss/生成指标均未产生。
+启动前必须核验r36终态SHA及全部输入/输出，并逐字节保持train/val/flagged/mix/jobs/base_items。
+1881条/3.541h，1637独立原音≤2×，475次ref/435独立≤3×，TL ref0，可信控制0；不新增来源或放回任何疑似项。
+同一基座冷启动seed42；只将lr1e-4降至5e-5，118更新/warmup12，DiT-only r/alpha64、dropout.05、batch2×8、wd.01、clip1。
+40/80/118更新后原训练进程等待；每门45条上限，TH1844 control全部5seed→TL1913 control全部5seed→旧风险/保护。
+小样本平均CER只观察；新严重内容、absolute尾部/时长/有声比例门失败即停止，失败WAV保留、不补抽。
+r35/r36同一TH门均失败支持检验较小更新幅度，不能认证学习率因果。r34旧数据lr5e-5的TL尾失败仍保留为风险。
+
+| 来源 | 继承许可声明 | 行数 | 小时 |
+| --- | --- | ---: | ---: |
+| cv22_id | CC0 | 292 | 0.3768 |
+| cv22_th | CC0 | 183 | 0.2255 |
+| fleurs_en | CC-BY-4.0 | 80 | 0.1781 |
+| fleurs_id | CC-BY-4.0 | 136 | 0.3431 |
+| fleurs_th | CC-BY-4.0 | 20 | 0.0547 |
+| fleurs_tl | CC-BY-4.0 | 346 | 1.0033 |
+| fleurs_zh | CC-BY-4.0 | 169 | 0.3538 |
+| gigaspeech2_id | Apache-2.0 | 154 | 0.2823 |
+| gigaspeech2_th | Apache-2.0 | 218 | 0.3507 |
+| yodas_th | CC-BY-3.0 | 283 | 0.3726 |
+
+ID/TH/TL：本轮base→candidate CER、WER和疑似漏尾全部未评；没有新LoRA或质量收益结论。
+32项针对测试通过，shell/diff通过；每项只改学习率与沿用早停的验证已覆盖。
+本轮连接成功时r36已拒绝、GPU0MiB、无训练进程，verification SHA与上一轮一致。
+磁盘5,779,718,144 bytes（约5.38GiB），未达到5.5GiB启动预估；重复checkpoint审计/回收尚未执行。
+随后3次SSH域名解析失败：Could not resolve hostname connect.bjb1.seetacloud.com: nodename nor servname provided, or not known。
+没有审批拒绝或远端变更。600秒后自动重查；恢复后审计相同checkpoint并保留路径/SHA回收，再冻结source、nohup prepare→run。
+本地证据work/r37_dit_original_lr5e5_20261031/preparation.json，尚无远端plan SHA。
+895val/完整1634旧val保持；最终90文本未用且SHA再核相同，母语未验证，不切生产或发布权重。
+
+---
+
 ## lora_joint3_r36_dit_original_staged
 
 - 生成时间：2026-10-31 06:09:01

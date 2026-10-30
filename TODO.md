@@ -78,11 +78,22 @@
   GPU0MiB；18,476输入、5WAV/claims/items、完整快照/latest SHA及CPU原WAV声学复查均通过，
   96个optimizer状态全40、6,684,672参数，未评分WAV0；日志`r36_dit_original_20261031/verification.log`。
   verification SHA `6d5ee04be14fe470725ce6ec89045796176e34c1103646dbb58b55a0a92dd7c2`，本地`work/r36_dit_original_20261031/analysis.json`。
-- [ ] **下轮自动下一步**：先核r36的`verification.json`/日志/实际进程；成功产物不重跑，原r35/r36不续训或补抽。
-  然后另冻r37，只将r36原音同清单的lr1e-4→5e-5，其余行序/配比/DiT-r64/.05/batch2×8/118更新/warmup12/阶段门保持。
-  具体提案`work/r36_dit_original_20261031/next_hypothesis.json`，**r37尚未准备目录或开训**。
-  当前约5.39GiB低于原driver开训预估5.5GiB；先核验已停r35/r36中latest与step39重复存储、引用与打开句柄，
+- [x] **r37本地准备完成、远端未启动**：现有`staged_candidate_run.py`新增`dit_original_lr5e5`与
+  `staged_original_lr_candidate.sh`；仅lr1e-4→5e-5，其他行序/配比/DiT-r64/.05/batch2×8/118更新/warmup12/阶段门保持。
+  显式绑定r36 plan及verification SHA；train/val/flagged/mix/jobs/base_items必须与r36字节相同，
+  除路径与学习率外配置必须相同。32项针对测试、shell/diff通过；配置在`configs/lora_joint3_r37_dit_original_lr5e5_staged.*`，
+  其中plan记录标明`remote_prepared=false`，不是远端训练plan。
+  本轮SSH曾成功核验r36 verification SHA、GPU0MiB/无训练进程和磁盘5,779,718,144 bytes（约5.38GiB），
+  随后3次SSH均报`Could not resolve hostname connect.bjb1.seetacloud.com: nodename nor servname provided, or not known`。
+  这是域名解析外部阻塞，没有审批拒绝；未清理远端文件、未创建r37执行目录、未同步新源码或启动训练。
+  证据`work/r37_dit_original_lr5e5_20261031/preparation.json`；下次自动重查，退避600秒，不需用户驱动。
+- [ ] **恢复后自动下一步**：先单次SSH核r36状态及实际进程，若有r37任务则接续其终态、不重复启动。
+  成功产物不重跑，原r35/r36不续训或补抽；核验已停r35/r36中latest与step39重复存储、引用与打开句柄，
   仅回收同字节冗余且保留所有被引用路径/SHA和唯一模型证据，不能删原音或放宽4GiB底线。
+  本地一次性审计脚本`work/r37_dit_original_lr5e5_20261031/checkpoint_storage.py`已准备（仅编译，尚未远端执行）：
+  默认只审计，`--apply`须匹配已保存审计再原子硬链接相同文件；保留两条路径和全部SHA，完成后再次验算所有产物。
+  若审计目录已存在先核其终态，不能覆盖；运行前空闲须≥5.5GiB。恢复后新建唯一r37 source并同步代码，
+  按既有方式nohup串联新入口`prepare && run`，核验新plan和配置数值/数据字节，不能只凭启动PID。
   旧r34在旧数据的lr5e-5曾出现TL尾静音失败，故新轮仍前置TL1913全部5seed，不把较低lr当安全证明。
   冻结新的源码/输入/预算后接远端nohup训练→阶段评估；失败继续有界诊断，通过才允许扩展开发。
   复用`expanded_candidate_eval.py`保留TH1844/TL1913与旧风险，随后达到每语种≥30文本×≥5seed，
