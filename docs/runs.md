@@ -4,7 +4,7 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
-## lora_joint3_r33_dit_only_staged（2026-10-30，进行中）
+## lora_joint3_r33_dit_only_staged（2026-10-30，459次更新完成，小门通过、扩评待结论）
 
 在r32因声学退化停止后，按旧r31拆分内容及声学小门的证据，仅改变训练模块选择：冻结LM，只训练DiT。
 数据原样继承r31，5015条/9.4815h、val895条/1.5965h，所有历史疑似隔离及新90个最终文本均受保护。
@@ -16,8 +16,27 @@
   每阶段及语言保护组结束同时检查CER和既有absolute尾部/时长/有声比例，失败后不再更新。
 - 11,726输入SHA/预检与最终文本隔离通过，plan
   `d1c19ebed1c74c165751bae49e3752894468698f3f0881ae8abb1f3bbf6efda1`；7最新针对测试、shell/diff通过。
-  CUDA bf16已完成151次更新并进入首门，实际可训练96个tensor全部为DiT LoRA；loss与梯度有限。
-  val step0=1.047530仅作观测，各阶段CER/WER/疑似漏尾及val末值待记录，不作通过结论。
+  CUDA bf16完成459次更新，实际可训练96个tensor全部为DiT LoRA；loss与梯度有限。
+  val step0=1.047530、step250=1.057196、step458=1.008731，仅随机小批观测。
+- 三个40条门均通过（共120份新WAV）；11,726输入、120WAV、快照/latest SHA核验通过，
+  optimizer的96个tensor状态均459。LoRA SHA
+  `edfb125a2f19a3ed5a4af4eeb011ca1ca61afabff210d372d4716bc632293def`，证据`run/verification.json`。
+
+| 语言（每阶段条数） | base CER | 更新151 CER | 更新301 CER | 更新459 CER | base→459 WER | 疑似少读/漏尾base→459 | 尾p90 base→459 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ID（10） | 0% | 0% | .494% | .370% | 0→1.429% | 0→0 | .14→.16s |
+| TH（20） | 7.107% | 5.878% | 4.790% | 5.487% | 不计算 | 1→0 | .18→.18s |
+| TL（10） | 2.460% | 2.788% | 3.198% | 3.362% | 9.615→11.923% | 0→0 | .12→.24s |
+
+三阶段都未触发绝对尾/时长/有声比例门，但TL最终CER接近小门上限；五文本开发探针不代表全语种收益。
+仅扩评最终459快照，不因301的TH均值更低而更换权重。新开发扩评计划每语种10文本、每文本两条件×5seed，
+300条中复用40、最多新增260；ID/TH已知风险与原保护文本优先，其余按文本ID哈希，不看分数选择。
+四路持续进程、每30条完整阶段检查内容及声学，逐条严重失败停止新领取并保留在途输出。
+初版共享控制文件非原子写入在代码复查发现，0新claim/0新WAV时停止；以独立v2目录执行修复版，旧plan/source不改。
+脚本`expanded_candidate_eval.py`/`.sh`。最终90个留出文本仍未生成，不认证母语质量、不切生产。
+v2已启动，根`/root/autodl-tmp/r33_development_20261030_v2/`；plan
+`12e21245f775913548f262519df6da818a8a4eb2ceb2ce79985c92b3e01619e5`，602份推理输入SHA，
+父训练plan/verification另固定以保留完整训练溯源；443全量测试exit0（两条既有弃用警告）。
 
 根`/root/autodl-tmp/r33_dit_only_20261030/`，入口`staged_dit_candidate.sh`/共用`staged_candidate_run.py`，
 状态`run/status.json`，日志`run/train.log`、`run/gate_*/eval.log`。执行source冻结，后续只改handoff文档。
