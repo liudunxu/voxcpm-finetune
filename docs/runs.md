@@ -4,7 +4,25 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
-## lora_joint3_r32_rank32_staged（2026-10-30，进行中）
+## lora_joint3_r33_dit_only_staged（2026-10-30，进行中）
+
+在r32因声学退化停止后，按旧r31拆分内容及声学小门的证据，仅改变训练模块选择：冻结LM，只训练DiT。
+数据原样继承r31，5015条/9.4815h、val895条/1.5965h，所有历史疑似隔离及新90个最终文本均受保护。
+时长份额ID55.207%/TH20.463%/TL14.210%/zh6.260%/en3.860%，TL可信ref与可信控制仍0。
+
+- 同原基座冷启动seed42；r/alpha64、dropout.05、lr1e-4、warmup45、wd.01、batch2×8、proj关，
+  DiT开、LM关，约6,684,672参数；预算459次更新/名义1.464407epoch。
+- 在151/301/459次更新后原进程等待固定5seed生成门；新增近静音/空ASR/疑似多读逐条判退，
+  每阶段及语言保护组结束同时检查CER和既有absolute尾部/时长/有声比例，失败后不再更新。
+- 11,726输入SHA/预检与最终文本隔离通过，plan
+  `d1c19ebed1c74c165751bae49e3752894468698f3f0881ae8abb1f3bbf6efda1`；7最新针对测试、shell/diff通过。
+  CUDA bf16已完成151次更新并进入首门，实际可训练96个tensor全部为DiT LoRA；loss与梯度有限。
+  val step0=1.047530仅作观测，各阶段CER/WER/疑似漏尾及val末值待记录，不作通过结论。
+
+根`/root/autodl-tmp/r33_dit_only_20261030/`，入口`staged_dit_candidate.sh`/共用`staged_candidate_run.py`，
+状态`run/status.json`，日志`run/train.log`、`run/gate_*/eval.log`。执行source冻结，后续只改handoff文档。
+
+## lora_joint3_r32_rank32_staged（2026-10-30，301次更新后因声学失败停止）
 
 用户授权持续迭代、提前判退并检查超参数。r31实测更新谱支持尝试更小容量，不能当作收益证明。
 同原基座冷启动，训练数据原样继承r31 **5015条/9.4815h**、val895条/1.5965h及所有历史排除；
@@ -17,7 +35,14 @@
   省略非验证checkpoint，保留三个验证快照与latest，4GiB磁盘保底。官方文件未改。
 - 11,724输入SHA通过，plan `9abcdb072759654dd8e5e3e869bf84ef7eecf1b694e548d9ce5d42777245f2f9`。
   435全量测试exit0、shell/diff通过；CUDA bf16、5015/895条加载完成，已后台启动。
-- 训练和各阶段CER/WER/疑似漏尾、val首末值**待完成**；本记录不是通过结论。小样本未参与最终独立验收，母语未验证。
+- 第151次更新40条内容pilot按原规则pass；补查TH尾p90 .18→1.20s、TH有声比例.9171→.8303、
+  TL.9901→.9329，违反既有声学门。原自动门遗漏声学检查，后续driver已补，冻结源码/内容判定保留。
+- **实际301次更新停止**（第300标签checkpoint完整，第2门0条评分），GPU释放；保留40条评分及两快照SHA，
+  没有未评分WAV。不通过、不晋级；未评估301次更新的质量，不补跑该轮。
+  实际名义曝光.960319epoch；val step0=1.046108→step250=.963929，仅随机小批loss观测。
+- 151次更新base→候选CER：ID0→.617%（10）、TH7.107→5.945%（20）、TL2.460→3.280%（10）；
+  WER ID0→3.572%、TH不计、TL9.610→15.768%；疑似少读/漏尾0→0、1→1、0→0。
+  这些是五文本开发pilot，非完整语种验收。下一单变量优先只训DiT；母语未验证。
 
 执行`/root/autodl-tmp/r32_rank32_20261030/`，日志`run/train.log`、`run/gate_*/eval.log`，状态`run/status.json`。
 完整参数审计、拆分数字和局限见[超参数审计](hparams_audit_20261030.md)；后续文档只入`handoff/`。

@@ -16,13 +16,17 @@ def module(monkeypatch):
 def test_rank_experiment_preserves_learning_schedule(module, tmp_path):
     parent = yaml.safe_load((Path(__file__).resolve().parents[1] /
         'configs/lora_joint3_r31_granary_consensus_459.yaml').read_text())
-    result = module.rank_config(parent, tmp_path, 32)
+    result = module.candidate_config(parent, tmp_path, 'rank32')
     assert result['lora'] == {**parent['lora'], 'r': 32, 'alpha': 32}
     assert parent['lora']['r'] == 64
     assert {k for k in result if result[k] != parent[k]} == {
         'lora', 'train_manifest', 'val_manifest', 'save_path', 'tensorboard', 'save_interval'}
     with pytest.raises(ValueError):
-        module.rank_config(parent, tmp_path, 16)
+        module.candidate_config(parent, tmp_path, 'unknown')
+    dit = module.candidate_config(parent, tmp_path, 'dit_only')
+    assert dit['lora'] == {**parent['lora'], 'enable_lm':False}
+    assert dit['learning_rate'] == parent['learning_rate']
+    assert dit['num_iters'] == dit['max_steps'] == 459
 
 
 @pytest.mark.parametrize('decision', ['pilot_pass', 'rejected'])
@@ -55,3 +59,20 @@ def test_wrong_optimizer_step_and_existing_run_fail_closed(module, tmp_path):
         module.checkpoint_gate(tmp_path, 150, SimpleNamespace(state={0: {'step': 150}}))
     with pytest.raises(FileExistsError):
         module.prepare(tmp_path)
+
+
+def test_acoustic_gate_rejects_without_content_regression(module):
+    def row(i, lang):
+        return {'case_id':str(i), 'seed':42, 'lang':lang, 'cer':.02, 'wer':None,
+                'numeric':False, 'f0_std_st':0., 'tail_silence_sec':.1, 'speech_ratio':.99,
+                'audio_sec':5., 'text':'unchanged'}
+    baseline = [row(i, 'id' if i < 100 else 'th') for i in range(105)]
+    index = {module.prior.key(r):r for r in baseline}
+    bad_tail = [{**r, 'tail_silence_sec':1.2 if r['lang']=='th' else .1} for r in baseline]
+    failed = module.acoustic_gate(bad_tail, index)
+    assert any(message.startswith('th ') for message in failed['tail_silence'])
+    assert not any(message.startswith('overall ') for message in failed['tail_silence'])
+    assert 'speech_ratio' in module.acoustic_gate([{**r,'speech_ratio':.85} for r in baseline], index)
+    assert 'duration_inflation' in module.acoustic_gate([{**r,'audio_sec':8.} for r in baseline], index)
+    # User relaxed only relative tail changes; absolute under .5 remains allowed.
+    assert module.acoustic_gate([{**r,'tail_silence_sec':.34} for r in baseline], index) == {}

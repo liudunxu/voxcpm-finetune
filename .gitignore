@@ -33,6 +33,8 @@ checkpoints/
 /work/r31_component_probe_20261030/
 /work/hparams_audit_20261030/
 /work/r32_rank32_20261030/
+/work/r33_dit_only_20261030/
+/work/final_text_reservation_20261030/
 wandb/
 logs/
 *.wav

@@ -1,4 +1,4 @@
-"""Rank-only cold-start candidate with generation gates inside the live training process."""
+"""Single-factor cold-start candidates gated inside the live training process."""
 import argparse
 import importlib.util
 import os
@@ -19,18 +19,39 @@ PILOT = Path('/root/autodl-tmp/r31_component_probe_20261030/run')
 PILOT_SHA = '176812d3f4129274293183bacf5a7e07fcb847148d0cf6da3a7c5220e5c9dfb6'
 
 
-def rank_config(parent, work, rank):
-    if rank != 32 or parent['lora']['r'] != 64 or parent['lora']['alpha'] != 64:
-        raise ValueError('Only the predeclared rank64→32 experiment is authorized here')
+def acoustic_gate(rows, baseline):
+    """Reuse existing absolute-tail, duration and speech-ratio policy before resuming."""
+    from voxft.train.runlog import _duration_gates
+    matched = [baseline[prior.key(row)] for row in rows]
+    reports = [{'label':label, **frozen.evaluation._report_metrics(items)}
+               for label, items in (('base', matched), ('candidate', rows))]
+    gates = _duration_gates(reports, tail_policy='absolute')['candidate']
+    return {key: values for key, values in gates.items()
+            if values and key != 'tail_silence_observations'}
+
+
+VARIANTS = {
+    'rank32': {'changes': {'r':32, 'alpha':32}, 'free_gib':5.5,
+               'run_name':'lora_joint3_r32_rank32_staged',
+               'hypothesis':'Reduce rank64→32 with alpha/r=1; hold other training settings fixed.'},
+    'dit_only': {'changes': {'enable_lm':False}, 'free_gib':4.9,
+                 'run_name':'lora_joint3_r33_dit_only_staged',
+                 'hypothesis':'Freeze LM, train only DiT at original rank/alpha64; hold all other training settings fixed.'},
+}
+
+
+def candidate_config(parent, work, variant):
+    if variant not in VARIANTS or parent['lora']['r'] != 64 or parent['lora']['alpha'] != 64:
+        raise ValueError('Expected a predeclared intervention against original rank64 r31')
     if parent['num_iters'] != 459 or parent['max_steps'] != 459:
         raise ValueError('Keep the original full learning-rate/progress schedule')
-    return {**parent, 'lora': {**parent['lora'], 'r': rank, 'alpha': rank},
+    return {**parent, 'lora': {**parent['lora'], **VARIANTS[variant]['changes']},
             'train_manifest': str(work / 'train.jsonl'), 'val_manifest': str(work / 'val.jsonl'),
             'save_path': str(work / 'checkpoint'), 'tensorboard': str(work / 'checkpoint/logs'),
             'save_interval': 150}
 
 
-def prepare(work):
+def prepare(work, variant='rank32'):
     if work.exists():
         raise FileExistsError(work)
     prior.review.checked(prior.SOURCE / 'plan.json', prior.SOURCE_PLAN_SHA)
@@ -38,16 +59,26 @@ def prepare(work):
     prior.review.checked(PILOT / 'plan.json', PILOT_SHA)
     pilot = prior.strength.check_inputs(PILOT)
     inputs = {**parent['inputs_sha256'], **pilot['inputs_sha256']}
+    reserved = frozen.ROOT / 'eval_cases/reserved_final_20261030.jsonl'
+    digest = 'cc7da8b05f6e78c92b5a7789e9cc95b0eadfb5047caf3287f3acf47b6b55fd0c'
+    prior.review.checked(reserved, digest)
+    inputs[str(reserved)] = digest
+    from incremental_mix import target_text
+    heldout = {frozen.evaluation._norm(r['text']) for r in frozen._read_manifest(reserved)}
+    if any(frozen.evaluation._norm(target_text(r)) in heldout
+           for r in frozen._read_manifest(prior.SOURCE / 'train.jsonl')):
+        raise ValueError('Reserved final text in training')
     for path, digest in inputs.items():
         prior.review.checked(path, digest)
-    if shutil.disk_usage(work.parent).free < 5.5 * 1024**3:
-        raise RuntimeError('Need 5.5 GiB for three rank32 gate snapshots/latest, bounded gates and 4 GiB reserve')
+    settings = VARIANTS[variant]
+    if shutil.disk_usage(work.parent).free < settings['free_gib'] * 1024**3:
+        raise RuntimeError(f"Need {settings['free_gib']} GiB for snapshots, bounded gates and 4 GiB reserve")
     work.mkdir()
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json'):
         shutil.copyfile(prior.SOURCE / name, work / name)
     for name in ('jobs.json', 'base_items.json'):
         shutil.copyfile(PILOT / name, work / name)
-    cfg = rank_config(yaml.safe_load((prior.SOURCE / 'train.yaml').read_text(encoding='utf-8')), work, 32)
+    cfg = candidate_config(yaml.safe_load((prior.SOURCE / 'train.yaml').read_text(encoding='utf-8')), work, variant)
     (work / 'train.yaml').write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding='utf-8')
     from voxft.train.launcher import preflight
     frozen.require_fresh_checkpoint(cfg)
@@ -65,18 +96,20 @@ def prepare(work):
     inputs[str(prior.SOURCE / 'plan.json')] = prior.SOURCE_PLAN_SHA
     inputs[str(PILOT / 'plan.json')] = PILOT_SHA
     save(work / 'plan.json', {**{k: parent[k] for k in ('base_path', 'asr_path', 'speaker_model_path',
-            'sources', 'language_shares')}, 'inputs_sha256': inputs, 'rank': 32, 'max_training_updates': 459,
+            'sources', 'language_shares')}, 'inputs_sha256': inputs, 'rank': cfg['lora']['r'],
+        'variant':variant, 'run_name':settings['run_name'], 'max_training_updates': 459,
         'training_authorized': True, 'authorization': 'User continuous iteration and hyperparameter optimization',
         'gates': list(GATES), 'gate_optimizer_updates': {'150': 151, '300': 301, '459': 459},
         'pilot_outputs_per_gate_max': 40, 'new_outputs_max': 120,
-        'early_rejection': pilot['early_rejection'], 'production_changed': False,
-        'hypothesis': 'Reduce adapter rank64→32 while holding alpha/r=1, data, LR, dropout, batch and schedule fixed.',
+        'early_rejection': [*pilot['early_rejection'], 'stage-end existing absolute-tail/duration/speech-ratio gates'],
+        'tail_policy':'absolute', 'production_changed': False,
+        'hypothesis': settings['hypothesis'],
         'limits': 'Same training seed, not a multi-seed training causal claim. Initialization shape changes RNG '
                   'consumption. Development pilot only; final independent regression and native quality pending.',
         'execution': 'Save complete checkpoint, wait inside the same live trainer; evaluate fixed five-seed '
                      'pilot. Reject exits without more updates; pass continues with optimizer/RNG/data iterator intact. '
                      'Official step_150/300 are zero-based save labels (151/301 updates). No source patches or resume.'})
-    print('PREPARED rank32; gates at optimizer updates 151,301,459', flush=True)
+    print(f'PREPARED {variant}; gates at optimizer updates 151,301,459', flush=True)
 
 
 class GateRejected(Exception):
@@ -147,7 +180,7 @@ def evaluate_gate(work, step):
     jobs, base = read(work / 'jobs.json'), {prior.key(r): r for r in read(work / 'base_items.json')}
     target = checkpoint['target']
     runtime_plan = {**plan, 'targets': {'candidate': target}}
-    rows, reason = [], None
+    rows, reason, acoustic_failures = [], None, {}
     (directory / 'items').mkdir()
     with prior.fast.cached_services([j['case'] for j in jobs]):
         save(directory / 'runtime.json', prior.baseline.gpu_services(runtime_plan, [j['case'] for j in jobs], 'candidate'))
@@ -169,6 +202,10 @@ def evaluate_gate(work, step):
             stage_end = position == 9 or position == len(jobs)-1 or (
                 position >= 10 and jobs[position+1]['case']['lang'] != row['lang'])
             reason = probe.reject_reason(rows, base, stage_end=stage_end)
+            if stage_end:
+                acoustic_failures = acoustic_gate(rows, base)
+                if acoustic_failures and reason is None:
+                    reason = 'stage_acoustic_regression'
             frozen.write_json(directory / 'progress.json', {'completed': len(rows), 'reason': reason,
                 'last_case': prior.key(row), 'time': time.time()})
             if reason:
@@ -177,12 +214,13 @@ def evaluate_gate(work, step):
         prior.review.checked(path, digest)
     save(directory / 'result.json', {'decision': 'rejected' if reason else 'pilot_pass',
         'reason': reason, 'completed': len(rows), 'skipped': len(jobs)-len(rows),
+        'acoustic_failures':acoustic_failures, 'tail_policy':'absolute',
         'rows': rows, 'matched_base': [base[prior.key(r)] for r in rows], 'native_quality': 'unverified'})
 
 
 def run(work):
     plan = prior.strength.check_inputs(work)
-    if plan['gates'] != list(GATES) or plan['rank'] != 32:
+    if plan['gates'] != list(GATES) or plan.get('variant') not in VARIANTS or plan['tail_policy'] != 'absolute':
         raise ValueError('Frozen experiment scope differs')
     if subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader'], text=True).strip():
         raise RuntimeError('GPU busy')
@@ -204,7 +242,7 @@ def run(work):
         if os.environ.get('WANDB_API_KEY'):
             with (work / 'wandb.log').open('x', encoding='utf-8') as log:
                 bridge = subprocess.Popen([sys.executable, '-X', 'utf8', '-u', '-m', 'voxft.train.tb_wandb_bridge',
-                    cfg['tensorboard'], 'lora_joint3_r32_rank32_staged'], cwd=frozen.ROOT, stdout=log, stderr=subprocess.STDOUT)
+                    cfg['tensorboard'], plan['run_name']], cwd=frozen.ROOT, stdout=log, stderr=subprocess.STDOUT)
         while trainer.poll() is None:
             if shutil.disk_usage(work).free < 4 * 1024**3:
                 raise RuntimeError('Disk reserve reached')
@@ -261,10 +299,13 @@ if __name__ == '__main__':
     parser.add_argument('action', choices=('prepare', 'run', 'train', 'evaluate'))
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--step', type=int, choices=GATES)
+    parser.add_argument('--variant', choices=tuple(VARIANTS), default='rank32')
     args = parser.parse_args()
     if args.action == 'evaluate':
         if args.step is None:
             parser.error('evaluate requires --step')
         evaluate_gate(args.work, args.step)
+    elif args.action == 'prepare':
+        prepare(args.work, args.variant)
     else:
-        {'prepare': prepare, 'run': run, 'train': train}[args.action](args.work)
+        {'run': run, 'train': train}[args.action](args.work)
