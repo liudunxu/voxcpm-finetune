@@ -35,7 +35,7 @@ def update(path, value):
     os.replace(pending, path)
 
 
-def select_jobs(cases, pilot):
+def select_jobs(cases, pilot, *, canary_first=False):
     by_lang = {}
     for lang in ('id', 'th', 'tl'):
         pool = {c['sentence_id']: c for c in cases if c['lang'] == lang and c['condition'] == 'plain'
@@ -49,6 +49,10 @@ def select_jobs(cases, pilot):
         by_lang[lang] = chosen[:10]
         if len(by_lang[lang]) != 10:
             raise ValueError('Insufficient distinct development texts')
+    if canary_first:
+        # Order changes only; include both conditions and all seeds, never just the failing take.
+        by_lang['th'].remove('fresh_th_1844')
+        by_lang['th'].insert(0, 'fresh_th_1844')
     jobs = []
     for stage in range(10):
         for lang in ('id', 'th', 'tl'):
@@ -72,16 +76,19 @@ def parent_gate(profile, status, result):
                 or gate.get('reason') != 'stage_mean_cer_regression_th' or gate.get('completed') != 5):
             raise ValueError('Expected the stopped five-output r34 mean-only gate')
         return 150, 151, 5
-    if profile != 'r33' or status['stage'] != 'pilot_complete' or result['decision'] != 'development_pilot_pass':
+    if (profile not in ('r33', 'r33_early_diagnostic') or status['stage'] != 'pilot_complete'
+            or result['decision'] != 'development_pilot_pass'):
         raise ValueError('All training gates must pass before expanding latest')
+    if profile == 'r33_early_diagnostic':
+        return 150, 151, 40
     return 459, 459, 40
 
 
 def prepare(work, profile='r33'):
     if work.exists():
         raise FileExistsError(work)
-    diagnostic = profile == 'r34_diagnostic'
-    candidate, digest = (DIAGNOSTIC, DIAGNOSTIC_SHA) if diagnostic else (CANDIDATE, CANDIDATE_SHA)
+    diagnostic = profile in ('r34_diagnostic', 'r33_early_diagnostic')
+    candidate, digest = (DIAGNOSTIC, DIAGNOSTIC_SHA) if profile == 'r34_diagnostic' else (CANDIDATE, CANDIDATE_SHA)
     prior.review.checked(candidate / 'plan.json', digest)
     parent = prior.strength.check_inputs(candidate)
     step, updates, reused_count = parent_gate(profile, read(candidate / 'status.json'), read(candidate / 'result.json'))
@@ -94,7 +101,7 @@ def prepare(work, profile='r33'):
     inputs = {p:h for p,h in parent['inputs_sha256'].items() if '/models--' in p}
     inputs.update(checkpoint['inputs_sha256'])
     cases = frozen._read_manifest(prior.SOURCE / 'cases.jsonl')
-    jobs = select_jobs(cases, read(candidate / 'jobs.json'))
+    jobs = select_jobs(cases, read(candidate / 'jobs.json'), canary_first=profile == 'r33_early_diagnostic')
     selected = {j['case']['case_id']: j['case'] for j in jobs}
     baseline_path = prior.SOURCE / 'base_report.json'
     baseline = read(baseline_path)
@@ -122,7 +129,7 @@ def prepare(work, profile='r33'):
                  gate / 'checkpoint.json', gate / 'result.json', prior.SOURCE / 'cases.jsonl'):
         inputs[str(path)] = frozen.sha256(path)
     comparison = []
-    if diagnostic:
+    if profile == 'r34_diagnostic':
         # Compare learning rates at the same exposure; r33/459 is not this control.
         prior.review.checked(CANDIDATE / 'plan.json', CANDIDATE_SHA)
         equal_gate = CANDIDATE / 'gate_150'
@@ -154,7 +161,7 @@ def prepare(work, profile='r33'):
     for name, obj in (('jobs.json', jobs), ('base_items.json', base), ('reused.json', reused)):
         save(work / name, obj)
         inputs[str(work / name)] = frozen.sha256(work / name)
-    if diagnostic:
+    if comparison:
         save(work / 'equal_exposure_r33.json', comparison)
         inputs[str(work / 'equal_exposure_r33.json')] = frozen.sha256(work / 'equal_exposure_r33.json')
     save(work / 'plan.json', {**plan, 'inputs_sha256':inputs, 'max_workers':4,
@@ -166,7 +173,9 @@ def prepare(work, profile='r33'):
             'mean CER uses existing CER_NOISE classification as observation, not automatic rejection',
             'diagnostic completion never promotes, resumes training or revises original rejection',
         ] if diagnostic else parent['early_rejection']), 'training_steps':0,
-        'note':'Development only. Same unmodified texts and paired five seeds; existing guard first, '
+        'canary_first':profile == 'r33_early_diagnostic',
+        'note':'Development only. Same unmodified texts and paired five seeds; early-r33 profile puts '
+               'the new TH1844 text first, otherwise existing guard first; '
                'known ID/TH stress texts next, remaining texts selected by ID hash without scores. '
                'Four workers share stage barriers. On rejection finish only in-flight outputs and '
                'preserve them. No retries, no reserved final texts, no production change.',
@@ -302,7 +311,7 @@ def run(work):
         metrics = {name:frozen.evaluation._report_metrics(items) for name, items in
                    (('base', base_rows), ('candidate', rows))}
         comparison = None
-        if diagnostic:
+        if (work / 'equal_exposure_r33.json').exists():
             old = {prior.key(r):r for r in read(work / 'equal_exposure_r33.json')}
             current = [r for r in rows if prior.key(r) in old]
             comparison = {'optimizer_updates':plan['checkpoint_optimizer_updates'], 'paired_outputs':len(current),
@@ -332,7 +341,7 @@ if __name__ == '__main__':
     parser.add_argument('action', choices=('prepare', 'run', 'worker'))
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--index', type=int, choices=range(4))
-    parser.add_argument('--profile', choices=('r33', 'r34_diagnostic'), default='r33')
+    parser.add_argument('--profile', choices=('r33', 'r34_diagnostic', 'r33_early_diagnostic'), default='r33')
     args = parser.parse_args()
     if args.action == 'worker':
         worker(args.work, args.index)

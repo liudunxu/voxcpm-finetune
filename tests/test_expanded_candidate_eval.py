@@ -113,6 +113,8 @@ def test_diagnostic_preserves_rejection_and_does_not_admit_other_failure(module)
     assert module.terminal_decision(None, True) == 'diagnostic_complete'
     assert module.terminal_decision('near_silence', True) == 'diagnostic_stopped'
     assert module.terminal_decision(None, False) == 'development_pass'
+    assert module.parent_gate('r33_early_diagnostic', {'stage':'pilot_complete'},
+        {'decision':'development_pilot_pass'}) == (150, 151, 40)
 
 
 def test_diagnostic_keeps_severe_and_acoustic_stops_but_records_small_cer_changes(module):
@@ -149,3 +151,8 @@ def test_diagnostic_reuses_all_five_r34_outputs_with_same_preselected_coverage(m
     after = module.select_jobs(cases, [{'case':canary, 'stage':'new_risk'}] + pilot)
     assert after == before
     assert {j['seed'] for j in after if j['case']['case_id'] == canary['case_id']} == set(range(42,47))
+    early = module.select_jobs(cases, pilot, canary_first=True)
+    assert {j['id'] for j in early} == {j['id'] for j in before}
+    assert {j['case']['sentence_id'] for j in early if j['stage'] == 0} == {
+        'fresh_id_1808', 'fresh_tl_1913', 'fresh_th_1844'}
+    assert Counter(j['stage'] for j in early) == {s:30 for s in range(10)}
