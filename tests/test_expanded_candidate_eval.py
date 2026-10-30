@@ -98,3 +98,54 @@ def test_expansion_cannot_skip_acoustic_failure(module):
     reason, failures = module.decision([candidate], {('a',42):row}, stage_end=True)
     assert reason == 'stage_acoustic_regression'
     assert failures['tail_silence']
+
+
+def test_diagnostic_preserves_rejection_and_does_not_admit_other_failure(module):
+    result = {'decision':'rejected', 'gates':{'150':{
+        'reason':'stage_mean_cer_regression_th', 'completed':5}}}
+    status = {'stage':'rejected'}
+    assert module.parent_gate('r34_diagnostic', status, result) == (150, 151, 5)
+    with pytest.raises(ValueError):
+        module.parent_gate('r33', status, result)
+    result['gates']['150']['reason'] = 'new_suspected_overread'
+    with pytest.raises(ValueError):
+        module.parent_gate('r34_diagnostic', status, result)
+    assert module.terminal_decision(None, True) == 'diagnostic_complete'
+    assert module.terminal_decision('near_silence', True) == 'diagnostic_stopped'
+    assert module.terminal_decision(None, False) == 'development_pass'
+
+
+def test_diagnostic_keeps_severe_and_acoustic_stops_but_records_small_cer_changes(module):
+    base = [{'case_id':'a', 'seed':s, 'lang':'th', 'cer':0., 'hyp':'text', 'text':'text',
+             'over_read':False, 'rms_dbfs':-20, 'speech_ratio':.95, 'audio_sec':5.,
+             'tail_silence_sec':.1, 'numeric':False, 'f0_std_st':0, 'wer':None}
+            for s in range(42,47)]
+    lookup = {module.prior.key(r):r for r in base}
+    rows = [{**r, 'cer':.0506 if r['seed'] == 43 else 0.} for r in base]
+    assert module.decision(rows, lookup, stage_end=True)[0] == 'stage_mean_cer_regression_th'
+    assert module.decision(rows, lookup, stage_end=True, diagnostic=True) == (None, {})
+    observed = module.cer_observations(rows, lookup)
+    assert observed['noise_threshold'] == .05
+    assert not observed['classification']['red'] and observed['classification']['noise']
+    rows[-1]['over_read'] = True
+    assert module.decision(rows, lookup, diagnostic=True)[0] == 'new_suspected_overread'
+    rows[-1]['over_read'] = False
+    for row in rows:
+        row['tail_silence_sec'] = 1.2
+    assert module.decision(rows, lookup, stage_end=True, diagnostic=True)[0] == 'stage_acoustic_regression'
+    # Red CER observation still cannot certify or promote a diagnostic run.
+    for row in rows:
+        row['cer'] = .08
+        row['tail_silence_sec'] = .1
+    assert module.cer_observations(rows, lookup)['classification']['red']
+
+
+def test_diagnostic_reuses_all_five_r34_outputs_with_same_preselected_coverage(module):
+    cases = module.frozen._read_manifest(Path('eval_cases/fresh_text_holdout_20261028.jsonl'))
+    guards = {'fresh_id_1808', 'fresh_th_1689', 'fresh_tl_1913'}
+    pilot = [{'case':c, 'stage':'guard'} for c in cases if c['sentence_id'] in guards]
+    canary = next(c for c in cases if c['case_id'] == 'fresh_th_1844_control')
+    before = module.select_jobs(cases, pilot)
+    after = module.select_jobs(cases, [{'case':canary, 'stage':'new_risk'}] + pilot)
+    assert after == before
+    assert {j['seed'] for j in after if j['case']['case_id'] == canary['case_id']} == set(range(42,47))

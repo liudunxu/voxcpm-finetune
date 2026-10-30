@@ -1,4 +1,4 @@
-"""Balanced development expansion after all staged gates; reuse outputs, stop at boundaries."""
+"""Bounded development evaluation; reuse outputs and keep diagnostic results separate."""
 import argparse
 import hashlib
 import os
@@ -14,6 +14,8 @@ prior, probe = staged.prior, staged.probe
 frozen, read, save = staged.frozen, staged.read, staged.save
 CANDIDATE = Path('/root/autodl-tmp/r33_dit_only_20261030/run')
 CANDIDATE_SHA = 'd1c19ebed1c74c165751bae49e3752894468698f3f0881ae8abb1f3bbf6efda1'
+DIAGNOSTIC = Path('/root/autodl-tmp/r34_dit_lr5e5_20261030/run')
+DIAGNOSTIC_SHA = '90574851e38af8582a2b9339137d3f887f957e5c942284a700c73cd908e79cb8'
 
 
 def publish(path, value):
@@ -62,24 +64,37 @@ def select_jobs(cases, pilot):
     return jobs
 
 
-def prepare(work):
+def parent_gate(profile, status, result):
+    if profile == 'r34_diagnostic':
+        gate = result.get('gates', {}).get('150', {})
+        if (status['stage'] != 'rejected' or result['decision'] != 'rejected'
+                or set(result.get('gates', {})) != {'150'}
+                or gate.get('reason') != 'stage_mean_cer_regression_th' or gate.get('completed') != 5):
+            raise ValueError('Expected the stopped five-output r34 mean-only gate')
+        return 150, 151, 5
+    if profile != 'r33' or status['stage'] != 'pilot_complete' or result['decision'] != 'development_pilot_pass':
+        raise ValueError('All training gates must pass before expanding latest')
+    return 459, 459, 40
+
+
+def prepare(work, profile='r33'):
     if work.exists():
         raise FileExistsError(work)
-    prior.review.checked(CANDIDATE / 'plan.json', CANDIDATE_SHA)
-    parent = prior.strength.check_inputs(CANDIDATE)
-    if (read(CANDIDATE / 'status.json')['stage'] != 'pilot_complete'
-            or read(CANDIDATE / 'result.json')['decision'] != 'development_pilot_pass'):
-        raise ValueError('All training gates must pass before expanding latest')
-    gate = CANDIDATE / 'gate_459'
+    diagnostic = profile == 'r34_diagnostic'
+    candidate, digest = (DIAGNOSTIC, DIAGNOSTIC_SHA) if diagnostic else (CANDIDATE, CANDIDATE_SHA)
+    prior.review.checked(candidate / 'plan.json', digest)
+    parent = prior.strength.check_inputs(candidate)
+    step, updates, reused_count = parent_gate(profile, read(candidate / 'status.json'), read(candidate / 'result.json'))
+    gate = candidate / f'gate_{step}'
     checkpoint = read(gate / 'checkpoint.json')
-    if checkpoint['optimizer_updates'] != 459:
+    if checkpoint['optimizer_updates'] != updates:
         raise ValueError('Expected completed latest training state')
     # Training inputs were verified above. Keep their parent plan as provenance;
     # inference workers only need to recheck model, source and evaluation inputs.
     inputs = {p:h for p,h in parent['inputs_sha256'].items() if '/models--' in p}
     inputs.update(checkpoint['inputs_sha256'])
     cases = frozen._read_manifest(prior.SOURCE / 'cases.jsonl')
-    jobs = select_jobs(cases, read(CANDIDATE / 'jobs.json'))
+    jobs = select_jobs(cases, read(candidate / 'jobs.json'))
     selected = {j['case']['case_id']: j['case'] for j in jobs}
     baseline_path = prior.SOURCE / 'base_report.json'
     baseline = read(baseline_path)
@@ -101,11 +116,32 @@ def prepare(work):
         inputs[str(path)] = frozen.sha256(path)
         inputs.update(report['wav_sha256'])
         reused.append({**row, **prior.review.level_metrics(row['wav'])})
-    if len(reused) != 40 or len({prior.key(r) for r in reused}) != 40:
-        raise ValueError('Expected 40 existing candidate outputs without reruns')
-    for path in (CANDIDATE / 'plan.json', CANDIDATE / 'result.json', CANDIDATE / 'verification.json',
+    if len(reused) != reused_count or len({prior.key(r) for r in reused}) != reused_count:
+        raise ValueError('Unexpected existing candidate outputs; no reruns')
+    for path in (candidate / 'plan.json', candidate / 'result.json', candidate / 'verification.json',
                  gate / 'checkpoint.json', gate / 'result.json', prior.SOURCE / 'cases.jsonl'):
         inputs[str(path)] = frozen.sha256(path)
+    comparison = []
+    if diagnostic:
+        # Compare learning rates at the same exposure; r33/459 is not this control.
+        prior.review.checked(CANDIDATE / 'plan.json', CANDIDATE_SHA)
+        equal_gate = CANDIDATE / 'gate_150'
+        equal_checkpoint = read(equal_gate / 'checkpoint.json')
+        if equal_checkpoint['optimizer_updates'] != updates:
+            raise ValueError('Learning-rate comparison must use equal optimizer updates')
+        inputs.update(equal_checkpoint['inputs_sha256'])
+        for path in (CANDIDATE / 'plan.json', CANDIDATE / 'verification.json', equal_gate / 'checkpoint.json'):
+            inputs[str(path)] = frozen.sha256(path)
+        equal_plan = {**plan, 'targets':{'candidate':equal_checkpoint['target']}}
+        for path in sorted((equal_gate / 'items').glob('*.json')):
+            report = read(path)
+            row, = report['items']
+            prior.verify(report, equal_plan, selected[row['case_id']], 'candidate', 1., row['seed'])
+            inputs[str(path)] = frozen.sha256(path)
+            inputs.update(report['wav_sha256'])
+            comparison.append({**row, **prior.review.level_metrics(row['wav'])})
+        if len(comparison) != 40 or len({prior.key(r) for r in comparison}) != 40:
+            raise ValueError('Expected 40 frozen r33/151 outputs')
     for folder in ('src', 'scripts', 'third_party/VoxCPM/src'):
         for path in (frozen.ROOT / folder).rglob('*'):
             if path.suffix in ('.py', '.sh'):
@@ -113,21 +149,29 @@ def prepare(work):
     for path, digest in inputs.items():
         prior.review.checked(path, digest)
     if shutil.disk_usage(work.parent).free < 5.2 * 1024**3:
-        raise RuntimeError('Need 5.2 GiB for 260 outputs, four runtimes and 4 GiB reserve')
+        raise RuntimeError('Need 5.2 GiB for bounded outputs, four runtimes and 4 GiB reserve')
     work.mkdir()
     for name, obj in (('jobs.json', jobs), ('base_items.json', base), ('reused.json', reused)):
         save(work / name, obj)
         inputs[str(work / name)] = frozen.sha256(work / name)
+    if diagnostic:
+        save(work / 'equal_exposure_r33.json', comparison)
+        inputs[str(work / 'equal_exposure_r33.json')] = frozen.sha256(work / 'equal_exposure_r33.json')
     save(work / 'plan.json', {**plan, 'inputs_sha256':inputs, 'max_workers':4,
-        'total_outputs':300, 'reused_outputs':40, 'new_outputs_max':260,
+        'profile':profile, 'diagnostic_only':diagnostic, 'checkpoint_optimizer_updates':updates,
+        'total_outputs':300, 'reused_outputs':reused_count, 'new_outputs_max':300-reused_count,
         'texts_per_language':10, 'seeds':frozen.SEEDS, 'tail_policy':'absolute',
-        'stages':10, 'early_rejection':parent['early_rejection'], 'training_steps':0,
+        'stages':10, 'early_rejection':([
+            'existing per-output severe gates; existing absolute acoustic gates at stage boundaries',
+            'mean CER uses existing CER_NOISE classification as observation, not automatic rejection',
+            'diagnostic completion never promotes, resumes training or revises original rejection',
+        ] if diagnostic else parent['early_rejection']), 'training_steps':0,
         'note':'Development only. Same unmodified texts and paired five seeds; existing guard first, '
                'known ID/TH stress texts next, remaining texts selected by ID hash without scores. '
                'Four workers share stage barriers. On rejection finish only in-flight outputs and '
                'preserve them. No retries, no reserved final texts, no production change.',
         'production_changed':False, 'native_quality':'unverified'})
-    print('PREPARED 300 development outputs: 40 reused, at most 260 new', flush=True)
+    print(f'PREPARED {profile}: 300 outputs, {reused_count} reused, at most {300-reused_count} new', flush=True)
 
 
 def worker(work, index):
@@ -165,10 +209,24 @@ def worker(work, index):
             update(directory / 'progress.json', {'last_job':job['id'], 'time':time.time()})
 
 
-def decision(rows, base, *, stage_end=False):
-    reason = probe.reject_reason(rows, base, stage_end=stage_end)
+def decision(rows, base, *, stage_end=False, diagnostic=False):
+    reason = probe.reject_reason(rows, base, stage_end=stage_end and not diagnostic)
     acoustics = staged.acoustic_gate(rows, base) if stage_end else {}
     return reason or ('stage_acoustic_regression' if acoustics else None), acoustics
+
+
+def cer_observations(rows, base):
+    from voxft.train.runlog import CER_NOISE, _regressed
+    reports = [{'label':name, **frozen.evaluation._report_metrics(items)} for name, items in
+               (('base', [base[prior.key(r)] for r in rows]), ('candidate', rows))]
+    return {'noise_threshold':CER_NOISE, 'classification':_regressed(reports)['candidate'],
+            'interpretation':'Review evidence only; below threshold does not establish non-regression.'}
+
+
+def terminal_decision(reason, diagnostic):
+    if reason:
+        return 'diagnostic_stopped' if diagnostic else 'rejected'
+    return 'diagnostic_complete' if diagnostic else 'development_pass'
 
 
 def run(work):
@@ -185,6 +243,7 @@ def run(work):
     expected = {j['id']:j for j in jobs}
     base = {prior.key(r):r for r in read(work / 'base_items.json')}
     rows = read(work / 'reused.json')
+    diagnostic = plan.get('diagnostic_only', False)
     present = {f"{r['case_id']}_{r['seed']}" for r in rows}
     processes, stages, seen = [], [], set()
     stage, reason, acoustics = 0, None, {}
@@ -210,11 +269,12 @@ def run(work):
                 seen.add(path.stem)
                 present.add(path.stem)
                 if reason is None:
-                    reason, acoustics = decision(rows, base)
+                    reason, acoustics = decision(rows, base, diagnostic=diagnostic)
             if reason is None and stage < plan['stages'] and all(
                     j['id'] in present for j in jobs if j['stage'] <= stage):
-                reason, acoustics = decision(rows, base, stage_end=True)
-                stages.append({'stage':stage, 'completed':len(rows), 'reason':reason, 'acoustic_failures':acoustics})
+                reason, acoustics = decision(rows, base, stage_end=True, diagnostic=diagnostic)
+                stages.append({'stage':stage, 'completed':len(rows), 'reason':reason,
+                    'acoustic_failures':acoustics, 'cer_observations':cer_observations(rows, base)})
                 stage += 1
             done = reason is not None or stage == plan['stages']
             update(work / 'control.json', {'stage':stage, 'stop':done, 'reason':reason})
@@ -241,12 +301,22 @@ def run(work):
         base_rows = [base[prior.key(r)] for r in rows]
         metrics = {name:frozen.evaluation._report_metrics(items) for name, items in
                    (('base', base_rows), ('candidate', rows))}
-        save(work / 'result.json', {'decision':'rejected' if reason else 'development_pass',
+        comparison = None
+        if diagnostic:
+            old = {prior.key(r):r for r in read(work / 'equal_exposure_r33.json')}
+            current = [r for r in rows if prior.key(r) in old]
+            comparison = {'optimizer_updates':plan['checkpoint_optimizer_updates'], 'paired_outputs':len(current),
+                'metrics':{name:frozen.evaluation._report_metrics(items) for name, items in
+                    (('r33_lr1e4', [old[prior.key(r)] for r in current]), ('r34_lr5e5', current))},
+                'note':'Same exposure and inference inputs; one training seed, development only.'}
+        final_decision = terminal_decision(reason, diagnostic)
+        save(work / 'result.json', {'decision':final_decision, 'diagnostic_only':diagnostic,
             'reason':reason, 'completed':len(rows), 'new_outputs':len(seen), 'skipped':300-len(rows),
             'stages':stages, 'metrics':metrics, 'rows':rows, 'matched_base':base_rows,
+            'cer_observations':cer_observations(rows, base), 'equal_exposure_comparison':comparison,
             'native_quality':'unverified', 'production_changed':False,
             'wav_sha256':{r['wav']:frozen.sha256(r['wav']) for r in rows}})
-        update(work / 'status.json', {'stage':'rejected' if reason else 'development_complete',
+        update(work / 'status.json', {'stage':final_decision if diagnostic else ('rejected' if reason else 'development_complete'),
             'completed':len(rows), 'new_completed':len(seen), 'reason':reason, 'pids':[], 'time':time.time()})
     except BaseException as error:
         update(work / 'control.json', {'stage':stage, 'stop':True, 'reason':str(error)})
@@ -262,8 +332,11 @@ if __name__ == '__main__':
     parser.add_argument('action', choices=('prepare', 'run', 'worker'))
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--index', type=int, choices=range(4))
+    parser.add_argument('--profile', choices=('r33', 'r34_diagnostic'), default='r33')
     args = parser.parse_args()
     if args.action == 'worker':
         worker(args.work, args.index)
+    elif args.action == 'prepare':
+        prepare(args.work, args.profile)
     else:
         globals()[args.action](args.work)

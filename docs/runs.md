@@ -4,7 +4,7 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
-## lora_joint3_r34_dit_lr5e5_staged（2026-10-30，已启动）
+## lora_joint3_r34_dit_lr5e5_staged（2026-10-30，151次更新后停止，另做诊断）
 
 r33在较大开发集出现新疑似多读，下一轮只验证降低更新幅度。相对r33唯一训练参数变化为lr1e-4→5e-5；
 同原基座冷启动seed42，DiT-only，LM/proj关，r/alpha64、dropout.05、warmup45、cosine459、wd.01、
@@ -18,7 +18,29 @@ clip1、batch2×8不变；5015条/9.4815h及895条/1.5965h验证保持、历史�
 plan `90574851e38af8582a2b9339137d3f887f957e5c942284a700c73cd908e79cb8`，
 根`/root/autodl-tmp/r34_dit_lr5e5_20261030/`；入口`staged_dit_lr_candidate.sh`及共用driver。
 CUDA bf16已正常训练，loss/梯度有限；val step0=1.047530仅运行观测。
-最终实际步数、val末值及分语种生成结果待记录；未晋级，最终留出未使用。
+实际在151次更新停止（名义.481755epoch），96个optimizer状态全151；无step250验证，因此val仅有初值。
+11,738输入、5WAV/claims、完整snapshot/latest SHA独立核验通过，未评分WAV为0。
+LoRA SHA `a81ebbfc2b3b9e6e289e16bcf9282dee0ea78a7bfaa6d65c48ec51bebf45f996`；
+证据`run/verification.json`。原拒绝`stage_mean_cer_regression_th`与冻结source不改。
+
+| 原门完成子集 | CER base→r34 | WER | 疑似少读/漏尾 | 疑似多读 | 平均音频时长 |
+| --- | --- | --- | --- | --- | --- |
+| TH1844 control（5seed、仅一个文本） | .254→1.266% | 不计算 | 0→0 | 0→0 | 5.056→5.056s |
+| ID / TL | 未评 | 未评 | 未评 | 未评 | 未评 |
+
+增量1.012pp只来自seed43的少数字符差异（`พื้นผิว`与ASR `ผืนผิว`），未确认真实发音错误。
+五条无声学门失败，原r33失败的seed44也未触发疑似多读；这不能证明全语种质量或学习率的因果收益。
+此前新加的单句1pp自动门过敏，不应以它否定低学习率方向。
+
+独立补充诊断`r34_diagnostic_20261030/`使用同一个151次更新checkpoint，不恢复训练。
+每语种10文本×plain/control×5seed=300，沿用r33扩评的预先选定文本；复用5条、最多新增295条，
+四路调度逐条查严重风险、阶段末查既有absolute声学门，失败后保留在途产物。
+均值CER使用既有`CER_NOISE=.05`分类为观察/复核信息，小样本未越线不证明无退化；
+终态仅`diagnostic_complete/diagnostic_stopped`，**不是换门槛给r34过关**，不自动晋级或重启训练。
+同时固定r33在151次更新的40个已有输出作等曝光学习率比较，不能拿r33/459作单变量因果对照。
+22相关/447全量测试exit0、shell/diff通过；未使用最终留出，母语质量未验证。
+独立诊断已冻结并后台启动；plan
+`c52fcf0436ff52769a4a0af49caa83d47b484f8c3f9a8bd0e2e5bec1a46ee48d`。
 
 ## lora_joint3_r33_dit_only_staged（2026-10-30，459次更新完成，扩评290条后淘汰）
 
