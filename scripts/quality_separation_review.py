@@ -298,9 +298,11 @@ def asr(work):
     print('ASR_COMPLETE',flush=True)
 
 
-def collect(work):
-    plan=read(work/'plan.json');verify(plan['inputs_sha256'])
-    verify(read(work/'qwen/summary.json')['outputs_sha256'])
+def paired_rows(work, *, check_hashes=True):
+    plan=read(work/'plan.json')
+    if check_hashes:
+        verify(plan['inputs_sha256'])
+        verify(read(work/'qwen/summary.json')['outputs_sha256'])
     clap=read(work/'clap/reused.json')+[read(p) for p in (work/'clap/items').glob('*.json')]
     pairs=read(work/'pairs.json')
     if len(pairs)!=plan['outputs']:raise ValueError('Changed pair count')
@@ -309,7 +311,7 @@ def collect(work):
     clap=index_results(clap,expected)
     qwen=[read(p) for p in (work/'qwen/items').glob('*.json')]
     for path,item in read(work/'qwen/reused.json').items():
-        if sha(item['path'])!=item['sha256']:raise ValueError('Original ASR changed')
+        if check_hashes and sha(item['path'])!=item['sha256']:raise ValueError('Original ASR changed')
         result=read(item['path'])
         if result['case']['audio']!=path:raise ValueError('Wrong reused ASR path')
         qwen.append(result)
@@ -332,6 +334,12 @@ def collect(work):
             'qwen_numeric':[numeric_equivalence(source['text'],qwen[p]['qwen_hyp'],source['lang']) for p in (raw,vocals)],
             'original_metrics':pair['original_metrics'],'separated_metrics':pair['separated_metrics'],
             'training_eligible':False})
+    return rows
+
+
+def collect(work):
+    rows=paired_rows(work)
+    plan=read(work/'plan.json')
     save(work/'comparison.json',{'pairs':rows,'training_eligible':False,'listening_pending':True,
         'policy':plan['policy'],'outputs_sha256':{str(p):sha(p) for p in work.rglob('*.json')}})
     print('PAIRED_REVIEW_COMPLETE',len(rows),flush=True)
@@ -354,6 +362,60 @@ def collect_expanded(work):
     save(work/'comparison.json',{'pairs':sorted(rows,key=lambda r:r['review_id']),
          'training_eligible':False,'listening_pending':True,'outputs_sha256':outputs,'policy':plan['policy']})
     print('FULL_PAIRED_REVIEW_COMPLETE',len(rows),flush=True)
+
+
+def verify_expanded(work):
+    """Read-only verification, including raw shard outcomes; never rewrite old reports."""
+    inputs={}
+    def merge(values):
+        for path,digest in values.items():
+            if path in inputs and inputs[path]!=digest:
+                raise ValueError('Conflicting frozen SHA: '+path)
+            inputs[path]=digest
+    plan=read(work/'plan.json');comparison=read(work/'comparison.json')
+    merge(plan['inputs_sha256']);merge(comparison['outputs_sha256'])
+    for name in ('plan.json','comparison.json'):
+        inputs[str(work/name)]=sha(work/name)
+    rebuilt=[];shards=[]
+    for shard in range(4):
+        directory=work/f'shard{shard}'
+        result=read(directory/'comparison.json')
+        for name in ('plan.json','comparison.json','clap/plan.json','clap/summary.json',
+                     'qwen/plan.json','qwen/summary.json'):
+            path=directory/name;value=read(path)
+            merge(value.get('inputs_sha256',{}));merge(value.get('outputs_sha256',{}))
+            merge({str(path):sha(path)})
+        for name,marker in (('music.log','MUSIC_COMPLETE'),('asr.log','ASR_COMPLETE'),
+                            ('collect.log','PAIRED_REVIEW_COMPLETE')):
+            path=directory/name
+            if marker not in path.read_text(encoding='utf-8').splitlines()[-1]:
+                raise ValueError('Nonterminal shard log: '+str(path))
+            inputs[str(path)]=sha(path)
+        rows=paired_rows(directory,check_hashes=False)
+        if rows!=result['pairs']:
+            raise ValueError('Shard report differs from raw outcomes')
+        # A truncated ASR attempt is a completed bad outcome, not missing work to rerun.
+        rebuilt.extend(rows);shards.append({'shard':shard,'pairs':len(rows),'terminal':True,
+            'qwen_without_eos':[sum(not r['qwen_eos'][i] for r in rows) for i in (0,1)]})
+    pairs=read(work/'pairs.json')
+    if (len(pairs)!=plan['outputs'] or len(rebuilt)!=len(pairs)
+            or len({p['case']['audio'] for p in pairs})!=len(pairs)
+            or len({p['vocals'] for p in pairs})!=len(pairs)
+            or sorted(rebuilt,key=lambda r:r['review_id'])!=comparison['pairs']):
+        raise ValueError('Incomplete or duplicate paired scope')
+    expected={p['case']['audio']:p for p in pairs}
+    if {r['original_audio'] for r in rebuilt}!=set(expected):
+        raise ValueError('Paired source scope differs')
+    for row in rebuilt:
+        pair=expected[row['original_audio']];case=pair['case']
+        if (row['vocals']!=pair['vocals'] or row['text']!=case['text'] or row['lang']!=case['lang']
+                or pair['sample_rate']!=16000 or pair['frames']!=round(case['duration']*16000)):
+            raise ValueError('Pair input/format differs')
+        merge({case['audio']:case['file_sha256'],pair['vocals']:pair['vocals_sha256']})
+    verify(inputs)
+    print('VERIFIED_FULL_PAIRED_REVIEW',len(rebuilt),len(inputs),flush=True)
+    return {'pairs':len(rebuilt),'unique_sources':len(expected),'shards':shards,
+            'raw_outcomes_reconstructed':True,'inputs_outputs_sha256':inputs}
 
 
 if __name__=='__main__':
