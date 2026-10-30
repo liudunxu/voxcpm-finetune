@@ -17,6 +17,8 @@ frozen, read, save = prior.frozen, prior.read, prior.save
 GATES = (150, 300, 459)
 PILOT = Path('/root/autodl-tmp/r31_component_probe_20261030/run')
 PILOT_SHA = '176812d3f4129274293183bacf5a7e07fcb847148d0cf6da3a7c5220e5c9dfb6'
+R33_DEVELOPMENT = Path('/root/autodl-tmp/r33_development_20261030_v2/run')
+R33_DEVELOPMENT_SHA = '12e21245f775913548f262519df6da818a8a4eb2ceb2ce79985c92b3e01619e5'
 
 
 def acoustic_gate(rows, baseline):
@@ -37,6 +39,11 @@ VARIANTS = {
     'dit_only': {'changes': {'enable_lm':False}, 'free_gib':4.9,
                  'run_name':'lora_joint3_r33_dit_only_staged',
                  'hypothesis':'Freeze LM, train only DiT at original rank/alpha64; hold all other training settings fixed.'},
+    'dit_lr5e5': {'changes': {'enable_lm':False}, 'learning_rate':5e-5, 'free_gib':5.,
+                 'run_name':'lora_joint3_r34_dit_lr5e5_staged',
+                 'hypothesis':'Relative to r33, only halve learning rate to 5e-5; same DiT-only rank64, '
+                              'data, seed and 459-update schedule. Test smaller adaptation after a new '
+                              'TH overread observation; this is not proof that learning rate caused it.'},
 }
 
 
@@ -46,9 +53,35 @@ def candidate_config(parent, work, variant):
     if parent['num_iters'] != 459 or parent['max_steps'] != 459:
         raise ValueError('Keep the original full learning-rate/progress schedule')
     return {**parent, 'lora': {**parent['lora'], **VARIANTS[variant]['changes']},
+            'learning_rate': VARIANTS[variant].get('learning_rate', parent['learning_rate']),
             'train_manifest': str(work / 'train.jsonl'), 'val_manifest': str(work / 'val.jsonl'),
             'save_path': str(work / 'checkpoint'), 'tensorboard': str(work / 'checkpoint/logs'),
             'save_interval': 150}
+
+
+def add_failure_canary(jobs, base_items, cases, baseline):
+    """Put all five seeds of the newly observed r33 failure ahead of old pilot work."""
+    case, = [c for c in cases if c['case_id'] == 'fresh_th_1844_control']
+    new = [{'case':case, 'seed':seed, 'stage':'new_risk'} for seed in (44, 43, 45, 42, 46)]
+    lookup = {prior.key(r):r for r in baseline}
+    added = []
+    for job in new:
+        row = lookup[job['case']['case_id'], job['seed']]
+        if any(row.get(k) != v for k, v in case.items()):
+            raise ValueError('New canary does not match its frozen baseline')
+        added.append(row)
+    combined = new + jobs
+    if len({(j['case']['case_id'], j['seed']) for j in combined}) != len(combined):
+        raise ValueError('Duplicate canary output; no reruns')
+    return combined, added + base_items
+
+
+def end_of_stage(jobs, position):
+    if position == len(jobs) - 1:
+        return True
+    current, following = jobs[position], jobs[position + 1]
+    return (current['stage'] != following['stage'] or
+            current['stage'] == 'guard' and current['case']['lang'] != following['case']['lang'])
 
 
 def prepare(work, variant='rank32'):
@@ -59,6 +92,25 @@ def prepare(work, variant='rank32'):
     prior.review.checked(PILOT / 'plan.json', PILOT_SHA)
     pilot = prior.strength.check_inputs(PILOT)
     inputs = {**parent['inputs_sha256'], **pilot['inputs_sha256']}
+    jobs, base_items = read(PILOT / 'jobs.json'), read(PILOT / 'base_items.json')
+    if variant == 'dit_lr5e5':
+        prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
+        prior.strength.check_inputs(R33_DEVELOPMENT)
+        result = read(R33_DEVELOPMENT / 'result.json')
+        if result['reason'] != 'new_suspected_overread' or result['completed'] != 290:
+            raise ValueError('Expected frozen r33 expansion failure evidence')
+        row, = [r for r in result['rows'] if prior.key(r) == ('fresh_th_1844_control', 44)]
+        if not row['over_read'] or row['len_ratio'] <= 1.4:
+            raise ValueError('Expected the new canary failure')
+        inputs[row['wav']] = result['wav_sha256'][row['wav']]
+        for name in ('plan.json', 'result.json'):
+            path = R33_DEVELOPMENT / name
+            inputs[str(path)] = frozen.sha256(path)
+        baseline = read(prior.SOURCE / 'base_report.json')
+        jobs, base_items = add_failure_canary(jobs, base_items,
+            frozen._read_manifest(prior.SOURCE / 'cases.jsonl'), baseline['items'])
+        for row in base_items:
+            inputs[row['wav']] = baseline['wav_sha256'][row['wav']]
     reserved = frozen.ROOT / 'eval_cases/reserved_final_20261030.jsonl'
     digest = 'cc7da8b05f6e78c92b5a7789e9cc95b0eadfb5047caf3287f3acf47b6b55fd0c'
     prior.review.checked(reserved, digest)
@@ -76,8 +128,8 @@ def prepare(work, variant='rank32'):
     work.mkdir()
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json'):
         shutil.copyfile(prior.SOURCE / name, work / name)
-    for name in ('jobs.json', 'base_items.json'):
-        shutil.copyfile(PILOT / name, work / name)
+    save(work / 'jobs.json', jobs)
+    save(work / 'base_items.json', base_items)
     cfg = candidate_config(yaml.safe_load((prior.SOURCE / 'train.yaml').read_text(encoding='utf-8')), work, variant)
     (work / 'train.yaml').write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding='utf-8')
     from voxft.train.launcher import preflight
@@ -100,7 +152,7 @@ def prepare(work, variant='rank32'):
         'variant':variant, 'run_name':settings['run_name'], 'max_training_updates': 459,
         'training_authorized': True, 'authorization': 'User continuous iteration and hyperparameter optimization',
         'gates': list(GATES), 'gate_optimizer_updates': {'150': 151, '300': 301, '459': 459},
-        'pilot_outputs_per_gate_max': 40, 'new_outputs_max': 120,
+        'pilot_outputs_per_gate_max': len(jobs), 'new_outputs_max': len(GATES) * len(jobs),
         'early_rejection': [*pilot['early_rejection'], 'stage-end existing absolute-tail/duration/speech-ratio gates'],
         'tail_policy':'absolute', 'production_changed': False,
         'hypothesis': settings['hypothesis'],
@@ -199,8 +251,7 @@ def evaluate_gate(work, step):
             save(directory / 'items' / f'{position:02d}.json', report)
             rows.append({**row, **prior.review.level_metrics(row['wav']), 'stage': job['stage']})
             # Check protection at each completed language, not only the entire budget.
-            stage_end = position == 9 or position == len(jobs)-1 or (
-                position >= 10 and jobs[position+1]['case']['lang'] != row['lang'])
+            stage_end = end_of_stage(jobs, position)
             reason = probe.reject_reason(rows, base, stage_end=stage_end)
             if stage_end:
                 acoustic_failures = acoustic_gate(rows, base)

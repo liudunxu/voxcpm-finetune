@@ -34,6 +34,10 @@ checkpoints/
 /work/hparams_audit_20261030/
 /work/r32_rank32_20261030/
 /work/r33_dit_only_20261030/
+/work/r33_development_20261030/
+/work/r33_development_20261030_v2/
+/work/r34_dit_lr5e5_20261030/
+/work/storage_dedupe_20261030/
 /work/final_text_reservation_20261030/
 wandb/
 logs/

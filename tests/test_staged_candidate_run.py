@@ -27,6 +27,27 @@ def test_rank_experiment_preserves_learning_schedule(module, tmp_path):
     assert dit['lora'] == {**parent['lora'], 'enable_lm':False}
     assert dit['learning_rate'] == parent['learning_rate']
     assert dit['num_iters'] == dit['max_steps'] == 459
+    lower_lr = module.candidate_config(parent, tmp_path, 'dit_lr5e5')
+    assert {k for k in dit if dit[k] != lower_lr[k]} == {'learning_rate'}
+    assert lower_lr['learning_rate'] == 5e-5
+
+
+def test_new_failure_canary_precedes_guards_without_moving_training_inputs(module):
+    def case(cid, lang):
+        return {'case_id':cid, 'lang':lang, 'text':'unchanged'}
+    old = [{'case':case(f'old{i}', 'th'), 'seed':42, 'stage':'risk'} for i in range(10)]
+    old += [{'case':case(f'guard{i}', lang), 'seed':42, 'stage':'guard'}
+            for i,lang in enumerate(['id']*10 + ['th']*10 + ['tl']*10)]
+    old_base = [{**j['case'], 'seed':j['seed']} for j in old]
+    canary = case('fresh_th_1844_control', 'th')
+    baseline = [{**canary,'seed':seed} for seed in range(42,47)]
+    jobs, matched = module.add_failure_canary(old, old_base, [canary], baseline)
+    assert jobs[5:] == old and matched[5:] == old_base
+    assert [j['seed'] for j in jobs[:5]] == [44,43,45,42,46]
+    assert [i for i in range(45) if module.end_of_stage(jobs,i)] == [4,14,24,34,44]
+    assert [i for i in range(40) if module.end_of_stage(old,i)] == [9,19,29,39]
+    with pytest.raises(ValueError, match='Duplicate'):
+        module.add_failure_canary(jobs, matched, [canary], baseline)
 
 
 @pytest.mark.parametrize('decision', ['pilot_pass', 'rejected'])

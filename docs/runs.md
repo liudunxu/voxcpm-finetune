@@ -4,7 +4,23 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
-## lora_joint3_r33_dit_only_staged（2026-10-30，459次更新完成，小门通过、扩评待结论）
+## lora_joint3_r34_dit_lr5e5_staged（2026-10-30，已启动）
+
+r33在较大开发集出现新疑似多读，下一轮只验证降低更新幅度。相对r33唯一训练参数变化为lr1e-4→5e-5；
+同原基座冷启动seed42，DiT-only，LM/proj关，r/alpha64、dropout.05、warmup45、cosine459、wd.01、
+clip1、batch2×8不变；5015条/9.4815h及895条/1.5965h验证保持、历史隔离与最终文本保护全部继承。
+来源及许可/条数/小时同r31表，实际时长ID55.207%/TH20.463%/TL14.210%/zh6.260%/en3.860%。
+预算459次更新/1.464407epoch，单一训练seed不作因果认证。
+
+新TH1844 control坏例的5seed（44优先）放在原40条pilot前；三个阶段最多各45条，共135条上限。
+新风险5条后及旧风险/各语言保护组末检查CER和absolute声学门，失败退出原训练，不做下一次更新。
+444全量测试exit0（两条既有弃用警告），shell/diff通过；11,738输入SHA/预检通过。
+plan `90574851e38af8582a2b9339137d3f887f957e5c942284a700c73cd908e79cb8`，
+根`/root/autodl-tmp/r34_dit_lr5e5_20261030/`；入口`staged_dit_lr_candidate.sh`及共用driver。
+CUDA bf16已正常训练，loss/梯度有限；val step0=1.047530仅运行观测。
+最终实际步数、val末值及分语种生成结果待记录；未晋级，最终留出未使用。
+
+## lora_joint3_r33_dit_only_staged（2026-10-30，459次更新完成，扩评290条后淘汰）
 
 在r32因声学退化停止后，按旧r31拆分内容及声学小门的证据，仅改变训练模块选择：冻结LM，只训练DiT。
 数据原样继承r31，5015条/9.4815h、val895条/1.5965h，所有历史疑似隔离及新90个最终文本均受保护。
@@ -37,6 +53,22 @@
 v2已启动，根`/root/autodl-tmp/r33_development_20261030_v2/`；plan
 `12e21245f775913548f262519df6da818a8a4eb2ceb2ce79985c92b3e01619e5`，602份推理输入SHA，
 父训练plan/verification另固定以保留完整训练溯源；443全量测试exit0（两条既有弃用警告）。
+
+**扩评实际290/300后自动拒绝，GPU释放；复用40、新增250、跳过10，无未评分WAV。**
+新增`fresh_th_1844_control/seed44`疑似多读：CER .0127→.5316、len_ratio .987→1.519、
+WAV5.28→9.60s，尾.08→.24s；既有有声比例折算增加3.279s有声。新WAV和base原WAV SHA/采样数已核，
+不是仅靠报告时长推断，也没有重做ASR或覆盖旧分。另4seed未触发标记，母语内容未验证，状态仍uncertain。
+
+| 语言（已完成配对） | CER base→r33 | WER base→r33 | 疑似少读/漏尾 | 疑似多读 | 尾p90 |
+| --- | --- | --- | --- | --- | --- |
+| ID（100） | 3.5509→3.3283% | 4.8529→4.8434% | 11→11 | 0→0 | .16→.16s |
+| TH（100） | 4.5713→4.4271% | 不计算 | 3→3 | 0→1 | .18→.20s |
+| TL（90） | 2.3000→2.7500% | 13.8727→14.7819% | 0→0 | 0→0 | .18→.20s |
+
+TL未完成计划100条，不能与完整集合混比。绝对声学门及此前各阶段均通过，但均值不能覆盖新增严重风险；
+**r33不通过、不晋级**。290候选WAV全SHA、250claims/items/WAV一一对应，证据`run/failure_analysis.json`。
+原结果SHA `1cbdf6b13dfa66767fe2ecaf0e4592514f7406e7cf9debd9a8a660939af07e82`。
+下一轮r34只减半学习率并前置该坏例，不把该失败当作“学习率过高”的已证实因果。
 
 根`/root/autodl-tmp/r33_dit_only_20261030/`，入口`staged_dit_candidate.sh`/共用`staged_candidate_run.py`，
 状态`run/status.json`，日志`run/train.log`、`run/gate_*/eval.log`。执行source冻结，后续只改handoff文档。
