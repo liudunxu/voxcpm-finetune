@@ -127,7 +127,7 @@ def test_runlog_cer_default_and_cli_override(monkeypatch):
     assert not runlog._regressed(reports)["r8"]["red"]
     assert runlog._regressed(reports, noise=0.005)["r8"]["red"]
     seen = []
-    monkeypatch.setattr(runlog, "build_record", lambda *args: seen.append(args[-1]) or "")
+    monkeypatch.setattr(runlog, "build_record", lambda *args, **kwargs: seen.append(args[-1]) or "")
     for options in ([], ["--noise", "0.02"]):
         monkeypatch.setattr(sys, "argv", ["runlog", "--run", "test", "--print", *options])
         runlog.main()

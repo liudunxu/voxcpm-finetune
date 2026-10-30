@@ -121,7 +121,7 @@ SPEECH_RATIO_DROP = 0.05           # mean speech_ratio 下降上限
 OVER_READ_CATASTROPHIC = 2.0
 
 
-def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
+def _duration_gates(evals: list[dict], *, tail_policy: str = "legacy") -> dict[str, dict[str, list[str]]]:
     """时长类红线：以第一份报告为基线，overall 与 by_lang 都查。
 
     三条门禁都是已被盲听交叉验证的失败形态（r2 vs base，84 条生产口径 case）：
@@ -136,7 +136,11 @@ def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
     旧报告没有这些聚合字段时对应检查跳过、不误报；可用 eval --summarize 另存重算。
     tail_silence 的绝对上限
     （p90 > 0.5s）只依赖 checkpoint 自己的值，base 缺字段时仍然生效。
+    absolute 策略（用户 2026-10-30 授权）仅以绝对上限否决；增量另记观察项。
+    默认 legacy 保留历史调用的语义，新实验须显式记录所用策略。
     """
+    if tail_policy not in ("legacy", "absolute"):
+        raise ValueError(f"Unknown tail policy: {tail_policy}")
     if len(evals) < 2:
         return {}
     base, base_lang = evals[0], evals[0].get("by_lang", {})
@@ -144,6 +148,8 @@ def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
     for e in evals[1:]:
         gates: dict[str, list[str]] = {"duration_inflation": [], "tail_silence": [],
                                        "speech_ratio": []}
+        if tail_policy == "absolute":
+            gates["tail_silence_observations"] = []
         scopes = [("overall", base, e)]
         scopes += [(lang, base_lang.get(lang, {}), v)
                    for lang, v in sorted(e.get("by_lang", {}).items())]
@@ -159,7 +165,8 @@ def _duration_gates(evals: list[dict]) -> dict[str, dict[str, list[str]]]:
             bp, cp = b.get("p90_tail_silence"), c.get("p90_tail_silence")
             if cp is not None:
                 if bp is not None and _metric_delta(cp, bp) > TAIL_SILENCE_P90_DELTA:
-                    gates["tail_silence"].append(
+                    key = "tail_silence" if tail_policy == "legacy" else "tail_silence_observations"
+                    gates[key].append(
                         f"{name} p90尾静音 {bp:.3f}→{cp:.3f}s（+{cp - bp:.3f}s）")
                 if cp > TAIL_SILENCE_P90_MAX:
                     gates["tail_silence"].append(
@@ -209,7 +216,8 @@ def _seed_severity_lines(evals: list[dict]) -> list[str]:
 
 
 def build_record(run: str, eval_paths: list[str], verdict: str = "",
-                 next_step: str = "", notes: str = "", noise: float = CER_NOISE) -> str:
+                 next_step: str = "", notes: str = "", noise: float = CER_NOISE,
+                 *, tail_policy: str = "legacy") -> str:
     cfg, plan = _read_yaml(run), _read_plan(run)
     mix = _read_mix(cfg.get("train_manifest", ""))
     lora = cfg.get("lora") or {}
@@ -281,15 +289,20 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
             lines.append(f"- `{label}` 红线：" + ("；".join(d["red"]) if d["red"] else "无"))
             if d["noise"]:
                 lines.append("  - 噪声级（未触发红线，照实记录）：" + "；".join(d["noise"]))
-        dur = _duration_gates(evals)
+        dur = _duration_gates(evals, tail_policy=tail_policy)
+        tail_rule = (f"增量 >{TAIL_SILENCE_P90_DELTA}s 或绝对值 >{TAIL_SILENCE_P90_MAX}s"
+                     if tail_policy == "legacy" else
+                     f"绝对值 >{TAIL_SILENCE_P90_MAX}s（增量仅观察）")
         lines += ["", f"时长类门禁（非数字 audio_sec 涨幅 >{DURATION_INFLATION_RATIO:.0%} 且 "
-                  f"|ΔCER非数字| ≤{DURATION_INFLATION_CER_TOL}；p90尾静音增量 "
-                  f">{TAIL_SILENCE_P90_DELTA}s 或 >{TAIL_SILENCE_P90_MAX}s；speech_ratio 降 "
+                  f"|ΔCER非数字| ≤{DURATION_INFLATION_CER_TOL}；尾静音策略={tail_policy}，p90尾静音"
+                  f"{tail_rule}；speech_ratio 降 "
                   f">{SPEECH_RATIO_DROP}；标定依据见 docs/qc_gates.md）："]
         for label, g in dur.items():
             hits = [x for k in ("duration_inflation", "tail_silence", "speech_ratio")
                     for x in g[k]]
             lines.append(f"- `{label}`：" + ("；".join(hits) if hits else "无"))
+            if g.get("tail_silence_observations"):
+                lines.append("  - 尾静音观察（不否决）：" + "；".join(g["tail_silence_observations"]))
         if any(e.get("mean_audio_sec_non_numeric") is None for e in evals):
             lines.append("非数字时长字段缺失/无适用样本：该项未评，不代表通过；"
                          "旧报告先用 `voxft.eval --summarize` 另存重算。")
@@ -306,9 +319,10 @@ def build_record(run: str, eval_paths: list[str], verdict: str = "",
 
 
 def append_record(run: str, eval_paths: list[str], verdict: str = "",
-                  next_step: str = "", notes: str = "", noise: float = CER_NOISE) -> Path:
+                  next_step: str = "", notes: str = "", noise: float = CER_NOISE,
+                  *, tail_policy: str = "legacy") -> Path:
     """把新一轮记录插到表头之后、旧记录之前——最近一轮永远在最上面。"""
-    record = build_record(run, eval_paths, verdict, next_step, notes, noise)
+    record = build_record(run, eval_paths, verdict, next_step, notes, noise, tail_policy=tail_policy)
     RUNLOG.parent.mkdir(parents=True, exist_ok=True)
     old = RUNLOG.read_text(encoding="utf-8") if RUNLOG.exists() else ""
     if old.startswith("# 微调运行记录"):
@@ -331,18 +345,20 @@ def main() -> None:
     ap.add_argument("--notes", default="", help="自由文本（盲听结论、踩坑）")
     ap.add_argument("--noise", type=float, default=CER_NOISE,
                     help=f"ΔCER 低于此值不触发红线，不代表已证明无退化（默认 {CER_NOISE}）")
+    ap.add_argument("--tail-policy", choices=("legacy", "absolute"), default="legacy",
+                    help="新实验显式用 absolute：p90>0.5s 否决，增量仅观察；legacy 供历史复现")
     ap.add_argument("--print", dest="do_print", action="store_true",
                     help="只打印不写入")
     args = ap.parse_args()
     text = build_record(args.run, args.eval, args.verdict, args.next_step, args.notes,
-                        args.noise)
+                        args.noise, tail_policy=args.tail_policy)
     if args.do_print:
         print(text)
         # 只打印时明确说出来：曾把 --print 的输出当成已落盘，结果那一轮记录根本没写进 runs.md
         print("\n（--print：只打印，未写入 docs/runs.md）")
     else:
         path = append_record(args.run, args.eval, args.verdict, args.next_step,
-                             args.notes, args.noise)
+                             args.notes, args.noise, tail_policy=args.tail_policy)
         print(f"已追加 → {path}")
 
 

@@ -1,5 +1,49 @@
 # TODO：配音质量改进（drama 非硬依赖）
 
+## 2026-10-30：尾静音新口径、Granary清洗借鉴与r31（训练完成、复评启动）
+
+用户要求定位“不改善”的原因并试用 Granary-v2；后续允许放宽尾静音，覆盖旧轮“不可放宽”的限制。
+
+- [x] 新口径 `tail_policy=absolute`：p90绝对值>0.5s仍否决，增量>.10s仅观察；
+  overall和分语种都保留。runlog支持显式`--tail-policy absolute`，默认legacy供历史复现。
+  内容、时长膨胀、有声比例门与训练数据排除不变。旧轮报告和结论按当时口径保留。
+- [x] r30冻结分数另存`work/granary_pilot_20261030/r30_tail_policy_assessment.json`；
+  .34/.34/.36s不再构成尾静音否决，逐条>.5s仍记录（ID2/TH6/TL2），不自动晋级。
+- [x] 原始FLEURS7065条完整metadata顺序对应；现用1504条（ID516/TL890/TH98）全部验证为原录音PCM精确裁切，
+  三份完整archive流式SHA与固定revision LFS一致。原包不落盘，只在远端读取；没有新增训练音频。
+- [x] 核对Curator固定commit `8a9a217c90127d424a8f503cb948698d7203002a`公开源码，
+  采用转写视图区分、按语言检查ASR重复/异常字符速率、记录拒绝原因；不自动“修文放回”。
+  官方HQ≠TTS认证，文本后处理可能用原reference，一致不等于独立ASR互证；细节`docs/granary_cleaning_20261030.md`。
+- [x] 当前FLEURS1504行按HQ和`tn_raw|itn_raw`归一化一致筛选，保留731（ID304/TL398/TH29），
+  排除773：721无HQ、5无标注、额外47条HQ但转写不一致；原因重叠总计转写分歧232。新ASR启发式0命中。
+  只看tn_raw本会仅留657条，itn_raw支持额外74条；**不用删口头禅的itn_clean凑一致**。
+  新排除均uncertain，保留原件/清单/原因，target/ref按路径/原音/PCM复用联动，原保留行字节与顺序不变。
+- [x] r31候选 **5015条/9.4815h**，val仍895条/1.5965h，完整1634历史val保护。
+  时长份额ID55.207%/TH20.463%/TL14.210%/zh6.260%/en3.860%；ref1218（24.29%），可信控制0、TL可信ref0。
+  **TL份额显著下降，不能把这轮结果归因为单项清洗规则**；不为补量重复或恢复疑似录音。
+- [x] 固定同基座冷启动、seed42、459步、batch2×8、lr1e-4、r/alpha64、dropout.05、LM/DiT开、proj关。
+  实际1.464407epoch；只改变选择，复用base/r26/r28/r29/r30，新增900条四路复评，尾策略absolute。
+  11,334份冻结输入SHA通过，67份src/官方训练推理源码仅判定记录模块runlog变化；模型训练/推理逻辑相同。
+  plan SHA `68cb179fadf983ff130763b07e0956aee0240876062f9cabbc72970111cc7e58`。
+- [x] **10:28:06启动训练**；10:30:32已到60/459步，CUDA bf16、loss/梯度有限，
+  val step0=1.072322（≤10随机batch，不能据此判收益），wandb `kobfcz1t`。生产未切换。
+  测试47项相关/422项全量均exit0，shell/diff检查通过；全量只有两条既有依赖弃用警告。
+  已按既有授权删除r30的step0/458/459，回收1,303,443,919 bytes；完整latest SHA不变，步骤元数据/哈希另存。
+- [x] **10:41:07正常完成459/459步**，耗时13分01秒；val loss
+  1.072322(step0)→.962661(step250)→.899426(step458)，不作质量结论。
+  LoRA SHA `065d98abc74f97ca32385a58ebf580d99ab5e8d8d02d19ea5576294cc9ed087e`，
+  latest完整五文件已冻结SHA。32份固定小产物/源码与本机镜像一致，证据`local_verification.json`。
+  已自动进入逐个启动四路评测；状态以`run/status.json`为准。
+- [ ] 完成900/900复评，按三语种分别核对相对r30/base的内容、漏词/多读和absolute尾门。
+  缺人工/母语评分保持未验证，不自动续训或晋级。CV26尚未接入，不宣称Granary是新增主力语料。
+- [ ] 原因诊断：r30−r29三语种CER配对区间均跨0；val仅≤10随机batch且验证集变化，
+  loss下降不代表配音质量改善。TH时长17.7%、TL可信ref0、可信控制0仍是覆盖缺口；
+  ID 1707/1816的正文括号/缩写与内容报警待定位，不能先断言推理解析或停止头有bug。
+
+远端 `/root/autodl-tmp/granary_pilot_20261030/`；状态`run/status.json`、训练`run/train.log`、驱动根目录`driver.log`。
+执行源码`source/`已冻结，更新文档只进`handoff/`。**后续混合必须继承本轮`run/flagged.json`的新隔离**；
+原music_excluded仍为上游清洗池，不得绕过新增773条排除。原先training_approved=false阶段记录不回写。
+
 ## 2026-10-29：r30已完成，不通过、不晋级
 
 用户明确「继续微调」，授权覆盖前一阶段仅清洗/不训练的范围；本轮独立根

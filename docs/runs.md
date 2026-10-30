@@ -4,6 +4,60 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## lora_joint3_r31_granary_consensus_459（2026-10-30，训练完成、复评启动）
+
+用户要求试Granary-v2、借鉴清洗，并允许放宽尾静音。本轮以已有安全池做选择实验，不宣称新增语料。
+固定Granary revision `81402b751b451b5fe4f4c29e8b40f92892f1e440`（标注OpenMDW-1.1），
+公开清洗源码核对与规则取舍见[Granary记录](granary_cleaning_20261030.md)。
+
+- 从r30的5788条/12.0352h中隔离773条，保留**5015条/9.4815h**，原台词/行字节/顺序不变。
+  当前FLEURS1504条已全部验证为原录音PCM精确裁切，原始三个archive SHA通过；
+  选择HQ=true且原文与tn_raw或保留用词的itn_raw归一化一致的731条（ID304/TL398/TH29）。
+  不用itn_clean删词，不构造可信speaker/ref/control；新增ASR重复/字符速率检查0命中。
+  773条仍记uncertain：721无HQ、5无标注、额外47条HQ但转写不一致；转写分歧共232，与HQ原因重叠。
+- val保留895条/1.5965h、完整1634历史val继续保护，继承全部历史路径/原音/PCM/ref/评测文本排除。
+  新隔离写入`run/flagged.json`，后续不能只读旧music池绕过；无原件删除或数据回流。
+- 实际时长份额ID55.207%/TH20.463%/TL14.210%/zh6.260%/en3.860%；ref1218/5015（24.29%），
+  目标曝光1、ref最大3，TL可信ref0、可信控制0。**TL从25.4%降至14.2%**，是本轮明确代价。
+- 同一原基座冷启动，seed42、459步、batch2×8、r/alpha64、dropout.05、lr1e-4、warmup45、wd.01，
+  LM/DiT开、proj关；1.464407epoch。67份src/官方训练推理源码仅runlog判定记录变化，训练/推理逻辑相同。
+  筛选改变语言份额及有效曝光，单训练seed不能把结果单独归因于每一条规则。
+- **10:28:06启动**，10:30:32已60/459步，loss/梯度有限、CUDA bf16；val step0 **1.072322**，
+  **10:41:07正常完成459步**，共13分01秒；val step250=.962661、step458=.899426
+  （≤10随机batch，不作配音质量依据），wandb `kobfcz1t`。
+  LoRA SHA `065d98abc74f97ca32385a58ebf580d99ab5e8d8d02d19ea5576294cc9ed087e`。
+- 自动四路复评900条，180条件×seed42–46，CFG1.8/20步/large-v3/禁重试；
+  复用base/r26/r28/r29/r30，新增r31−r30/r29/base对照。**CER/WER/疑似漏词逐语种均待评**，不伪填结果。
+  采用新策略absolute：p90尾静音>.5s否决，较base+.10s只观察；其它门与人工验收要求不变。
+- 11,334份冻结输入SHA及预检通过；plan SHA
+  `68cb179fadf983ff130763b07e0956aee0240876062f9cabbc72970111cc7e58`。
+  47项相关/422项全量回归exit0，shell/diff检查通过。r30过期step0/458/459删除回收1.214GiB，
+  latest SHA不变，元数据/哈希保留。没有删旧WAV、改旧分或切生产。
+
+| source_id | 原音许可 | 行数 | 小时 |
+|---|---|---:|---:|
+| cv22_id | CC0 | 868 | 1.1181 |
+| cv22_th | CC0 | 350 | .4472 |
+| fleurs_en | CC-BY-4.0 | 150 | .3659 |
+| fleurs_id | CC-BY-4.0 | 304 | .8092 |
+| fleurs_th | CC-BY-4.0 | 29 | .0943 |
+| fleurs_tl | CC-BY-4.0 | 398 | 1.3473 |
+| fleurs_zh | CC-BY-4.0 | 260 | .5936 |
+| gigaspeech2_id | Apache-2.0 | 1779 | 3.3071 |
+| gigaspeech2_th | Apache-2.0 | 516 | .9129 |
+| yodas_th | CC-BY-3.0 | 361 | .4858 |
+
+入口`scripts/granary_candidate_run.py prepare|run` / `.sh`，根`/root/autodl-tmp/granary_pilot_20261030/`。
+日志根目录`driver.log`、`run/train.log`、`run/eval/worker*.log`，权威状态`run/status.json`与latest状态文件。
+source冻结后不改，文档交接进入handoff；32份固定小产物/来源核验源码与本机镜像SHA一致。
+**结论尚未验收，下一步等900条完成，重点核对TL退化和ID内容坏例**。
+
+### 2026-10-30 r30新口径解释（保留以下原历史结论）
+
+用户授权尾静音放宽，单独评估文件`work/granary_pilot_20261030/r30_tail_policy_assessment.json`。
+原报告SHA不变，.34/.34/.36s在absolute策略下不再否决；逐条>.5s为ID2/TH6/TL2，保留观察。
+相对r29的内容收益仍未确立，未做人工验收，不据策略变化自动晋级。以下r30“不通过”按10月29日legacy口径归档。
+
 ## lora_joint3_r30_full_clean_459（2026-10-29，已完成、不通过）
 
 - 用户明确「继续微调」后，**20:53:42（北京时间）从同一原基座冷启动**。

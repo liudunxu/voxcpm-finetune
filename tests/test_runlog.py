@@ -102,3 +102,39 @@ def test_val_loss_line_carries_subset_caveat(tmp_path, monkeypatch):
     text = runlog.build_record("with_val", [])
     assert "1.0416" in text and "0.9273" in text
     assert "跨轮不可比" in text and "不作选点依据" in text
+
+
+def test_absolute_tail_policy_keeps_legacy_and_other_gates():
+    base = {"by_lang": {"id": {"p90_tail_silence": .16, "mean_speech_ratio": .95}}}
+    candidate = {"label": "r30", "by_lang": {
+        "id": {"p90_tail_silence": .34, "mean_speech_ratio": .89},
+        "th": {"p90_tail_silence": .5}, "tl": {"p90_tail_silence": .51}}}
+    legacy = runlog._duration_gates([base, candidate])["r30"]
+    current = runlog._duration_gates([base, candidate], tail_policy="absolute")["r30"]
+    assert len(legacy["tail_silence"]) == 2
+    assert "tail_silence_observations" not in legacy
+    assert len(current["tail_silence"]) == 1 and current["tail_silence"][0].startswith("tl ")
+    assert len(current["tail_silence_observations"]) == 1
+    assert current["tail_silence_observations"][0].startswith("id ")
+    assert current["speech_ratio"] == legacy["speech_ratio"] and current["speech_ratio"]
+    with pytest.raises(ValueError, match="Unknown tail policy"):
+        runlog._duration_gates([], tail_policy="typo")
+
+
+def test_cli_writes_explicit_tail_policy_and_observations(tmp_path, monkeypatch):
+    monkeypatch.setattr(runlog, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(runlog, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(runlog, "RUNLOG", tmp_path / "runs.md")
+    _write_cfg(tmp_path, "relaxed")
+    paths = []
+    for label, tail in (("base", .16), ("candidate", .34)):
+        path = tmp_path / f"{label}.json"
+        path.write_text(json.dumps({"label": label, "p90_tail_silence": tail}), encoding="utf-8")
+        paths.append(str(path))
+    monkeypatch.setattr(sys, "argv", ["runlog", "--run", "relaxed", "--eval", *paths,
+                                     "--tail-policy", "absolute"])
+    runlog.main()
+    text = runlog.RUNLOG.read_text(encoding="utf-8")
+    assert "尾静音策略=absolute" in text
+    assert "尾静音观察（不否决）" in text
+    assert "- `candidate`：无" in text

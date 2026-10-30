@@ -10,6 +10,14 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/印尼语高质量语�
 > 旧文档里过时的门槛与「下一步」不覆盖本节。
 
 ### 生产与训练状态
+- **2026-10-30 最新授权**：用户要求继续定位收益停滞并实际试验 Granary-v2，随后允许放宽尾静音。
+  新离线实验显式采用 `tail_policy=absolute`：p90绝对值>0.5s否决，较基座+.10s只记观察；
+  旧函数默认legacy/冻结报告保留，漏词、多读、时长膨胀和有声比例门不变，不恢复已排除训练数据。
+  r30在新口径下退出尾静音否决项，不等于证明内容收益或通过人工验收；新试验状态见TODO顶部。
+  **r31于10:28:06启动、10:41:07完成459步，900条复评已启动**：Granary HQ及保留用词的tn_raw/itn_raw一致筛选，在当前1504条FLEURS
+  逐条原音PCM/完整archive SHA验证后隔离773，保留5015条/9.4815h，固定459步＋900条复评。
+  后续必须继承`/root/autodl-tmp/granary_pilot_20261030/run/flagged.json`，原music池不能绕过新增排除。
+  不改原台词、不用itn_clean删词、未知身份不配ref；TL份额降至14.2%是明确局限，当前尚无收益结论。
 - **目标语种收缩为 th / tl / id（用户 2026-10-19 决定）**：不再微调 VN（vi）与 MY（ms），优先 id / PH(tl) / th。`TARGET_LANGS`、eval 语种白名单（`SAMPLE_TEXTS`/`WER_LANGS`）、registry 的 7 个 vi/ms 源、UI 文案与配比全部同步收缩；混合配比改为 **th/tl/id 等权各 28.3 分（`(100−15)/3`）+ 中文 10 + 英文 5**。**代价要说清**：`omnivoice_prod_v2.jsonl` 从 182 条过滤到 118 条，所以旧报告的**总体聚合**（含 base 总体 CER 0.0774、model_card 的 910 条生成）不再可复现；但 `evaluate()` 逐 case 独立、`by_lang` 按语种聚合 ⇒ **th/tl/id 的分语种数字仍然有效、仍可跨轮对照**。归档态的 vi/ms case 文件（v1 `omnivoice_prod.jsonl`、`id_ms_prosody_probe.jsonl`、`production_vi_*`、`cfg_stability_feedback_20260924.jsonl`、`roughness_model_ab_*.json`）字节未动但**已不可复跑**（撞白名单直接 `ValueError`，这是刻意守卫，不改成静默跳过）。接入依据存档在 `docs/vi_id_support.md`（vi 部分）与 `docs/ms_support.md`；`ms_my` 命名陷阱、F5-TTS 合成源禁用、mesolitica 无许可声明三条红线**永久有效**。
 - **生产权重沿用既有记录，r8/r23口径冲突待实际服务取证**，本轮不切生产。不为机器空闲继续微调；先冻结回归与单变量方案。**r29完成459步/900条复评，不晋级；现用10源50,321文件的全量清洗和62份音乐疑似排除均已完成**。用户「直接剔除」覆盖先试听的旧限制，62份全部隔离（10份主清洗已排除，额外52份），不认证已确认配乐。最终当前候选5788条/12.0352h、val895条，全池38819训练行；后续只用`/root/autodl-tmp/music_excluded_20261029/run/candidate/`并继承`flagged.json`与历史排除/完整旧val保护。旧中间候选不用于训练。TH实际时长份额17.7%、TL可信ref0、可信控制标签0仍需处理；音乐扫描只覆盖原当前目标/ref的8312文件，不是全池覆盖。用户随后授权的r30已完成：仅用上述当前子集、同一基座冷启动、459步（约1.269epoch），22:30:17完成900条/5seed四路复评。**r30仍不通过、不晋级**：相对r29三语种CER均无明确收益，尾静音p90 ID/TH/TL为.34/.34/.36s，相对base+.18/.16/.18s仍越+.10s门；TH较r29仅改善20ms。GPU已释放，未追加训练；完整数字及下一步见TODO顶部。新run保留授权，不回写旧候选的training_approved=false。
 - **并行诊断的结论边界**：1375对ref声纹排序不认证身份，不改配对；7252行有界近重复文本0命中不认证语义/音频近重复。96条真实VAE对照显示训练对齐多留约56–60ms尾静音、VAE本身均值变化约0–1.25ms，仍未证明模型退化因果。Granary-v2四份目标清单只作标注复核候选，未新增音频或入库，依据在`docs/corpus_sourcing.md`。不凭这些诊断自动开新训练/加epoch/proj实验。

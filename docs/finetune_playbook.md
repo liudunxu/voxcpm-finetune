@@ -4,6 +4,22 @@
 
 本文是可以照着一步步执行的流程，三个语种共用。开发约定与踩坑记录见 [AGENTS.md](../AGENTS.md)，数据源取舍背景见 [README.md](../README.md)，**ID 特有的依据、语料核实状态与口径差异见 [vi_id_support.md](vi_id_support.md)**（同文件的 vi 部分与 [ms_support.md](ms_support.md) 已转存档）。
 
+## 2026-10-30：Granary筛选试验r31与用户授权尾静音新口径
+
+最新方案与状态以TODO顶部为准。入口`scripts/granary_candidate_run.py prepare|run`及`.sh`，
+独立根`/root/autodl-tmp/granary_pilot_20261030/`。当前1504条FLEURS原音PCM/完整archive SHA全部通过；
+按HQ及保留用词的tn_raw/itn_raw一致筛选，隔离773条，保留5015条/9.4815h、val895条不变。
+只改选择、保留原文/原行，不扩音频来源；公开清洗代码取舍见[详细记录](granary_cleaning_20261030.md)。
+
+同一原基座冷启动、seed42、459步（1.464407epoch），LM/DiT开、proj关，其余沿用r30；
+10:28:06启动、10:41:07完成459步，val1.072322→.899426；随后四路900条与冻结base/r26/r28/r29/r30比较。
+TL时长份额由25.4%降到14.2%，
+不能把筛选后的分布变化忽略，也不为补量回收被排除录音。后续必须继承本轮`run/flagged.json`。
+
+本轮显式采用`tail_policy=absolute`：p90>.5s仍否决，增量>.10s只观察。r30旧报告另存新口径解释，
+原评分/历史结论不改，未因偏好更新而晋级。67份核心源文件仅runlog判定记录变化；
+11,334输入SHA通过，422项全量回归exit0。运行中source保持冻结，文档更新只同步到handoff。
+
 ## 2026-10-29：r30全量清洗子集实验完成，不通过
 
 用户明确「继续微调」后，使用独立入口`scripts/full_clean_candidate_run.py prepare|run`及`.sh`，

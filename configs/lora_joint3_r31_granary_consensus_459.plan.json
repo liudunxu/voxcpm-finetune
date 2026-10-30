@@ -1,0 +1,17 @@
+{
+  "gpus": 1,
+  "epochs": 1.464406779661017,
+  "num_iters": 459,
+  "effective_batch": 16,
+  "train_samples": 5015,
+  "langs": {
+    "id": 2951,
+    "th": 1256,
+    "en": 150,
+    "tl": 398,
+    "zh": 260
+  },
+  "train_manifest": "/root/autodl-tmp/granary_pilot_20261030/run/train.jsonl",
+  "tail_policy": "absolute",
+  "execution_plan_sha256": "68cb179fadf983ff130763b07e0956aee0240876062f9cabbc72970111cc7e58"
+}
