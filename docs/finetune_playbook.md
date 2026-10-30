@@ -6,6 +6,11 @@
 
 ## 2026-10-30：Granary筛选试验r31与用户授权尾静音新口径
 
+**r31已按用户要求停止复评**：训练459步完成，结果597/900（ID300/TH272/TL25），GPU已释放。
+同子集TH相对r30升高，ID无明确新增收益；不拿部分总体比旧轮全量，不自动补评或加训。
+5097条CER独立验算及源码/运行证据未发现评分实现错误；下一步优先定位近全静音/疑似多读严重坏例，
+具体对照、限制及条件方案见[r31评分核验](r31_eval_audit_20261030.md)。
+
 最新方案与状态以TODO顶部为准。入口`scripts/granary_candidate_run.py prepare|run`及`.sh`，
 独立根`/root/autodl-tmp/granary_pilot_20261030/`。当前1504条FLEURS原音PCM/完整archive SHA全部通过；
 按HQ及保留用词的tn_raw/itn_raw一致筛选，隔离773条，保留5015条/9.4815h、val895条不变。
