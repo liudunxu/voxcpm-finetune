@@ -308,11 +308,14 @@ ID开发缺口已另冻2文本/4条件行并核验隔离，原风险句和最终
   同完成子集ID/TH/TL CER 9.61/5.99/2.46%→11.25/5.32/2.54%，仅3/4/3文本，不认证非退化或收益。
   两个完整阶段严重/absolute/逐seed极端声学门均通过；686输入、276源码、184份产物SHA及180份配对CPU声学通过，未评分WAV0、GPU0MiB。
   verification `90ca51aa8a9af33849d45941d445123dff428fd05a499554dab8103a7e6592a0`，本地`work/r45_u10_20261031/terminal_analysis.json`。
-- [ ] **r46 microbatch单变量已冻结本地方案** `/root/autodl-tmp/r46_micro1_20261031/`：相对r45仅batch2×8→1×16，
+- [ ] **r46 microbatch单变量已启动远端阶段驱动** `/root/autodl-tmp/r46_micro1_20261031/`：相对r45仅batch2×8→1×16，
   有效batch16、1881原音行序/配比、rank32、dropout0、lr5e-5、wd.1、seed42、warmup12与118更新调度不变。
   官方逐微批先平均再累积，故检验逐样本损失权重，不当纯提速旋钮；绑定r45终态及r45/u10诊断SHA。
-  57项针对测试、shell/compile/diff通过；配置`configs/lora_joint3_r46_dit_original_lr5e5_rank32_drop0_wd01_micro1_staged.*`。
-  下一步同步冻结源码、核验GPU/磁盘和父证据后nohup串联prepare→训练→10/40/80/118阶段门；不补抽旧任务，不用最终90调参。
+  57项针对测试、276份源码SHA、21,838输入及六份父数据/任务字节通过；配置数值差异仅batch/grad_accum。
+  plan `f11da0f3c90c256f73b167d918b151a9e54a6528c47c6456a8c405d320050c91`；driver25854/trainer25896，CUDA bf16已到step0，
+  val初值1.010839（随机小验证子集，不作选点）。启动前审计清理两个终止run的24,430份无引用缓存，回收430,362,624 bytes；
+  原音/结果/权重未动，证据`storage_r46_micro1_20261031/`。本地`work/r46_micro1_20261031/launch_verification.json`。
+  下一步自动核验10/40/80/118阶段门及终态SHA；失败不补抽，小门通过不晋级，不用最终90调参。
 
 ## 2026-10-30：数据质量复核、数字豁免与背景音分离
 
