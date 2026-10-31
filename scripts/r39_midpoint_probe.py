@@ -27,19 +27,19 @@ RISK_GROUPS = (
 )
 
 
-def midpoint_jobs(cases):
+def midpoint_jobs(cases, *, risk_groups=RISK_GROUPS, prefix='mid', strength=1.):
     lookup = {(case['sentence_id'], case['condition']): case for case in cases}
     if len(lookup) != 6 or set(lookup) != {(sid, condition) for sid in SENTENCES for condition in ('plain', 'control')}:
         raise ValueError('Expected three paired development texts')
-    groups = list(RISK_GROUPS)
+    groups = list(risk_groups)
     groups += [(sid, condition, frozen.SEEDS) for sid, condition in sorted(lookup)
-               if (sid, condition) not in {(group[0], group[1]) for group in RISK_GROUPS}]
+               if (sid, condition) not in {(group[0], group[1]) for group in risk_groups}]
     jobs = []
     for sid, condition, seeds in groups:
         case = lookup[sid, condition]
         for seed in seeds:
-            jobs.append({'id': f'mid_{case["case_id"]}_{seed}', 'case': case,
-                         'model': 'candidate', 'strength': 1., 'seed': seed})
+            jobs.append({'id': f'{prefix}_{case["case_id"]}_{seed}', 'case': case,
+                         'model': 'candidate', 'strength': strength, 'seed': seed})
     if len(jobs) != 30 or len({job['id'] for job in jobs}) != 30:
         raise ValueError('Unexpected midpoint coverage')
     return jobs
@@ -188,9 +188,14 @@ def midpoint_rejection(rows, base, *, stage_end=False):
 
 def run(work):
     plan = probe.strength.check_inputs(work)
-    if (plan['profile'] != 'r39_midpoint' or plan['new_outputs'] != 30
-            or plan['reused_outputs'] != 90 or plan['training_steps'] != 0 or plan['max_workers'] != 1):
-        raise ValueError('Midpoint scope changed')
+    if (plan['profile'] not in ('r39_midpoint', 'r39_u40_half') or plan['new_outputs'] != 30
+            or plan['reused_outputs'] not in (60, 90) or plan['training_steps'] != 0
+            or plan['max_workers'] != 1):
+        raise ValueError('Weight probe scope changed')
+    strength = plan.get('lora_strength', 1.)
+    output_view = plan.get('output_view', 'midpoint')
+    if plan['profile'] == 'r39_u40_half' and strength != .5:
+        raise ValueError('Expected the single u40 half-strength probe')
     if subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader'], text=True).strip():
         raise RuntimeError('GPU busy')
     with (work / 'run.started').open('x', encoding='utf-8') as stream:
@@ -203,6 +208,8 @@ def run(work):
     frozen.evaluation.EVAL_DIR = work / 'raw_reports'
     frozen.evaluation.infer.CHECKPOINT_DIR = work
     jobs, reused = read(work / 'jobs.json'), read(work / 'reused.json')
+    if any(job['strength'] != strength for job in jobs):
+        raise ValueError('Job and plan LoRA strengths differ')
     base = {probe.key(row): row for row in reused['base']}
     rows, stages, reason, acoustic = [], [], None, {}
 
@@ -215,6 +222,9 @@ def run(work):
         with fast.cached_services(read(work / 'cases.json')):
             save(work / 'runtime.json', probe.baseline.gpu_services(
                 plan, [job['case'] for job in jobs], 'candidate'))
+            if strength != 1.:
+                model = frozen.evaluation.infer.get_model(plan['base_path'], plan['targets']['candidate'])
+                save(work / 'scaling.json', probe.strength.check_scaling(model))
             for index, job in enumerate(jobs):
                 if shutil.disk_usage(work).free < 4 * 1024**3:
                     raise RuntimeError('Disk reserve reached')
@@ -237,19 +247,21 @@ def run(work):
                     break
         probe.strength.check_inputs(work)
         if {str(path) for path in work.glob('auditions/*.wav')} != {row['wav'] for row in rows}:
-            raise ValueError('Unscored midpoint output')
+            raise ValueError('Unscored weight-probe output')
         decision = 'diagnostic_stopped' if reason else 'diagnostic_complete'
         current = [base[probe.key(row)] for row in rows]
         metrics = {'base': frozen.evaluation._report_metrics(current),
-                   'midpoint': frozen.evaluation._report_metrics(rows)}
-        for name in ('u40', 'u80'):
+                   output_view: frozen.evaluation._report_metrics(rows)}
+        for name in reused:
+            if name == 'base':
+                continue
             lookup = {probe.key(row): row for row in reused[name]}
             metrics[name] = frozen.evaluation._report_metrics([lookup[probe.key(row)] for row in rows])
         save(work / 'result.json', {'decision': decision, 'reason': reason, 'acoustic_failures': acoustic,
             'completed': len(rows), 'skipped': 30 - len(rows), 'rows': rows, 'matched_base': current,
-            'reused': reused, 'stages': stages, 'metrics': metrics,
-            'wav_sha256': {row['wav']: frozen.sha256(row['wav']) for row in rows},
-            'interpolation': plan['interpolation'], 'training_steps': 0, 'production_changed': False,
+            'reused': reused, 'stages': stages, 'metrics': metrics, 'output_view': output_view,
+            'lora_strength': strength, 'wav_sha256': {row['wav']: frozen.sha256(row['wav']) for row in rows},
+            'interpolation': plan.get('interpolation'), 'training_steps': 0, 'production_changed': False,
             'native_quality': 'unverified', 'final_holdout_used': False})
         status(decision)
     except BaseException as error:
