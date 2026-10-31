@@ -165,12 +165,15 @@ def test_r39_diagnostic_requires_exact_stopped_parent_and_reuses_all_45(module):
                     'completed':3, 'skipped':42}
     result = {'decision':'rejected', 'gates':gates}
     assert module.parent_gate('r39_early_diagnostic', {'stage':'rejected'}, result) == (79, 80, 45)
+    assert module.parent_gate('r39_u40_diagnostic', {'stage':'rejected'}, result) == (39, 40, 45)
     for invalid in ({'stage':'pilot_complete'}, {'stage':'training'}):
         with pytest.raises(ValueError, match='r39'):
             module.parent_gate('r39_early_diagnostic', invalid, result)
     gates['79']['reason'] = 'stage_acoustic_regression'
     with pytest.raises(ValueError, match='r39'):
         module.parent_gate('r39_early_diagnostic', {'stage':'rejected'}, result)
+    with pytest.raises(ValueError, match='r39'):
+        module.parent_gate('r39_u40_diagnostic', {'stage':'rejected'}, result)
     cases = module.frozen._read_manifest(Path('eval_cases/fresh_text_holdout_20261028.jsonl'))
     guard_ids = {'fresh_id_1808', 'fresh_th_1689', 'fresh_tl_1913'}
     pilot = [{'case':c, 'seed':s, 'stage':'guard' if c['sentence_id'] in guard_ids else 'risk'}
@@ -184,6 +187,24 @@ def test_r39_diagnostic_requires_exact_stopped_parent_and_reuses_all_45(module):
     assert len(jobs) - len(pilot) == 255
     assert {j['case']['sentence_id'] for j in jobs if j['stage'] == 0} == {
         'fresh_id_1808', 'fresh_th_1844', 'fresh_tl_1913'}
+
+
+def test_u40_fronts_new_id_failure_without_changing_coverage_inputs_or_seed_budget(module):
+    cases = module.frozen._read_manifest(Path('eval_cases/fresh_text_holdout_20261028.jsonl'))
+    guards = {'fresh_id_1808', 'fresh_th_1689', 'fresh_tl_1913'}
+    pilot = [{'case':c, 'stage':'guard'} for c in cases if c['sentence_id'] in guards]
+    previous = module.select_jobs(cases, pilot, canary_first=True)
+    jobs = module.select_jobs(cases, pilot, canary_first=True, id_canary_first=True)
+    assert jobs == module.select_jobs(list(reversed(cases)), pilot, canary_first=True,
+                                     id_canary_first=True)
+    assert len(jobs) == len({j['id'] for j in jobs}) == 300
+    assert {j['id']:(j['case'], j['seed']) for j in jobs} == {
+        j['id']:(j['case'], j['seed']) for j in previous}
+    assert {j['case']['sentence_id'] for j in jobs if j['stage']==0} == {
+        'fresh_id_1973', 'fresh_th_1844', 'fresh_tl_1913'}
+    assert [j['case']['condition'] for j in jobs[:10]] == ['plain']*5+['control']*5
+    assert [j['seed'] for j in jobs[:10]] == list(range(42,47))*2
+    assert Counter(j['stage'] for j in jobs) == {stage:30 for stage in range(10)}
 
 
 def test_r39_diagnostic_inherits_cer_independent_extreme_acoustic_gate(module):

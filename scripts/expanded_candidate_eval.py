@@ -19,6 +19,7 @@ DIAGNOSTIC_SHA = '90574851e38af8582a2b9339137d3f887f957e5c942284a700c73cd908e79c
 R39 = Path('/root/autodl-tmp/r39_drop0_20261031_v2/run')
 R39_SHA = '9b40d522071727eef4163ea70b5662098745c3c27617cd3103ee49074e631b5e'
 R39_VERIFICATION_SHA = '3a9ab7f53efdad4206fed2646b347ccb73e96d6ee87a826220c8e2b26f53f8ea'
+R39_PROFILES = ('r39_early_diagnostic', 'r39_u40_diagnostic')
 
 
 def publish(path, value):
@@ -38,7 +39,7 @@ def update(path, value):
     os.replace(pending, path)
 
 
-def select_jobs(cases, pilot, *, canary_first=False):
+def select_jobs(cases, pilot, *, canary_first=False, id_canary_first=False):
     by_lang = {}
     for lang in ('id', 'th', 'tl'):
         pool = {c['sentence_id']: c for c in cases if c['lang'] == lang and c['condition'] == 'plain'
@@ -56,11 +57,15 @@ def select_jobs(cases, pilot, *, canary_first=False):
         # Order changes only; include both conditions and all seeds, never just the failing take.
         by_lang['th'].remove('fresh_th_1844')
         by_lang['th'].insert(0, 'fresh_th_1844')
+    if id_canary_first:
+        by_lang['id'].remove('fresh_id_1973')
+        by_lang['id'].insert(0, 'fresh_id_1973')
     jobs = []
     for stage in range(10):
         for lang in ('id', 'th', 'tl'):
             group = sorted((c for c in cases if c['sentence_id'] == by_lang[lang][stage]),
-                           key=lambda c: c['condition'])
+                           key=lambda c: (c['condition'] != 'plain' if id_canary_first
+                                          and c['sentence_id'] == 'fresh_id_1973' else c['condition']))
             if len(group) != 2 or {c['condition'] for c in group} != {'plain', 'control'}:
                 raise ValueError('Expected paired plain/control cases')
             for case in group:
@@ -72,7 +77,7 @@ def select_jobs(cases, pilot, *, canary_first=False):
 
 
 def parent_gate(profile, status, result):
-    if profile == 'r39_early_diagnostic':
+    if profile in R39_PROFILES:
         gates = result.get('gates', {})
         if (status['stage'] != 'rejected' or result['decision'] != 'rejected'
                 or set(gates) != {'39', '79', '118'}
@@ -81,7 +86,7 @@ def parent_gate(profile, status, result):
                 or gates['118'] != {'decision':'rejected', 'reason':'new_suspected_overread',
                                     'completed':3, 'skipped':42}):
             raise ValueError('Expected verified r39 early passes and final three-output rejection')
-        return 79, 80, 45
+        return (39, 40, 45) if profile == 'r39_u40_diagnostic' else (79, 80, 45)
     if profile == 'r34_diagnostic':
         gate = result.get('gates', {}).get('150', {})
         if (status['stage'] != 'rejected' or result['decision'] != 'rejected'
@@ -100,9 +105,9 @@ def parent_gate(profile, status, result):
 def prepare(work, profile='r33'):
     if work.exists():
         raise FileExistsError(work)
-    diagnostic = profile in ('r34_diagnostic', 'r33_early_diagnostic', 'r39_early_diagnostic')
+    diagnostic = profile in ('r34_diagnostic', 'r33_early_diagnostic', *R39_PROFILES)
     candidate, digest = (DIAGNOSTIC, DIAGNOSTIC_SHA) if profile == 'r34_diagnostic' else (CANDIDATE, CANDIDATE_SHA)
-    if profile == 'r39_early_diagnostic':
+    if profile in R39_PROFILES:
         candidate, digest = R39, R39_SHA
         prior.review.checked(candidate / 'verification.json', R39_VERIFICATION_SHA)
         verification = read(candidate / 'verification.json')
@@ -124,8 +129,9 @@ def prepare(work, profile='r33'):
     inputs = {p:h for p,h in parent['inputs_sha256'].items() if '/models--' in p}
     inputs.update(checkpoint['inputs_sha256'])
     cases = frozen._read_manifest(prior.SOURCE / 'cases.jsonl')
-    canary_first = profile in ('r33_early_diagnostic', 'r39_early_diagnostic')
-    jobs = select_jobs(cases, read(candidate / 'jobs.json'), canary_first=canary_first)
+    canary_first = profile in ('r33_early_diagnostic', *R39_PROFILES)
+    jobs = select_jobs(cases, read(candidate / 'jobs.json'), canary_first=canary_first,
+                       id_canary_first=profile == 'r39_u40_diagnostic')
     selected = {j['case']['case_id']: j['case'] for j in jobs}
     baseline_path = prior.SOURCE / 'base_report.json'
     baseline = read(baseline_path)
@@ -149,7 +155,7 @@ def prepare(work, profile='r33'):
         reused.append({**row, **prior.review.level_metrics(row['wav'])})
     if len(reused) != reused_count or len({prior.key(r) for r in reused}) != reused_count:
         raise ValueError('Unexpected existing candidate outputs; no reruns')
-    if profile == 'r39_early_diagnostic':
+    if profile in R39_PROFILES:
         lookup = {prior.key(r):r for r in base}
         if any(probe.reject_reason(reused[:i], lookup) for i in range(1, len(reused)+1)):
             raise ValueError('Existing r39 early outputs violate severe gate')
@@ -204,7 +210,7 @@ def prepare(work, profile='r33'):
         'profile':profile, 'diagnostic_only':diagnostic, 'checkpoint_optimizer_updates':updates,
         'total_outputs':300, 'reused_outputs':reused_count, 'new_outputs_max':300-reused_count,
         'texts_per_language':10, 'seeds':frozen.SEEDS, 'tail_policy':'absolute',
-        'paired_extreme_acoustics':profile == 'r39_early_diagnostic',
+        'paired_extreme_acoustics':profile in R39_PROFILES,
         'stages':10, 'early_rejection':([
             'existing per-output severe gates; existing absolute acoustic gates at stage boundaries',
             'mean CER uses existing CER_NOISE classification as observation, not automatic rejection',
@@ -215,6 +221,8 @@ def prepare(work, profile='r33'):
                'the new TH1844 text first, otherwise existing guard first; '
                'known ID/TH stress texts next, remaining texts selected by ID hash without scores. '
                'r39 early profile tests the existing 80-update snapshot, not the rejected latest; '
+               'r39 u40 profile tests the existing 40-update snapshot and fronts ID1973 in '
+               'both unchanged conditions, plain first, after its 80-update failure. '
                'same 300-job diagnostic coverage, 45 reused, at most 255 new. '
                'Four workers share stage barriers. On rejection finish only in-flight outputs and '
                'preserve them. No retries, no reserved final texts, no production change.',
@@ -380,7 +388,7 @@ if __name__ == '__main__':
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--index', type=int, choices=range(4))
     parser.add_argument('--profile', choices=('r33', 'r34_diagnostic', 'r33_early_diagnostic',
-                                             'r39_early_diagnostic'), default='r33')
+                                             *R39_PROFILES), default='r33')
     args = parser.parse_args()
     if args.action == 'worker':
         worker(args.work, args.index)

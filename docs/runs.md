@@ -4,9 +4,23 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
-## r39_punct终态快照：20条完成，标点方案未通过（2026-10-31 08:24）
+## r39_u40：40更新快照诊断已启动，首阶段完成（2026-10-31）
 
-本节由已落盘`run/result.json`提取，是进度交接；全输入/配对CPU声学终态复核仍待后台完成。
+只检验既有r39/40更新快照，假设80更新ID1973 plain失败可能在相同原输入下已存在于40更新；不新增训练、不改标点、不按val loss选模型。
+数据与权重继承r39的1881条/3.541h独立筛查原音、DiT-only/rank32/dropout0/lr5e-5/batch2×8；本轮训练更新0，配比及旧排除不变。
+同300个开发任务覆盖ID/TH/TL各10文本×plain/control×5seed，45旧输出复用、最多255新；ID1973两条件排首，其余文本和seed预算不变。
+60项相关测试、260份源码SHA、634项输入及四份CUDA运行时核验通过。plan
+`a392459546080476c7b4af734976e7f588c2927dddcdcec436c9911a8f2e6931`，40更新权重SHA
+`24ef3c4c727655e9a0ad7cbb32cae01d1e7ae64ae524bfaa64bef48a84e54515`；launch verification
+`26d7ee8ac8fd3eb89810d98c448f3747cc19e8b23ddd6f72eed1ac15f29b4dd3`。
+driver2236、workers2261–2264；首阶段60/300（45复用+15新）完成，ID1973优先组未触严重/absolute/逐seed极端声学门，已进入下一阶段。
+这只是有界进度，不是三语种非退化或完整CPU终态认证；后续仍由原驱动在失败时停止，不补抽。
+启动前经独立审计清理三个已终止run的24,520份无引用编译缓存，释放427,282,432 bytes占用；1,757份同run受保护产物未动。
+证据`/root/autodl-tmp/storage_cache_20261031_r39_followup/`与本地`work/r39_u40_20261031/`；最终90未用，母语未验证，无部署或发布。
+
+## r39_punct终态：20条完成，标点方案未通过（2026-10-31）
+
+本节由已落盘`run/result.json`与终态verification提取；全输入和配对CPU声学复核已完成。
 20新输出（base/80更新快照各plain/control×5seed）全部完成，另复用20原句端点；0跳过、0新训练。
 停止原因`candidate_vs_original:stage_acoustic_regression`：候选control五seed有声比例由原句.860降至改句.804（-.056）。
 
@@ -23,10 +37,9 @@
 
 远端`/root/autodl-tmp/r39_punct_20261031/run/result.json` SHA
 `5b85652a1c271d54458dac54d62bdfa1e254734a7e6705b97b374f3c358beba2`，本地镜像`work/r39_punct_20261031/terminal_result.json`字节匹配。
-20新WAV SHA全匹配，未评分WAV0、driver129902已退出、GPU0MiB；可用5,245,087,744 bytes，保持4GiB底线。
-快照`work/r39_punct_20261031/foreground_observation_20261031_0824.json`；尚不声称全部输入与配对CPU声学已复核。
-下一步由既有后台完成终态复核，再依据证据冻结新的有界模型实验；不重抽、不恢复已拒绝训练。
-最终90文本未用，母语未验证，无部署或权重发布。
+1301输入、259源码、89份产物SHA及四组共40份WAV的CPU时长/有声比例/边界全部通过；未评分WAV0、driver129902退出、GPU0MiB。
+终态verification SHA `938928fc954f1a04a05b35acf193593a23dc8744d6f474291e91463a2bc1b698`，本地`work/r39_punct_20261031/verification_terminal.json`。
+下一诊断只复核原输入的40更新快照，不重抽标点输出、不恢复已拒绝训练。最终90文本未用，母语未验证，无部署或权重发布。
 
 ## r39_early终态：197条后诊断停止（2026-10-31）
 
