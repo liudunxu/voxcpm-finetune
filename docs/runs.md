@@ -4,6 +4,18 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## r39_midpoint终态：首条即拒绝，权重插值淘汰（2026-10-31）
+
+仅对同轨迹40/80更新LoRA的96张量做Float32算术中点，配置字节不变，无训练；中点不是实际60更新checkpoint。
+base/u40/u80各30端点全部复用，原预算30新；首条`fresh_id_1973_plain/s45`即触发`new_suspected_overread`，余29不补抽。
+中点CER .6527、len_ratio 1.521、时长23.68s、speech_ratio .7380；base为.0479/.958/12.8s/.7966，u40为.0359/.964/12.8s/.7934，u80为.3653/1.329/19.68s/.7426。
+中点比两个端点都差，否定“简单算术中点可避开端点失败”的假设，不重抽其他seed、不改旧报告。
+64项相关测试、1935输入、263源码、13份产物SHA及base/u40/u80/中点四视图实际WAV的CPU时长/有声比例/边界全部通过，未评分WAV0、GPU0MiB。
+plan `fd4e5626c4cf5df5e8efb91c988d098e6aff7cfdbb49df4a5bf2d4bd57194562`，中点权重SHA
+`cbe95f2a8f55f7a250fefcd571a9b7da4ad5571b2087c33ba5d89b1381b648b0`；verification
+`f4d4a3047f828c7764b88fdb540be2120f7ff1509349104312596022c604f3ad`，本地`work/r39_midpoint_20261031/terminal_analysis.json`。
+下一单点假设只在推理侧将u40强度设为0.5，不改权重或训练；TL1855/TH1689风险优先，三句两条件五seed、30新+60旧端点，不做强度网格，失败即停。最终90未用，母语未验证，不部署。
+
 ## r39_u40终态：150条后因TL新增疑似多读拒绝（2026-10-31）
 
 只检验既有r39/40更新快照，无新增训练、标点修改或val-loss选模。底层仍是1881条/3.541h独立筛查原音、DiT-only/rank32/dropout0/lr5e-5/batch2×8，训练更新0。
