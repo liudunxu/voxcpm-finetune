@@ -30,7 +30,8 @@ ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5', 'dit_original_lr5e5_r
                      'dit_original_lr5e5_rank32_drop0_seed43',
                      'dit_original_lr5e5_rank32_drop0_early20',
                      'dit_original_lr5e5_rank32_drop0_wd01',
-                     'dit_original_lr5e5_rank32_drop0_wd01_micro1')
+                     'dit_original_lr5e5_rank32_drop0_wd01_micro1',
+                     'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24')
 PAIRED_VARIANTS = ('dit_paired', *ORIGINAL_VARIANTS)
 R35 = Path('/root/autodl-tmp/r35_dit_paired_20261031/run')
 R35_SHA = 'c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b'
@@ -67,6 +68,12 @@ R45_VERIFICATION_SHA = '6cf3862de8cfb8aee054387cb9d21bcfb6eac57f6d98c656d2c235b3
 R45_U10 = Path('/root/autodl-tmp/r45_u10_20261031')
 R45_U10_SHA = '3a35ff1ac9afbcb0f70c62c494e58165f7446ec1843890d751830818356adda5'
 R45_U10_VERIFICATION_SHA = '90ca51aa8a9af33849d45941d445123dff428fd05a499554dab8103a7e6592a0'
+R46 = Path('/root/autodl-tmp/r46_micro1_20261031/run')
+R46_SHA = 'f11da0f3c90c256f73b167d918b151a9e54a6528c47c6456a8c405d320050c91'
+R46_VERIFICATION_SHA = 'aa7c4026383cb12e971f54eeacd25f3e8ed5bcde4d7728d724f9db5f20691147'
+R46_U10 = Path('/root/autodl-tmp/r46_u10_20261031')
+R46_U10_SHA = 'e46770f925527a60201e97f0985d0f85c9e5b71af15b8d82886cec6619a6b732'
+R46_U10_VERIFICATION_SHA = '43889425bc6af0f3fc22ebc8acad243b1e4059bd258610a2de3639b1df1fbb4c'
 
 
 def acoustic_gate(rows, baseline, *, paired_extremes=False):
@@ -193,6 +200,13 @@ VARIANTS['dit_original_lr5e5_rank32_drop0_wd01_micro1'] = {**VARIANTS['dit_origi
                  'setting unchanged, but use microbatch1 with accumulation16 instead of2 with8. The official '
                  'loss averages each microbatch before accumulation, so this tests per-sample weighting rather '
                  'than another budget, strength or learning-rate change after r45/u10 paired-CER failures.'}
+VARIANTS['dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24'] = {
+    **VARIANTS['dit_original_lr5e5_rank32_drop0_wd01_micro1'],
+    'warmup_steps':24,
+    'run_name':'lora_joint3_r47_dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24_staged',
+    'hypothesis':'Relative to r46, change only warmup12 to24 updates. Both effective-batch trajectories '
+                 'still develop severe paired regressions at10 updates, at the end of the original warmup. '
+                 'Test the early LR ramp without another peak-LR, budget, data or inference-strength change.'}
 
 
 def candidate_config(parent, work, variant, *, train_rows=None):
@@ -214,7 +228,8 @@ def candidate_config(parent, work, variant, *, train_rows=None):
         if train_rows != 1881:
             raise ValueError('Expected the frozen 1881-row paired candidate')
         updates = math.ceil(train_rows / (parent['batch_size'] * parent['grad_accum_steps']))
-        result.update(num_iters=updates, max_steps=updates, warmup_steps=math.ceil(updates / 10),
+        result.update(num_iters=updates, max_steps=updates,
+                      warmup_steps=VARIANTS[variant].get('warmup_steps', math.ceil(updates / 10)),
                       save_interval=1)  # The wrapper saves only declared gates, not every update.
     return result
 
@@ -223,7 +238,8 @@ def gate_steps(cfg, variant):
     if variant == 'dit_original_lr5e5_rank32_drop0_early20':
         return (9, 19)
     if variant in {'dit_original_lr5e5_rank32_drop0_wd01',
-                   'dit_original_lr5e5_rank32_drop0_wd01_micro1'}:
+                   'dit_original_lr5e5_rank32_drop0_wd01_micro1',
+                   'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24'}:
         return (9, 39, 79, 118)
     if variant not in PAIRED_VARIANTS:
         return GATES
@@ -294,7 +310,8 @@ def verify_original_config_control(work, cfg, variant):
                    'dit_original_lr5e5_rank32_drop0_seed43':R39,
                    'dit_original_lr5e5_rank32_drop0_early20':R39,
                    'dit_original_lr5e5_rank32_drop0_wd01':R39,
-                   'dit_original_lr5e5_rank32_drop0_wd01_micro1':R45}[variant]
+                   'dit_original_lr5e5_rank32_drop0_wd01_micro1':R45,
+                   'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24':R46}[variant]
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
         if frozen.sha256(work / name) != frozen.sha256(parent_work / name):
             raise ValueError(f'Original control changed {name}')
@@ -306,6 +323,9 @@ def verify_original_config_control(work, cfg, variant):
                    'dit_original_lr5e5_rank32_drop0_early20'}:
         if changed:
             raise ValueError('Expected identical config bytes; only training seed or early budget differs from r39')
+    elif variant == 'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24':
+        if (changed != {'warmup_steps'} or parent['warmup_steps'] != 12 or cfg['warmup_steps'] != 24):
+            raise ValueError('Expected only warmup12 to24 relative to r46')
     elif variant == 'dit_original_lr5e5_rank32_drop0_wd01_micro1':
         if (changed != {'batch_size', 'grad_accum_steps'}
                 or (parent['batch_size'], parent['grad_accum_steps']) != (2, 8)
@@ -516,7 +536,8 @@ def prepare(work, variant='rank32'):
                 inputs.update(verification['outputs_sha256'])
                 inputs[str(R44 / 'plan.json')] = R44_SHA
                 inputs[str(R44 / 'verification.json')] = R44_VERIFICATION_SHA
-            if variant == 'dit_original_lr5e5_rank32_drop0_wd01_micro1':
+            if variant in {'dit_original_lr5e5_rank32_drop0_wd01_micro1',
+                           'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24'}:
                 prior.review.checked(R45 / 'plan.json', R45_SHA)
                 prior.review.checked(R45 / 'verification.json', R45_VERIFICATION_SHA)
                 verification = read(R45 / 'verification.json')
@@ -541,6 +562,31 @@ def prepare(work, variant='rank32'):
                 inputs.update(diagnostic['outputs_sha256'])
                 inputs[str(R45_U10 / 'run/plan.json')] = R45_U10_SHA
                 inputs[str(R45_U10 / 'verification_terminal.json')] = R45_U10_VERIFICATION_SHA
+            if variant == 'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24':
+                prior.review.checked(R46 / 'plan.json', R46_SHA)
+                prior.review.checked(R46 / 'verification.json', R46_VERIFICATION_SHA)
+                verification = read(R46 / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R46_SHA
+                        or verification['optimizer_step_counts'] != {'10':96, '40':96}
+                        or verification['completed_outputs'] != 47 or verification['unscored_wavs'] != 0
+                        or verification['reason'] != 'new_suspected_overread'):
+                    raise ValueError('Expected verified r46 terminal failure')
+                inputs.update(read(R46 / 'plan.json')['inputs_sha256'])
+                inputs.update(verification['outputs_sha256'])
+                inputs[str(R46 / 'plan.json')] = R46_SHA
+                inputs[str(R46 / 'verification.json')] = R46_VERIFICATION_SHA
+                prior.review.checked(R46_U10 / 'run/plan.json', R46_U10_SHA)
+                prior.review.checked(R46_U10 / 'verification_terminal.json', R46_U10_VERIFICATION_SHA)
+                diagnostic = read(R46_U10 / 'verification_terminal.json')
+                if (diagnostic['status'] != 'diagnostic_stopped_verified'
+                        or diagnostic['plan_sha256'] != R46_U10_SHA
+                        or diagnostic['reason'] != 'two_large_paired_cer_regressions'
+                        or diagnostic['completed_outputs'] != 150 or diagnostic['new_outputs'] != 105
+                        or diagnostic['skipped'] != 150 or diagnostic['unscored_wavs'] != 0):
+                    raise ValueError('Expected verified r46/u10 diagnostic failure')
+                inputs.update(diagnostic['outputs_sha256'])
+                inputs[str(R46_U10 / 'run/plan.json')] = R46_U10_SHA
+                inputs[str(R46_U10 / 'verification_terminal.json')] = R46_U10_VERIFICATION_SHA
     if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
         prior.strength.check_inputs(R33_DEVELOPMENT)

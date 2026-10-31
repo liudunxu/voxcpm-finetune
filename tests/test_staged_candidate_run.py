@@ -87,6 +87,10 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     assert micro1 == {**wd01, 'batch_size':1, 'grad_accum_steps':16}
     assert micro1['batch_size'] * micro1['grad_accum_steps'] == wd01['batch_size'] * wd01['grad_accum_steps']
     assert module.gate_steps(micro1, 'dit_original_lr5e5_rank32_drop0_wd01_micro1') == (9, 39, 79, 118)
+    warmup24 = module.candidate_config(
+        parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24', train_rows=1881)
+    assert warmup24 == {**micro1, 'warmup_steps':24}
+    assert module.gate_steps(warmup24, 'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24') == (9, 39, 79, 118)
 
 
 def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
@@ -300,6 +304,28 @@ def test_microbatch_control_binds_r45_and_preserves_effective_batch(module, tmp_
     module.verify_original_config_control(work, after, variant)
     for change in ({'learning_rate':1e-4}, {'batch_size':2}, {'grad_accum_steps':8}, {'num_iters':20}):
         with pytest.raises(ValueError, match='only microbatch'):
+            module.verify_original_config_control(work, {**after, **change}, variant)
+    (work / 'train.jsonl').write_text('changed bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match='train.jsonl'):
+        module.verify_original_config_control(work, after, variant)
+
+
+def test_warmup_control_binds_r46_and_only_changes_ramp(module, tmp_path, monkeypatch):
+    parent, work = tmp_path / 'r46', tmp_path / 'r47'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R46', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path(
+        'configs/lora_joint3_r46_dit_original_lr5e5_rank32_drop0_wd01_micro1_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'warmup_steps':24, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24'
+    module.verify_original_config_control(work, after, variant)
+    for change in ({'learning_rate':1e-4}, {'warmup_steps':12}, {'batch_size':2}, {'num_iters':20}):
+        with pytest.raises(ValueError, match='only warmup'):
             module.verify_original_config_control(work, {**after, **change}, variant)
     (work / 'train.jsonl').write_text('changed bytes', encoding='utf-8')
     with pytest.raises(ValueError, match='train.jsonl'):
