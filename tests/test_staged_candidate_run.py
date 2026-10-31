@@ -80,6 +80,9 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     early20 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_early20', train_rows=1881)
     assert early20 == drop0
     assert module.gate_steps(early20, 'dit_original_lr5e5_rank32_drop0_early20') == (9, 19)
+    wd01 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_wd01', train_rows=1881)
+    assert wd01 == {**drop0, 'weight_decay':.1}
+    assert module.gate_steps(wd01, 'dit_original_lr5e5_rank32_drop0_wd01') == (9, 39, 79, 118)
 
 
 def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
@@ -253,6 +256,28 @@ def test_seed_or_early_budget_control_keeps_config_and_sets_official_accelerator
         return 'accelerator'
     assert module._seeded_accelerator(accelerator, 43)(amp=True) == 'accelerator'
     assert calls == [{'amp':True, 'seed':43}]
+
+
+def test_weight_decay_control_binds_r39_and_only_changes_regularization(module, tmp_path, monkeypatch):
+    parent, work = tmp_path / 'r39', tmp_path / 'r45'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R39', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path(
+        'configs/lora_joint3_r39_dit_original_lr5e5_rank32_drop0_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'weight_decay':.1, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank32_drop0_wd01'
+    module.verify_original_config_control(work, after, variant)
+    for change in ({'learning_rate':1e-4}, {'weight_decay':.01}, {'num_iters':20}):
+        with pytest.raises(ValueError, match='only weight_decay'):
+            module.verify_original_config_control(work, {**after, **change}, variant)
+    (work / 'train.jsonl').write_text('changed bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match='train.jsonl'):
+        module.verify_original_config_control(work, after, variant)
 
 
 @pytest.mark.parametrize('duration,ratio,numeric,expected', [

@@ -28,7 +28,8 @@ ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5', 'dit_original_lr5e5_r
                      'dit_original_lr5e5_rank32_drop0_stop2',
                      'dit_original_lr5e5_rank16_drop0',
                      'dit_original_lr5e5_rank32_drop0_seed43',
-                     'dit_original_lr5e5_rank32_drop0_early20')
+                     'dit_original_lr5e5_rank32_drop0_early20',
+                     'dit_original_lr5e5_rank32_drop0_wd01')
 PAIRED_VARIANTS = ('dit_paired', *ORIGINAL_VARIANTS)
 R35 = Path('/root/autodl-tmp/r35_dit_paired_20261031/run')
 R35_SHA = 'c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b'
@@ -56,6 +57,9 @@ R42_VERIFICATION_SHA = '4d48112d98f2474f910b17acf0bfff112492ebb1412f002b9dbedb19
 R43 = Path('/root/autodl-tmp/r43_seed43_20261031/run')
 R43_SHA = 'cd78d53cc0f1058bc120c55d43abcf876018b7e4c6aa5b518d6f94f8eafc3993'
 R43_VERIFICATION_SHA = 'ea0bf0f8debeb70f18a1c7ec88c99de0a066951d33d21cf83064dacb964da54d'
+R44 = Path('/root/autodl-tmp/r44_early20_20261031_v2/run')
+R44_SHA = 'b87b02ef560f9e674ee8c4d0a20700066836b934918da25297b0d85539b62b7a'
+R44_VERIFICATION_SHA = '17dfeef28d227a1fcbefaf46451f184d8fd17c04abfeaf10b34c8091b666da8e'
 
 
 def acoustic_gate(rows, baseline, *, paired_extremes=False):
@@ -169,6 +173,12 @@ VARIANTS['dit_original_lr5e5_rank32_drop0_early20'] = {**VARIANTS['dit_original_
                  'value and the original118-update LR schedule, but save/evaluate at10 and20 updates and stop '
                  'after the second gate. r43 rejected a second training seed at40 updates; test whether severe '
                  'paired regressions are already present before the first previously observed checkpoint.'}
+VARIANTS['dit_original_lr5e5_rank32_drop0_wd01'] = {**VARIANTS['dit_original_lr5e5_rank32_drop0'],
+    'weight_decay':.1, 'free_gib':4.85,
+    'run_name':'lora_joint3_r45_dit_original_lr5e5_rank32_drop0_wd01_staged',
+    'hypothesis':'Relative to r39, change only weight_decay .01 to.1. r44 showed new overread already at10 '
+                 'updates on the unchanged trajectory, so do not mechanically shrink the budget again. Keep '
+                 'data, seed42, rank32, dropout0, lr5e-5 and118-update schedule; evaluate at10 before40/80/118.'}
 
 
 def candidate_config(parent, work, variant, *, train_rows=None):
@@ -178,6 +188,7 @@ def candidate_config(parent, work, variant, *, train_rows=None):
         raise ValueError('Keep the original full learning-rate/progress schedule')
     result = {**parent, 'lora': {**parent['lora'], **VARIANTS[variant]['changes']},
             'learning_rate': VARIANTS[variant].get('learning_rate', parent['learning_rate']),
+            'weight_decay': VARIANTS[variant].get('weight_decay', parent['weight_decay']),
             'train_manifest': str(work / 'train.jsonl'), 'val_manifest': str(work / 'val.jsonl'),
             'save_path': str(work / 'checkpoint'), 'tensorboard': str(work / 'checkpoint/logs'),
             'save_interval': 150}
@@ -195,6 +206,8 @@ def candidate_config(parent, work, variant, *, train_rows=None):
 def gate_steps(cfg, variant):
     if variant == 'dit_original_lr5e5_rank32_drop0_early20':
         return (9, 19)
+    if variant == 'dit_original_lr5e5_rank32_drop0_wd01':
+        return (9, 39, 79, 118)
     if variant not in PAIRED_VARIANTS:
         return GATES
     block = math.ceil(cfg['num_iters'] / 3)
@@ -262,7 +275,8 @@ def verify_original_config_control(work, cfg, variant):
                    'dit_original_lr5e5_rank32_drop0_stop2':R39,
                    'dit_original_lr5e5_rank16_drop0':R39,
                    'dit_original_lr5e5_rank32_drop0_seed43':R39,
-                   'dit_original_lr5e5_rank32_drop0_early20':R39}[variant]
+                   'dit_original_lr5e5_rank32_drop0_early20':R39,
+                   'dit_original_lr5e5_rank32_drop0_wd01':R39}[variant]
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
         if frozen.sha256(work / name) != frozen.sha256(parent_work / name):
             raise ValueError(f'Original control changed {name}')
@@ -274,6 +288,9 @@ def verify_original_config_control(work, cfg, variant):
                    'dit_original_lr5e5_rank32_drop0_early20'}:
         if changed:
             raise ValueError('Expected identical config bytes; only training seed or early budget differs from r39')
+    elif variant == 'dit_original_lr5e5_rank32_drop0_wd01':
+        if (changed != {'weight_decay'} or parent['weight_decay'] != .01 or cfg['weight_decay'] != .1):
+            raise ValueError('Expected only weight_decay .01 to.1 relative to r39')
     elif variant == 'dit_original_lr5e5_rank16_drop0':
         if (changed != {'lora'} or parent['lora']['r'] != 32 or parent['lora']['alpha'] != 32
                 or cfg['lora'] != {**parent['lora'], 'r':16, 'alpha':16}):
@@ -435,7 +452,8 @@ def prepare(work, variant='rank32'):
                 inputs[str(R41 / 'plan.json')] = R41_SHA
                 inputs[str(R41 / 'verification.json')] = R41_VERIFICATION_SHA
             if variant in {'dit_original_lr5e5_rank32_drop0_seed43',
-                           'dit_original_lr5e5_rank32_drop0_early20'}:
+                           'dit_original_lr5e5_rank32_drop0_early20',
+                           'dit_original_lr5e5_rank32_drop0_wd01'}:
                 prior.review.checked(R42 / 'plan.json', R42_SHA)
                 prior.review.checked(R42 / 'verification.json', R42_VERIFICATION_SHA)
                 verification = read(R42 / 'verification.json')
@@ -448,7 +466,8 @@ def prepare(work, variant='rank32'):
                 inputs.update(verification['outputs_sha256'])
                 inputs[str(R42 / 'plan.json')] = R42_SHA
                 inputs[str(R42 / 'verification.json')] = R42_VERIFICATION_SHA
-            if variant == 'dit_original_lr5e5_rank32_drop0_early20':
+            if variant in {'dit_original_lr5e5_rank32_drop0_early20',
+                           'dit_original_lr5e5_rank32_drop0_wd01'}:
                 prior.review.checked(R43 / 'plan.json', R43_SHA)
                 prior.review.checked(R43 / 'verification.json', R43_VERIFICATION_SHA)
                 verification = read(R43 / 'verification.json')
@@ -461,6 +480,19 @@ def prepare(work, variant='rank32'):
                 inputs.update(verification['outputs_sha256'])
                 inputs[str(R43 / 'plan.json')] = R43_SHA
                 inputs[str(R43 / 'verification.json')] = R43_VERIFICATION_SHA
+            if variant == 'dit_original_lr5e5_rank32_drop0_wd01':
+                prior.review.checked(R44 / 'plan.json', R44_SHA)
+                prior.review.checked(R44 / 'verification.json', R44_VERIFICATION_SHA)
+                verification = read(R44 / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R44_SHA
+                        or verification['optimizer_step_counts'] != {'10':96}
+                        or verification['completed_outputs'] != 5 or verification['unscored_wavs'] != 0
+                        or verification['reason'] != 'new_suspected_overread'):
+                    raise ValueError('Expected verified r44 early overread failure')
+                inputs.update(read(R44 / 'plan.json')['inputs_sha256'])
+                inputs.update(verification['outputs_sha256'])
+                inputs[str(R44 / 'plan.json')] = R44_SHA
+                inputs[str(R44 / 'verification.json')] = R44_VERIFICATION_SHA
     if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
         prior.strength.check_inputs(R33_DEVELOPMENT)

@@ -1,0 +1,23 @@
+{
+  "remote_prepared": false,
+  "training_started": false,
+  "gpus": 1,
+  "effective_batch": 16,
+  "epochs": 1.0037214247740565,
+  "train_samples": 1881,
+  "langs": {"id": 582, "th": 704, "tl": 346, "zh": 169, "en": 80},
+  "parent_r39_plan_sha256": "9b40d522071727eef4163ea70b5662098745c3c27617cd3103ee49074e631b5e",
+  "parent_r39_verification_sha256": "3a9ab7f53efdad4206fed2646b347ccb73e96d6ee87a826220c8e2b26f53f8ea",
+  "parent_r44_plan_sha256": "b87b02ef560f9e674ee8c4d0a20700066836b934918da25297b0d85539b62b7a",
+  "parent_r44_verification_sha256": "17dfeef28d227a1fcbefaf46451f184d8fd17c04abfeaf10b34c8091b666da8e",
+  "train_sha256_expected": "ff279bf931ed5b4d969e1b621dcc4b0bbec8bb7a9fb77f8b6904165141b90aa9",
+  "gates": {"9": 10, "39": 40, "79": 80, "118": 118},
+  "only_training_change": {"weight_decay": [0.01, 0.1]},
+  "data_recipe_unchanged": "Same byte-identical data/jobs/base_items, DiT-only rank/alpha32, LM/proj off, dropout0, stop weight1, lr5e-5, batch2×8, warmup12 and training seed42.",
+  "paired_extreme_acoustics": true,
+  "remote_root": "/root/autodl-tmp/r45_wd01_20261031",
+  "storage_budget": "Four rank32 snapshots plus latest, evaluation/runtime allowance and4GiB execution reserve; start threshold4.85GiB.",
+  "final_holdout_used": false,
+  "production_changed": false,
+  "native_quality": "unverified"
+}
