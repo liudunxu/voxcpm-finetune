@@ -39,6 +39,14 @@ def test_scaling_checks_real_tensor_values_and_restoration(module, monkeypatch):
         module.check_scaling(model)
 
 
+def test_scaling_can_check_the_actual_probe_strength(module):
+    layers = [SimpleNamespace(scaling=torch.tensor(2.), _base_scaling=2.)]
+    model = SimpleNamespace(tts_model=SimpleNamespace(_iter_lora_modules=lambda: iter(layers)))
+    result = module.check_scaling(model, actual_strength=.25)
+    assert result["checked_strengths"] == [0, 1, .5, .75, .25]
+    assert layers[0].scaling.item() == 2.
+
+
 @pytest.fixture
 def experiment(module, tmp_path, monkeypatch):
     reference = tmp_path / "ref.wav"

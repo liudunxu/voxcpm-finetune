@@ -143,13 +143,15 @@ def prepare(source, pack, output):
     print("PREPARED 18 cases x 5 seeds x 2 strengths; 180 endpoints reused", flush=True)
 
 
-def check_scaling(model):
+def check_scaling(model, *, actual_strength=None):
     modules = list(model.tts_model._iter_lora_modules())
     if not modules or any(not torch.equal(module.scaling, torch.full_like(
             module.scaling, module._base_scaling)) for module in modules):
         raise ValueError("Expected enabled, unscaled loaded LoRA")
     originals = [module.scaling.detach().clone() for module in modules]
-    for strength in (0, 1, *STRENGTHS):
+    strengths = ((0, 1, *STRENGTHS) if actual_strength is None else
+                 tuple(dict.fromkeys((0, 1, *STRENGTHS, actual_strength))))
+    for strength in strengths:
         with frozen.evaluation.infer.scaled_lora(model, strength):
             if any(not torch.equal(module.scaling, torch.full_like(
                     module.scaling, module._base_scaling * strength)) for module in modules):
@@ -157,7 +159,7 @@ def check_scaling(model):
         if any(not torch.equal(module.scaling, original)
                for module, original in zip(modules, originals)):
             raise ValueError("LoRA scaling was not restored")
-    return {"modules": len(modules), "checked_strengths": [0, 1, *STRENGTHS],
+    return {"modules": len(modules), "checked_strengths": list(strengths),
             "restored": True, "output_endpoint_equivalence": "not_regenerated"}
 
 

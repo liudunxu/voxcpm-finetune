@@ -188,14 +188,20 @@ def midpoint_rejection(rows, base, *, stage_end=False):
 
 def run(work):
     plan = probe.strength.check_inputs(work)
-    if (plan['profile'] not in ('r39_midpoint', 'r39_u40_half') or plan['new_outputs'] != 30
-            or plan['reused_outputs'] not in (60, 90) or plan['training_steps'] != 0
-            or plan['max_workers'] != 1):
+    scopes = {'r39_midpoint': (30, (60, 90)), 'r39_u40_half': (30, (60,)),
+              'r39_u40_quarter': (20, (60,))}
+    if plan['profile'] not in scopes:
+        raise ValueError('Weight probe scope changed')
+    new_outputs, reused_counts = scopes[plan['profile']]
+    if (plan['new_outputs'] != new_outputs or plan['reused_outputs'] not in reused_counts
+            or plan['training_steps'] != 0 or plan['max_workers'] != 1):
         raise ValueError('Weight probe scope changed')
     strength = plan.get('lora_strength', 1.)
     output_view = plan.get('output_view', 'midpoint')
     if plan['profile'] == 'r39_u40_half' and strength != .5:
         raise ValueError('Expected the single u40 half-strength probe')
+    if plan['profile'] == 'r39_u40_quarter' and strength != .25:
+        raise ValueError('Expected the single u40 quarter-strength probe')
     if subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader'], text=True).strip():
         raise RuntimeError('GPU busy')
     with (work / 'run.started').open('x', encoding='utf-8') as stream:
@@ -214,7 +220,7 @@ def run(work):
     rows, stages, reason, acoustic = [], [], None, {}
 
     def status(stage, **extra):
-        frozen.write_json(work / 'status.json', {'stage': stage, 'completed': len(rows), 'expected': 30,
+        frozen.write_json(work / 'status.json', {'stage': stage, 'completed': len(rows), 'expected': new_outputs,
             'pid': os.getpid(), 'time': time.time(), 'reason': reason, **extra})
 
     try:
@@ -224,7 +230,7 @@ def run(work):
                 plan, [job['case'] for job in jobs], 'candidate'))
             if strength != 1.:
                 model = frozen.evaluation.infer.get_model(plan['base_path'], plan['targets']['candidate'])
-                save(work / 'scaling.json', probe.strength.check_scaling(model))
+                save(work / 'scaling.json', probe.strength.check_scaling(model, actual_strength=strength))
             for index, job in enumerate(jobs):
                 if shutil.disk_usage(work).free < 4 * 1024**3:
                     raise RuntimeError('Disk reserve reached')
@@ -258,7 +264,7 @@ def run(work):
             lookup = {probe.key(row): row for row in reused[name]}
             metrics[name] = frozen.evaluation._report_metrics([lookup[probe.key(row)] for row in rows])
         save(work / 'result.json', {'decision': decision, 'reason': reason, 'acoustic_failures': acoustic,
-            'completed': len(rows), 'skipped': 30 - len(rows), 'rows': rows, 'matched_base': current,
+            'completed': len(rows), 'skipped': new_outputs - len(rows), 'rows': rows, 'matched_base': current,
             'reused': reused, 'stages': stages, 'metrics': metrics, 'output_view': output_view,
             'lora_strength': strength, 'wav_sha256': {row['wav']: frozen.sha256(row['wav']) for row in rows},
             'interpolation': plan.get('interpolation'), 'training_steps': 0, 'production_changed': False,
