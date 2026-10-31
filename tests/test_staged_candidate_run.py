@@ -64,6 +64,9 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     drop0 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0', train_rows=1881)
     assert drop0 == {**rank32, 'lora':{**rank32['lora'], 'dropout':0.}}
     assert module.gate_steps(drop0, 'dit_original_lr5e5_rank32_drop0') == gates
+    proj = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_proj', train_rows=1881)
+    assert proj == {**drop0, 'lora':{**drop0['lora'], 'enable_proj':True}}
+    assert module.gate_steps(proj, 'dit_original_lr5e5_rank32_drop0_proj') == gates
 
 
 def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
@@ -130,6 +133,33 @@ def test_dropout_control_binds_all_parent_inputs(module, tmp_path, monkeypatch, 
                    {'lora':{**after['lora'], 'r':64}}, {'lora':{**after['lora'], 'enable_lm':True}},
                    {'lora':{**after['lora'], 'dropout':.05}}):
         with pytest.raises(ValueError, match='only DiT dropout'):
+            module.verify_original_config_control(work, {**after, **change}, variant)
+    (work / changed_file).write_text('changed bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match=changed_file):
+        module.verify_original_config_control(work, after, variant)
+
+
+@pytest.mark.parametrize('changed_file', [
+    'train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'])
+def test_projection_control_binds_r39_and_only_changes_enable_proj(
+        module, tmp_path, monkeypatch, changed_file):
+    parent, work = tmp_path / 'r39', tmp_path / 'r40'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R39', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path(
+        'configs/lora_joint3_r39_dit_original_lr5e5_rank32_drop0_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'lora':{**before['lora'], 'enable_proj':True}, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank32_drop0_proj'
+    module.verify_original_config_control(work, after, variant)
+    for change in ({'learning_rate':1e-4}, {'num_iters':459},
+                   {'lora':{**after['lora'], 'enable_lm':True}},
+                   {'lora':{**after['lora'], 'enable_proj':False}}):
+        with pytest.raises(ValueError, match='only enable_proj'):
             module.verify_original_config_control(work, {**after, **change}, variant)
     (work / changed_file).write_text('changed bytes', encoding='utf-8')
     with pytest.raises(ValueError, match=changed_file):

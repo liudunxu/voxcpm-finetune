@@ -4,6 +4,27 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## lora_joint3_r40_dit_original_lr5e5_rank32_drop0_proj_staged：已冷启动（2026-10-31）
+
+相对r39只改`lora.enable_proj: false→true`，同一基座冷启动；train/val/flagged/mix/jobs/base_items六份字节与r39完全一致。
+仍为1881条/3.541h独立筛查原音，ID/TH/TL时长28.304/28.341/28.334%+zh9.992%/en5.029%，原音≤2×、ref≤3×、TL可信ref0；
+DiT-only、LM关、rank/alpha32、dropout0、lr5e-5、batch2×8、weight_decay.01、clip1、118更新/warmup12，40/80/118更新后各≤45条五seed门。
+105项相关测试、270源码、19,895输入和父终态321份产物SHA通过。plan `c758c51f32e82522fa1f5b0813880f174c78250c56e6eec9b35c878d0914f324`，
+launch verification `fb29ec639aee977d5303e551f14051119c9b0d5aac1f0e1e296b2d3dd7e210dc`；driver39211/trainer39272，训练中，尚无质量结论。
+启动前只清理两轮已终止诊断的未引用编译缓存，309,550,762 bytes逻辑大小、回收362,151,936 bytes；JSON引用/SHA/进程/句柄审计通过，结果/权重/原音不动。
+来源与许可：cv22_id/th CC0、fleurs_en/id/th/tl/zh CC-BY-4.0、gigaspeech2_id/th Apache-2.0、yodas_th CC-BY-3.0。
+小门不自动晋级；最终90未用，母语未验证，不部署或发布。
+
+## r39_u40_quarter终态：第2条新增多读，降强度方向淘汰（2026-10-31）
+
+同一u40权重仅改推理强度0.5→0.25，ID1816 control/s45首条正常，s42第二条即触发`new_suspected_overread`，余18不补抽。
+base→quarter CER .0357→.6696、len_ratio 1.009→1.661、时长7.84→13.76s、speech_ratio .9207→.9098。
+同两个已完成seed在全强度u40均无多读且CER≤.0536；s45在半强度失败而s42在全强度失败，说明全局降强度不是单调稳定修复，不再试更小强度。
+1813输入、269源码、13份产物SHA及base/u40/half/quarter四视图8份CPU声学复核通过，未评分WAV0、GPU0MiB。
+plan `bdafe265217f7a0eb194eac28f98566b4ca923814e23b608aa8d7d88749ba7cb`；verification
+`485622e0e078509cbdfe0634cb7b43fc1b53247437355597de83d76a2648a496`，本地`work/r39_u40_quarter_20261031/terminal_analysis.json`。
+下一轮回到训练侧，仅打开projection LoRA分支，其余r39条件和全部阶段门不变；无最终90或生产变更。
+
 ## r39_u40_quarter：四风险条件半强度后续诊断已启动（2026-10-31）
 
 同一r39/u40权重，只把推理LoRA强度0.5→0.25，权重字节不变、训练更新0；ID1816 control优先，其后TL1855 plain、TH1689 control、ID1973 plain，各5seed。
