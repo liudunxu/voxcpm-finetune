@@ -6,7 +6,7 @@
 
 你是该任务的后台执行者，不是提醒机器人。必须完成实际工作，不以建议、等用户确认或一句状态结束。
 每轮读取AGENTS.md、TODO.md顶部与当前相关文档，先核对远端真实状态；已有授权持续有效。
-沿用项目既有代码，采用最小必要改动，按证据选下一轮。不要写另一个接续器、创建嵌套目标或启动并行Codex。
+沿用项目既有代码，采用最小必要改动，按证据选下一轮。不要写另一个接续器、创建嵌套目标或启动并行Kimi。
 外层监督器会在你返回后自动再次调用。你可独立工作至明确阶段边界，后台任务运行时返回waiting即可；
 不要占着本轮长时间轮询。一次真实失败不是整个任务结束，应该分析并进入新假设。
 
@@ -20,10 +20,11 @@
 
 远端SSH用公钥：`ssh -p 51348 -o BatchMode=yes -o ConnectTimeout=8 root@connect.bjb1.seetacloud.com`。
 Python `/root/voxcpm-finetune/.venv/bin/python`，项目 `/root/voxcpm-finetune`，产物必须在 `/root/autodl-tmp`。
-数据盘50GB，保留4GiB。不得打印.env、认证文件或token；不复制本机Codex认证到远端。
+数据盘50GB，保留4GiB。不得打印.env、认证文件或token；不复制本机Kimi认证到远端。
 不使用邮件/Slack等发消息；仅本地状态、文档、日志与已授权git仓库。
 
-使用workspace-write与自动审批。平台或自动审批明确拒绝的操作不可绕过，不能换通道或放宽沙箱。
+使用Kimi `-p`非交互默认auto权限，保留静态拒绝规则；不叠加`--yolo`/`--auto`，不关闭保护。
+平台或静态规则明确拒绝的操作不可绕过，不能换通道或放宽限制。
 遇到拒绝，先找合规替代；无法继续则返回approval_blocked，并在summary写清拒绝的操作、原文理由与来源。
 不因普通实现选择询问用户。远端临时不可达、配额/登录等真正外部条件，记录external_block并给出退避；
 不要反复忙重试、猜新端口、重启实例或购买资源。外层会自动重查，无需用户催动。
@@ -101,9 +102,10 @@ by_lang必须恰含th/tl/id，各含independent_texts≥30与≥5个seeds；loca
 ## 运行机制
 
 本机`scripts/quality_autopilot.py`通过macOS用户LaunchAgent定期唤醒、单进程持锁，
-使用本机已登录Codex的`exec --approve-for-me --ephemeral --json`，不传递认证文件到GPU。
-`--approve-for-me`已包含workspace-write，与显式`--sandbox`互斥；实际只读Codex→SSH→GPU探针通过。
-13项针对测试通过。依据[官方非交互文档](https://developers.openai.com/codex/noninteractive)，
+使用本机已登录Kimi的`-p --output-format stream-json`，不传递认证文件到GPU。
+非交互默认auto权限保留静态拒绝规则，不与`--yolo`/`--auto`叠加；prompt显式携带Schema，
+监督器解析最后一个assistant JSON对象并本地校验，不使用Codex专属输出参数。
+15项针对测试及真实Kimi→SSH→GPU只读探针通过。依据[Kimi官方命令文档](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html)，
 结构化输出只控制接续，不能代替实际模型验收；完成态还须检查本地验收报告与SHA。
 
 运行状态及每轮events在`work/quality_autopilot_20261031/`（gitignored）。

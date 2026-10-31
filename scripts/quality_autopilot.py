@@ -45,30 +45,39 @@ def read(path):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
-def command(directory, probe=False):
-    executable = shutil.which('codex') or '/opt/homebrew/bin/codex'
-    # --approve-for-me already selects workspace-write; the CLI rejects both flags together.
-    args = [executable, 'exec', '--approve-for-me',
-            '--ephemeral', '--json', '--color', 'never', '-C', str(ROOT),
-            '--output-schema', str(directory / 'schema.json'),
-            '--output-last-message', str(directory / 'result.json')]
-    if probe:
-        args += ['-c', 'model_reasoning_effort="low"']
-    return args + ['-']
+def command(prompt):
+    executable = shutil.which('kimi') or str(Path.home() / '.kimi-code/bin/kimi')
+    return [executable, '-p', prompt, '--output-format', 'stream-json']
+
+
+def parse_result(directory):
+    contents = []
+    for line in (directory / 'events.jsonl').read_text(encoding='utf-8').splitlines():
+        event = json.loads(line)
+        if event.get('role') == 'assistant' and isinstance(event.get('content'), str) and event['content'].strip():
+            contents.append(event['content'].strip())
+    if not contents:
+        raise ValueError('Kimi returned no assistant result')
+    result = json.loads(contents[-1])
+    if not isinstance(result, dict):
+        raise ValueError('Kimi final result must be a JSON object')
+    return result
 
 
 def invoke(directory, prompt, probe=False):
     directory.mkdir(parents=True)
-    write(directory / 'schema.json', PROBE_SCHEMA if probe else SCHEMA)
+    schema = PROBE_SCHEMA if probe else SCHEMA
+    write(directory / 'schema.json', schema)
+    prompt += ('\n\n最终回复只输出一个符合以下 JSON Schema 的 JSON 对象；不要 Markdown、解释或其他文字：\n'
+               + json.dumps(schema, ensure_ascii=False))
     (directory / 'prompt.md').write_text(prompt, encoding='utf-8')
     with (directory / 'events.jsonl').open('xb') as events, (directory / 'stderr.log').open('xb') as errors:
-        child = subprocess.Popen(command(directory, probe), cwd=ROOT, stdin=subprocess.PIPE,
+        child = subprocess.Popen(command(prompt), cwd=ROOT, stdin=subprocess.DEVNULL,
             stdout=events, stderr=errors, start_new_session=True)
         state = {'stage': 'probing' if probe else 'working', 'supervisor_pid': os.getpid(),
                  'worker_pid': child.pid, 'turn': str(directory), 'started_at': time.time()}
         write(WORK / 'status.json', state)
         try:
-            child.stdin.write(prompt.encode('utf-8')); child.stdin.close()
             while child.poll() is None:
                 write(WORK / 'status.json', {**state, 'heartbeat': time.time()})
                 if (WORK / 'STOP').exists():
@@ -85,11 +94,13 @@ def invoke(directory, prompt, probe=False):
                 except subprocess.TimeoutExpired:
                     child.kill(); child.wait()
             raise
-    if child.returncode or not (directory / 'result.json').exists():
+    if child.returncode:
         raise RuntimeError(f'Worker exited {child.returncode}; retain events in {directory}')
-    result = read(directory / 'result.json')
+    result = parse_result(directory)
+    write(directory / 'result.json', result)
     if probe:
-        if not all(result.get(k) is True for k in ('ssh_connected', 'gpu_available', 'no_mutations')):
+        if set(result) != set(PROBE_SCHEMA['required']) or not all(
+                result.get(k) is True for k in ('ssh_connected', 'gpu_available', 'no_mutations')):
             raise RuntimeError('Read-only end-to-end probe failed')
     else:
         if set(result) != set(SCHEMA['required']) or result['status'] not in SCHEMA['properties']['status']['enum']:
@@ -201,13 +212,13 @@ def install():
              'WorkingDirectory': str(ROOT), 'RunAtLoad': True, 'StartInterval': 60,
              'ProcessType': 'Background', 'StandardOutPath': str(WORK / 'supervisor.log'),
              'StandardErrorPath': str(WORK / 'supervisor.stderr.log'),
-             'EnvironmentVariables': {'PATH': f'/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+             'EnvironmentVariables': {'PATH': f"{Path.home()/'.kimi-code/bin'}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
                                       'PYTHONUNBUFFERED': '1', 'PYTHONUTF8': '1'}}
     with plist.open('xb') as stream: plistlib.dump(value, stream)
     os.chmod(plist, 0o600)
     subprocess.run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(plist)], check=True)
     write(WORK / 'installation.json', {'label': LABEL, 'plist': str(plist), 'time': time.time(),
-          'policy': 'Local user LaunchAgent, single worker, workspace-write + automatic review; no bypass or auth transfer.'})
+          'policy': 'Local user LaunchAgent, single Kimi worker; non-interactive auto policy with static deny rules; no auth transfer.'})
     print('INSTALLED', LABEL)
 
 

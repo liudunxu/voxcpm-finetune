@@ -16,12 +16,19 @@ def module(monkeypatch, tmp_path):
     return module
 
 
-def test_worker_keeps_sandbox_and_automatic_review(module,tmp_path):
-    args=module.command(tmp_path)
-    assert '--approve-for-me' in args
-    assert '--sandbox' not in args  # Mutually exclusive; approve-for-me selects workspace-write itself.
-    assert '--ignore-rules' not in args and '--ignore-user-config' not in args
+def test_worker_uses_kimi_stream_json_without_permission_bypass(module):
+    args=module.command('read only')
+    assert args[1:]==['-p','read only','--output-format','stream-json']
+    for flag in ('--approve-for-me','--sandbox','--yolo','--auto','--ignore-rules','--ignore-user-config'):
+        assert flag not in args
     assert not any('danger' in arg for arg in args)
+
+
+def test_kimi_fallback_matches_launchagent_home(module,monkeypatch):
+    monkeypatch.setattr(module.shutil,'which',lambda _:None)
+    args=module.command('read only')
+    assert args[0]==str(module.Path.home()/'.kimi-code/bin/kimi')
+    assert module.Path(args[0]).is_absolute()
 
 
 def evidence(module):
@@ -69,10 +76,24 @@ def test_supervisor_lock_prevents_duplicate_worker(module,monkeypatch):
 def test_probe_runs_a_real_child_and_preserves_structured_output(module,monkeypatch):
     result={'local_head':'abc','ssh_connected':True,'gpu_available':True,'no_mutations':True,'summary':'ok'}
     directory=module.WORK/'probe'
-    code='import pathlib,sys;sys.stdin.read();pathlib.Path(sys.argv[1]).write_text(sys.argv[2])'
-    monkeypatch.setattr(module,'command',lambda path,probe=False:
-        [sys.executable,'-c',code,str(path/'result.json'),json.dumps(result)])
+    code=('import json,sys;print(json.dumps({"role":"assistant","content":sys.argv[1]}));'
+          'print(json.dumps({"role":"meta","type":"session.resume_hint"}))')
+    monkeypatch.setattr(module,'command',lambda prompt:[sys.executable,'-c',code,json.dumps(result)])
     real_sleep=module.time.sleep
     monkeypatch.setattr(module.time,'sleep',lambda _:real_sleep(.01))
     assert module.invoke(directory,'read only',probe=True)==result
-    assert (directory/'events.jsonl').exists() and (directory/'prompt.md').read_text()=='read only'
+    assert json.loads((directory/'result.json').read_text())==result
+    prompt=(directory/'prompt.md').read_text()
+    assert prompt.startswith('read only') and 'JSON Schema' in prompt and 'ssh_connected' in prompt
+    events=(directory/'events.jsonl').read_text().splitlines()
+    assert json.loads(events[0])['role']=='assistant'
+
+
+def test_parse_result_uses_last_assistant_json_and_rejects_prose(module,tmp_path):
+    events=[{'role':'assistant','content':'{"value":1}'},
+            {'role':'meta','content':'ignored'}, {'role':'assistant','content':'{"value":2}'}]
+    (tmp_path/'events.jsonl').write_text('\n'.join(json.dumps(event) for event in events)+'\n')
+    assert module.parse_result(tmp_path)=={'value':2}
+    (tmp_path/'events.jsonl').write_text('{"role":"assistant","content":"not json"}\n')
+    with pytest.raises(json.JSONDecodeError):
+        module.parse_result(tmp_path)

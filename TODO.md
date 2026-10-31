@@ -3,8 +3,8 @@
 ## 当前最高授权：自主持续迭代至合格候选（2026-10-30）
 
 用户2026-10-31再次明确：检测完要自动完成后续流程，不等确认、不等用户催动。
-后台接续器`scripts/quality_autopilot.py`与[执行交接](docs/quality_autopilot_instructions.md)已实现，
-13项测试及真实Codex→SSH→GPU只读探针通过；使用workspace-write自动审批，不关闭保护。
+后台接续器`scripts/quality_autopilot.py`与[执行交接](docs/quality_autopilot_instructions.md)已迁移到Kimi Code，
+15项测试及真实Kimi→SSH→GPU只读探针通过；非交互auto权限保留静态拒绝，不使用权限绕过或关闭保护。
 每轮分析、过滤、训练、阶段判退、扩评与记录/push由后台接续，直到可复核工程候选；
 本机LaunchAgent安装/运行状态以`work/quality_autopilot_20261031/status.json`为准。
 未评母语项仍未验证，不自动部署；真正自动审批拒绝不绕过。工作状态与新结果持续回写本节。
