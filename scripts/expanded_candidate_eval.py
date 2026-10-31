@@ -20,6 +20,13 @@ R39 = Path('/root/autodl-tmp/r39_drop0_20261031_v2/run')
 R39_SHA = '9b40d522071727eef4163ea70b5662098745c3c27617cd3103ee49074e631b5e'
 R39_VERIFICATION_SHA = '3a9ab7f53efdad4206fed2646b347ccb73e96d6ee87a826220c8e2b26f53f8ea'
 R39_PROFILES = ('r39_early_diagnostic', 'r39_u40_diagnostic')
+U40 = Path('/root/autodl-tmp/r39_u40_20261031')
+HALF = Path('/root/autodl-tmp/r39_u40_half_20261031')
+HALF_RUN = HALF / 'run'
+HALF_SHA = '2f965f37e3ee71784d29b2c37e90b731671c5bf0bf598b22a2f8d775a7915596'
+HALF_VERIFICATION_SHA = '28c88e1a65afeb1ecae5b585146ac1fb4097c5e0270721cd60062901d7e997a0'
+HALF_PROFILE = 'r39_u40_half_expansion'
+PAIRED_PROFILES = (*R39_PROFILES, HALF_PROFILE)
 
 
 def publish(path, value):
@@ -105,9 +112,22 @@ def parent_gate(profile, status, result):
 def prepare(work, profile='r33'):
     if work.exists():
         raise FileExistsError(work)
-    diagnostic = profile in ('r34_diagnostic', 'r33_early_diagnostic', *R39_PROFILES)
+    half_expansion = profile == HALF_PROFILE
+    diagnostic = profile in ('r34_diagnostic', 'r33_early_diagnostic', *PAIRED_PROFILES)
     candidate, digest = (DIAGNOSTIC, DIAGNOSTIC_SHA) if profile == 'r34_diagnostic' else (CANDIDATE, CANDIDATE_SHA)
-    if profile in R39_PROFILES:
+    if half_expansion:
+        candidate, digest = HALF_RUN, HALF_SHA
+        verification_path = HALF / 'verification_terminal.json'
+        prior.review.checked(verification_path, HALF_VERIFICATION_SHA)
+        verification = read(verification_path)
+        if (verification['status'] != 'diagnostic_complete_verified' or verification['reason'] is not None
+                or verification['completed_outputs'] != 30 or verification['reused_outputs'] != 60
+                or verification['unscored_wavs'] != 0 or verification['plan_sha256'] != digest
+                or verification['lora_strength'] != .5 or verification['weight_bytes_changed']):
+            raise ValueError('Expected verified complete u40 half-strength probe')
+        for path, expected in verification['outputs_sha256'].items():
+            prior.review.checked(path, expected)
+    elif profile in R39_PROFILES:
         candidate, digest = R39, R39_SHA
         prior.review.checked(candidate / 'verification.json', R39_VERIFICATION_SHA)
         verification = read(candidate / 'verification.json')
@@ -119,19 +139,27 @@ def prepare(work, profile='r33'):
             prior.review.checked(path, expected)
     prior.review.checked(candidate / 'plan.json', digest)
     parent = prior.strength.check_inputs(candidate)
-    step, updates, reused_count = parent_gate(profile, read(candidate / 'status.json'), read(candidate / 'result.json'))
-    gate = candidate / f'gate_{step}'
-    checkpoint = read(gate / 'checkpoint.json')
-    if checkpoint['optimizer_updates'] != updates:
-        raise ValueError('Expected completed latest training state')
+    if half_expansion:
+        updates, reused_count, gate = 40, 30, candidate
+        checkpoint = {'target': parent['targets']['candidate'], 'inputs_sha256': {}}
+    else:
+        step, updates, reused_count = parent_gate(profile, read(candidate / 'status.json'), read(candidate / 'result.json'))
+        gate = candidate / f'gate_{step}'
+        checkpoint = read(gate / 'checkpoint.json')
+        if checkpoint['optimizer_updates'] != updates:
+            raise ValueError('Expected completed latest training state')
     # Training inputs were verified above. Keep their parent plan as provenance;
     # inference workers only need to recheck model, source and evaluation inputs.
-    inputs = {p:h for p,h in parent['inputs_sha256'].items() if '/models--' in p}
+    inputs = dict(parent['inputs_sha256']) if half_expansion else {
+        p:h for p,h in parent['inputs_sha256'].items() if '/models--' in p}
     inputs.update(checkpoint['inputs_sha256'])
     cases = frozen._read_manifest(prior.SOURCE / 'cases.jsonl')
-    canary_first = profile in ('r33_early_diagnostic', *R39_PROFILES)
-    jobs = select_jobs(cases, read(candidate / 'jobs.json'), canary_first=canary_first,
-                       id_canary_first=profile == 'r39_u40_diagnostic')
+    canary_first = profile in ('r33_early_diagnostic', *PAIRED_PROFILES)
+    pilot = read(R39 / 'jobs.json') if half_expansion else read(candidate / 'jobs.json')
+    jobs = select_jobs(cases, pilot, canary_first=canary_first,
+                       id_canary_first=profile in ('r39_u40_diagnostic', HALF_PROFILE))
+    if half_expansion and jobs != read(U40 / 'run/jobs.json'):
+        raise ValueError('Half-strength expansion must preserve the same 300 jobs')
     selected = {j['case']['case_id']: j['case'] for j in jobs}
     baseline_path = prior.SOURCE / 'base_report.json'
     baseline = read(baseline_path)
@@ -145,30 +173,35 @@ def prepare(work, profile='r33'):
         inputs[row['ref_audio']] = parent['inputs_sha256'][row['ref_audio']]
     plan = {**{k: parent[k] for k in ('base_path', 'asr_path', 'speaker_model_path')},
             'targets': {'candidate':checkpoint['target'], 'base':'base'}}
+    strength = .5 if half_expansion else 1.
     reused = []
     for path in sorted((gate / 'items').glob('*.json')):
         report = read(path)
         row, = report['items']
-        prior.verify(report, plan, selected[row['case_id']], 'candidate', 1., row['seed'])
+        prior.verify(report, plan, selected[row['case_id']], 'candidate', strength, row['seed'])
         inputs[str(path)] = frozen.sha256(path)
         inputs.update(report['wav_sha256'])
         reused.append({**row, **prior.review.level_metrics(row['wav'])})
     if len(reused) != reused_count or len({prior.key(r) for r in reused}) != reused_count:
         raise ValueError('Unexpected existing candidate outputs; no reruns')
-    if profile in R39_PROFILES:
+    if profile in PAIRED_PROFILES:
         lookup = {prior.key(r):r for r in base}
         if any(probe.reject_reason(reused[:i], lookup) for i in range(1, len(reused)+1)):
-            raise ValueError('Existing r39 early outputs violate severe gate')
+            raise ValueError('Existing diagnostic outputs violate severe gate')
         if staged.acoustic_gate(reused, lookup, paired_extremes=True):
-            raise ValueError('Existing r39 early outputs violate acoustic gate')
+            raise ValueError('Existing diagnostic outputs violate acoustic gate')
         reserved = frozen.ROOT / 'eval_cases/reserved_final_20261030.jsonl'
         prior.review.checked(reserved, 'cc7da8b05f6e78c92b5a7789e9cc95b0eadfb5047caf3287f3acf47b6b55fd0c')
         heldout = {frozen.evaluation._norm(r['text']) for r in frozen._read_manifest(reserved)}
         if any(frozen.evaluation._norm(j['case']['text']) in heldout for j in jobs):
             raise ValueError('Reserved final text in diagnostic development')
         inputs[str(reserved)] = frozen.sha256(reserved)
-    for path in (candidate / 'plan.json', candidate / 'result.json', candidate / 'verification.json',
-                 gate / 'checkpoint.json', gate / 'result.json', prior.SOURCE / 'cases.jsonl'):
+    artifacts = (candidate / 'plan.json', candidate / 'result.json', candidate / 'verification.json',
+                 gate / 'checkpoint.json', gate / 'result.json', prior.SOURCE / 'cases.jsonl')
+    if half_expansion:
+        artifacts = (candidate / 'plan.json', candidate / 'result.json', HALF / 'verification_terminal.json',
+                     U40 / 'run/jobs.json', R39 / 'jobs.json', prior.SOURCE / 'cases.jsonl')
+    for path in artifacts:
         inputs[str(path)] = frozen.sha256(path)
     comparison = []
     if profile == 'r34_diagnostic':
@@ -206,26 +239,32 @@ def prepare(work, profile='r33'):
     if comparison:
         save(work / 'equal_exposure_r33.json', comparison)
         inputs[str(work / 'equal_exposure_r33.json')] = frozen.sha256(work / 'equal_exposure_r33.json')
+    note = ('Development only. Same unmodified texts and paired five seeds; early-r33 profile puts '
+            'the new TH1844 text first, otherwise existing guard first; '
+            'known ID/TH stress texts next, remaining texts selected by ID hash without scores. '
+            'r39 early profile tests the existing 80-update snapshot, not the rejected latest; '
+            'r39 u40 profile tests the existing 40-update snapshot and fronts ID1973 in '
+            'both unchanged conditions, plain first, after its 80-update failure. '
+            'same 300-job diagnostic coverage, 45 reused, at most 255 new. '
+            'Four workers share stage barriers. On rejection finish only in-flight outputs and '
+            'preserve them. No retries, no reserved final texts, no production change.')
+    if half_expansion:
+        note = ('Development only. Same 300 jobs, unmodified texts and paired five seeds as u40. '
+                'Reuse only the 30 verified u40 half-strength outputs; at most 270 new at the same 0.5 '
+                'inference strength and unchanged weight bytes. Four workers validate scaling and share '
+                'stage barriers. This remains a bounded diagnostic, not acceptance or a production setting. '
+                'No retries, reserved final texts, training or production change.')
     save(work / 'plan.json', {**plan, 'inputs_sha256':inputs, 'max_workers':4,
         'profile':profile, 'diagnostic_only':diagnostic, 'checkpoint_optimizer_updates':updates,
-        'total_outputs':300, 'reused_outputs':reused_count, 'new_outputs_max':300-reused_count,
-        'texts_per_language':10, 'seeds':frozen.SEEDS, 'tail_policy':'absolute',
-        'paired_extreme_acoustics':profile in R39_PROFILES,
+        'lora_strength':strength, 'total_outputs':300, 'reused_outputs':reused_count,
+        'new_outputs_max':300-reused_count, 'texts_per_language':10, 'seeds':frozen.SEEDS,
+        'tail_policy':'absolute', 'paired_extreme_acoustics':profile in PAIRED_PROFILES,
         'stages':10, 'early_rejection':([
             'existing per-output severe gates; existing absolute acoustic gates at stage boundaries',
             'mean CER uses existing CER_NOISE classification as observation, not automatic rejection',
             'diagnostic completion never promotes, resumes training or revises original rejection',
         ] if diagnostic else parent['early_rejection']), 'training_steps':0,
-        'canary_first':canary_first,
-        'note':'Development only. Same unmodified texts and paired five seeds; early-r33 profile puts '
-               'the new TH1844 text first, otherwise existing guard first; '
-               'known ID/TH stress texts next, remaining texts selected by ID hash without scores. '
-               'r39 early profile tests the existing 80-update snapshot, not the rejected latest; '
-               'r39 u40 profile tests the existing 40-update snapshot and fronts ID1973 in '
-               'both unchanged conditions, plain first, after its 80-update failure. '
-               'same 300-job diagnostic coverage, 45 reused, at most 255 new. '
-               'Four workers share stage barriers. On rejection finish only in-flight outputs and '
-               'preserve them. No retries, no reserved final texts, no production change.',
+        'canary_first':canary_first, 'note':note,
         'production_changed':False, 'native_quality':'unverified'})
     print(f'PREPARED {profile}: 300 outputs, {reused_count} reused, at most {300-reused_count} new', flush=True)
 
@@ -234,6 +273,7 @@ def worker(work, index):
     plan = prior.strength.check_inputs(work)
     jobs = read(work / 'jobs.json')
     reused = {prior.key(r) for r in read(work / 'reused.json')}
+    strength = plan.get('lora_strength', 1.)
     directory = work / f'worker{index}'
     frozen.runtime_environment(directory / 'runtime')
     os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
@@ -243,6 +283,9 @@ def worker(work, index):
     frozen.evaluation.infer.CHECKPOINT_DIR = directory
     with prior.fast.cached_services([j['case'] for j in jobs]):
         save(directory / 'runtime.json', prior.baseline.gpu_services(plan, [j['case'] for j in jobs], 'candidate'))
+        if strength != 1.:
+            model = frozen.evaluation.infer.get_model(plan['base_path'], plan['targets']['candidate'])
+            save(directory / 'scaling.json', prior.strength.check_scaling(model))
         while True:
             control = read(work / 'control.json')
             if control['stop']:
@@ -256,11 +299,12 @@ def worker(work, index):
             if shutil.disk_usage(work).free < 4 * 1024**3:
                 raise RuntimeError('Disk reserve reached')
             report = frozen.evaluation.evaluate(plan['targets']['candidate'], 'th', [job['case']],
-                base=plan['base_path'], seeds=[job['seed']], cfg_value=1.8, inference_timesteps=20)
+                base=plan['base_path'], seeds=[job['seed']], cfg_value=1.8, inference_timesteps=20,
+                lora_strength=strength)
             row, = report['items']
             report['wav_sha256'] = {row['wav']:frozen.sha256(row['wav'])}
             report['level_metrics'] = prior.review.level_metrics(row['wav'])
-            prior.verify(report, plan, job['case'], 'candidate', 1., job['seed'])
+            prior.verify(report, plan, job['case'], 'candidate', strength, job['seed'])
             publish(work / 'items' / (job['id'] + '.json'), report)
             update(directory / 'progress.json', {'last_job':job['id'], 'time':time.time()})
 
@@ -316,7 +360,7 @@ def run(work):
                 if path.stem not in expected or path.stem in present:
                     raise ValueError('Duplicate or unexpected output')
                 job, report = expected[path.stem], read(path)
-                prior.verify(report, plan, job['case'], 'candidate', 1., job['seed'])
+                prior.verify(report, plan, job['case'], 'candidate', plan.get('lora_strength', 1.), job['seed'])
                 row, = report['items']
                 rows.append({**row, **report['level_metrics']})
                 seen.add(path.stem)
@@ -369,6 +413,7 @@ def run(work):
             'reason':reason, 'completed':len(rows), 'new_outputs':len(seen), 'skipped':300-len(rows),
             'stages':stages, 'metrics':metrics, 'rows':rows, 'matched_base':base_rows,
             'cer_observations':cer_observations(rows, base), 'equal_exposure_comparison':comparison,
+            'lora_strength':plan.get('lora_strength', 1.),
             'native_quality':'unverified', 'production_changed':False,
             'wav_sha256':{r['wav']:frozen.sha256(r['wav']) for r in rows}})
         update(work / 'status.json', {'stage':final_decision if diagnostic else ('rejected' if reason else 'development_complete'),
@@ -388,7 +433,7 @@ if __name__ == '__main__':
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--index', type=int, choices=range(4))
     parser.add_argument('--profile', choices=('r33', 'r34_diagnostic', 'r33_early_diagnostic',
-                                             *R39_PROFILES), default='r33')
+                                             *PAIRED_PROFILES), default='r33')
     args = parser.parse_args()
     if args.action == 'worker':
         worker(args.work, args.index)

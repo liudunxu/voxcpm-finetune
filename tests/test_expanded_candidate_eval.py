@@ -90,6 +90,37 @@ def test_worker_finishes_in_flight_result_and_stops_before_another_claim(module,
     assert (tmp_path / 'one.wav').read_bytes() == b'preserve failed audio'
 
 
+def test_half_worker_verifies_scaling_and_uses_the_same_strength(module, tmp_path, monkeypatch):
+    plan = {'asr_path':'asr', 'speaker_model_path':'speaker', 'base_path':'base',
+            'targets':{'candidate':'weights'}, 'lora_strength':.5}
+    jobs = [{'id':'0', 'case':{'case_id':'0'}, 'seed':42, 'stage':0}]
+    for directory in ('worker0', 'items', 'claims'):
+        (tmp_path / directory).mkdir()
+    module.save(tmp_path / 'jobs.json', jobs)
+    module.save(tmp_path / 'reused.json', [])
+    module.save(tmp_path / 'control.json', {'stop':False, 'stage':0})
+    monkeypatch.setattr(module.prior.strength, 'check_inputs', lambda _:plan)
+    monkeypatch.setattr(module.prior.strength, 'check_scaling', lambda _: {'restored':True})
+    monkeypatch.setattr(module.frozen, 'runtime_environment', lambda _:None)
+    monkeypatch.setattr(module.prior.fast, 'cached_services', lambda _:nullcontext())
+    monkeypatch.setattr(module.prior.baseline, 'gpu_services', lambda *_:{})
+    monkeypatch.setattr(module.frozen.evaluation.infer, 'get_model', lambda *_:object())
+    monkeypatch.setattr(module.frozen.evaluation, 'EVAL_DIR', tmp_path)
+    monkeypatch.setattr(module.frozen.evaluation.infer, 'CHECKPOINT_DIR', tmp_path)
+    monkeypatch.setattr(module.prior.review, 'level_metrics', lambda _: {})
+    calls = []
+    monkeypatch.setattr(module.prior, 'verify', lambda *args: calls.append(args[4]))
+    def evaluate(*args, **kwargs):
+        calls.append(kwargs['lora_strength'])
+        module.update(tmp_path / 'control.json', {'stop':True, 'stage':0})
+        wav = tmp_path / 'half.wav'; wav.write_bytes(b'half')
+        return {'items':[{'case_id':'0', 'seed':42, 'wav':str(wav)}]}
+    monkeypatch.setattr(module.frozen.evaluation, 'evaluate', evaluate)
+    module.worker(tmp_path, 0)
+    assert calls == [.5, .5]
+    assert module.read(tmp_path / 'worker0/scaling.json') == {'restored':True}
+
+
 def test_expansion_cannot_skip_acoustic_failure(module):
     row = {'case_id':'a','seed':42,'lang':'th','cer':0.,'hyp':'text','text':'text',
            'over_read':False,'rms_dbfs':-20,'speech_ratio':.95,'audio_sec':5.,
