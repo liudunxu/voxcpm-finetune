@@ -29,7 +29,8 @@ ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5', 'dit_original_lr5e5_r
                      'dit_original_lr5e5_rank16_drop0',
                      'dit_original_lr5e5_rank32_drop0_seed43',
                      'dit_original_lr5e5_rank32_drop0_early20',
-                     'dit_original_lr5e5_rank32_drop0_wd01')
+                     'dit_original_lr5e5_rank32_drop0_wd01',
+                     'dit_original_lr5e5_rank32_drop0_wd01_micro1')
 PAIRED_VARIANTS = ('dit_paired', *ORIGINAL_VARIANTS)
 R35 = Path('/root/autodl-tmp/r35_dit_paired_20261031/run')
 R35_SHA = 'c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b'
@@ -60,6 +61,12 @@ R43_VERIFICATION_SHA = 'ea0bf0f8debeb70f18a1c7ec88c99de0a066951d33d21cf83064dacb
 R44 = Path('/root/autodl-tmp/r44_early20_20261031_v2/run')
 R44_SHA = 'b87b02ef560f9e674ee8c4d0a20700066836b934918da25297b0d85539b62b7a'
 R44_VERIFICATION_SHA = '17dfeef28d227a1fcbefaf46451f184d8fd17c04abfeaf10b34c8091b666da8e'
+R45 = Path('/root/autodl-tmp/r45_wd01_20261031/run')
+R45_SHA = '8108b5ae58fe4f5d29204338d2438b77ba565d6d044477c43e20d613a7320281'
+R45_VERIFICATION_SHA = '6cf3862de8cfb8aee054387cb9d21bcfb6eac57f6d98c656d2c235b3289807d0'
+R45_U10 = Path('/root/autodl-tmp/r45_u10_20261031')
+R45_U10_SHA = '3a35ff1ac9afbcb0f70c62c494e58165f7446ec1843890d751830818356adda5'
+R45_U10_VERIFICATION_SHA = '90ca51aa8a9af33849d45941d445123dff428fd05a499554dab8103a7e6592a0'
 
 
 def acoustic_gate(rows, baseline, *, paired_extremes=False):
@@ -179,6 +186,13 @@ VARIANTS['dit_original_lr5e5_rank32_drop0_wd01'] = {**VARIANTS['dit_original_lr5
     'hypothesis':'Relative to r39, change only weight_decay .01 to.1. r44 showed new overread already at10 '
                  'updates on the unchanged trajectory, so do not mechanically shrink the budget again. Keep '
                  'data, seed42, rank32, dropout0, lr5e-5 and118-update schedule; evaluate at10 before40/80/118.'}
+VARIANTS['dit_original_lr5e5_rank32_drop0_wd01_micro1'] = {**VARIANTS['dit_original_lr5e5_rank32_drop0_wd01'],
+    'microbatch':(1, 16),
+    'run_name':'lora_joint3_r46_dit_original_lr5e5_rank32_drop0_wd01_micro1_staged',
+    'hypothesis':'Relative to r45, keep effective batch16, data/order, LR schedule and every model/optimizer '
+                 'setting unchanged, but use microbatch1 with accumulation16 instead of2 with8. The official '
+                 'loss averages each microbatch before accumulation, so this tests per-sample weighting rather '
+                 'than another budget, strength or learning-rate change after r45/u10 paired-CER failures.'}
 
 
 def candidate_config(parent, work, variant, *, train_rows=None):
@@ -194,6 +208,8 @@ def candidate_config(parent, work, variant, *, train_rows=None):
             'save_interval': 150}
     if 'stop_loss_weight' in VARIANTS[variant]:
         result['lambdas'] = {**parent['lambdas'], 'loss/stop':VARIANTS[variant]['stop_loss_weight']}
+    if 'microbatch' in VARIANTS[variant]:
+        result['batch_size'], result['grad_accum_steps'] = VARIANTS[variant]['microbatch']
     if variant in PAIRED_VARIANTS:
         if train_rows != 1881:
             raise ValueError('Expected the frozen 1881-row paired candidate')
@@ -206,7 +222,8 @@ def candidate_config(parent, work, variant, *, train_rows=None):
 def gate_steps(cfg, variant):
     if variant == 'dit_original_lr5e5_rank32_drop0_early20':
         return (9, 19)
-    if variant == 'dit_original_lr5e5_rank32_drop0_wd01':
+    if variant in {'dit_original_lr5e5_rank32_drop0_wd01',
+                   'dit_original_lr5e5_rank32_drop0_wd01_micro1'}:
         return (9, 39, 79, 118)
     if variant not in PAIRED_VARIANTS:
         return GATES
@@ -276,7 +293,8 @@ def verify_original_config_control(work, cfg, variant):
                    'dit_original_lr5e5_rank16_drop0':R39,
                    'dit_original_lr5e5_rank32_drop0_seed43':R39,
                    'dit_original_lr5e5_rank32_drop0_early20':R39,
-                   'dit_original_lr5e5_rank32_drop0_wd01':R39}[variant]
+                   'dit_original_lr5e5_rank32_drop0_wd01':R39,
+                   'dit_original_lr5e5_rank32_drop0_wd01_micro1':R45}[variant]
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
         if frozen.sha256(work / name) != frozen.sha256(parent_work / name):
             raise ValueError(f'Original control changed {name}')
@@ -288,6 +306,11 @@ def verify_original_config_control(work, cfg, variant):
                    'dit_original_lr5e5_rank32_drop0_early20'}:
         if changed:
             raise ValueError('Expected identical config bytes; only training seed or early budget differs from r39')
+    elif variant == 'dit_original_lr5e5_rank32_drop0_wd01_micro1':
+        if (changed != {'batch_size', 'grad_accum_steps'}
+                or (parent['batch_size'], parent['grad_accum_steps']) != (2, 8)
+                or (cfg['batch_size'], cfg['grad_accum_steps']) != (1, 16)):
+            raise ValueError('Expected only microbatch2x8 to1x16 with effective batch16 relative to r45')
     elif variant == 'dit_original_lr5e5_rank32_drop0_wd01':
         if (changed != {'weight_decay'} or parent['weight_decay'] != .01 or cfg['weight_decay'] != .1):
             raise ValueError('Expected only weight_decay .01 to.1 relative to r39')
@@ -493,6 +516,31 @@ def prepare(work, variant='rank32'):
                 inputs.update(verification['outputs_sha256'])
                 inputs[str(R44 / 'plan.json')] = R44_SHA
                 inputs[str(R44 / 'verification.json')] = R44_VERIFICATION_SHA
+            if variant == 'dit_original_lr5e5_rank32_drop0_wd01_micro1':
+                prior.review.checked(R45 / 'plan.json', R45_SHA)
+                prior.review.checked(R45 / 'verification.json', R45_VERIFICATION_SHA)
+                verification = read(R45 / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R45_SHA
+                        or verification['optimizer_step_counts'] != {'10':96, '40':96}
+                        or verification['completed_outputs'] != 48 or verification['unscored_wavs'] != 0
+                        or verification['reason'] != 'new_suspected_overread'):
+                    raise ValueError('Expected verified r45 terminal failure')
+                inputs.update(read(R45 / 'plan.json')['inputs_sha256'])
+                inputs.update(verification['outputs_sha256'])
+                inputs[str(R45 / 'plan.json')] = R45_SHA
+                inputs[str(R45 / 'verification.json')] = R45_VERIFICATION_SHA
+                prior.review.checked(R45_U10 / 'run/plan.json', R45_U10_SHA)
+                prior.review.checked(R45_U10 / 'verification_terminal.json', R45_U10_VERIFICATION_SHA)
+                diagnostic = read(R45_U10 / 'verification_terminal.json')
+                if (diagnostic['status'] != 'diagnostic_stopped_verified'
+                        or diagnostic['plan_sha256'] != R45_U10_SHA
+                        or diagnostic['reason'] != 'two_large_paired_cer_regressions'
+                        or diagnostic['completed_outputs'] != 90 or diagnostic['new_outputs'] != 45
+                        or diagnostic['skipped'] != 210 or diagnostic['unscored_wavs'] != 0):
+                    raise ValueError('Expected verified r45/u10 diagnostic failure')
+                inputs.update(diagnostic['outputs_sha256'])
+                inputs[str(R45_U10 / 'run/plan.json')] = R45_U10_SHA
+                inputs[str(R45_U10 / 'verification_terminal.json')] = R45_U10_VERIFICATION_SHA
     if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
         prior.strength.check_inputs(R33_DEVELOPMENT)

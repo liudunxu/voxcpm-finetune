@@ -4,6 +4,44 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## r45_u10_20261031 开发诊断
+
+- 生成时间：2026-10-31 19:07
+- 结论：**不通过：r45的10更新快照在90条固定开发输出中出现两条严重配对CER退化；不续训、不补抽**
+- 下一步：保持有效batch16，单独检验microbatch2×8→1×16的逐样本损失权重；不使用最终90调参。
+
+### 继承配置与数据
+
+| 项 | 值 |
+|---|---|
+| LoRA r/alpha/dropout | 32/32/0.0 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate / weight_decay | 5e-05 / 0.1 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| 快照 / 名义总预算 | 10更新 / 118更新（1.00372 epoch） |
+| 数据 | 1881行 / 3.541h；ID582、TH704、TL346、zh169、en80 |
+| 实际时长份额 | ID28.3043%、TH28.3412%、TL28.3342%、zh9.9916%、en5.0287% |
+| ref / control | 475次、435独立，TL可信ref0 / 0 |
+| 来源许可 | cv22_id/th CC0；fleurs_en/id/th/tl/zh CC-BY-4.0；gigaspeech2_id/th Apache-2.0；yodas_th CC-BY-3.0 |
+
+### 验收（离线轨）
+
+- 同一300-job开发任务，45复用+45新，Whisper large-v3、五seed；第86条满足两条严重配对退化停止，另保留4条在途结果，余210条不补抽。
+
+| 语种 | 完成输出/文本 | base CER | r45/u10 CER | 疑似少读 base→candidate | 多读 base→candidate |
+|---|---:|---:|---:|---:|---:|
+| id | 30/3 | 0.0961 | 0.1125 | 0.3667→0.3667 | 0→0 |
+| th | 35/4 | 0.0599 | 0.0532 | 0.0286→0 | 0→0 |
+| tl | 25/3 | 0.0246 | 0.0254 | 0→0 | 0→0 |
+
+- ID1816 control/s42：CER .0357→.4375、len_ratio 1.009→.562、时长7.84→6.56s。
+- TH1983 plain/s45：CER .1518→.4503、len_ratio 1.052→1.251、时长22.56→20.48s。
+- 两个完整阶段屏障的严重/absolute/逐seed极端声学门均通过；上述小样本均值只是观察，不构成非退化或收益证明。
+- 686输入、276份冻结源码、184份产物SHA及180份base/candidate CPU声学复核通过，未评分WAV0，GPU0MiB。
+- verification SHA `90ca51aa8a9af33849d45941d445123dff428fd05a499554dab8103a7e6592a0`；最终90未用，母语质量未验证，不部署或发布。
+
+---
+
 ## lora_joint3_r45_dit_original_lr5e5_rank32_drop0_wd01_staged
 
 - 生成时间：2026-10-31 19:04:12

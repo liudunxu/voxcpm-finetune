@@ -83,6 +83,10 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     wd01 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_wd01', train_rows=1881)
     assert wd01 == {**drop0, 'weight_decay':.1}
     assert module.gate_steps(wd01, 'dit_original_lr5e5_rank32_drop0_wd01') == (9, 39, 79, 118)
+    micro1 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_wd01_micro1', train_rows=1881)
+    assert micro1 == {**wd01, 'batch_size':1, 'grad_accum_steps':16}
+    assert micro1['batch_size'] * micro1['grad_accum_steps'] == wd01['batch_size'] * wd01['grad_accum_steps']
+    assert module.gate_steps(micro1, 'dit_original_lr5e5_rank32_drop0_wd01_micro1') == (9, 39, 79, 118)
 
 
 def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
@@ -274,6 +278,28 @@ def test_weight_decay_control_binds_r39_and_only_changes_regularization(module, 
     module.verify_original_config_control(work, after, variant)
     for change in ({'learning_rate':1e-4}, {'weight_decay':.01}, {'num_iters':20}):
         with pytest.raises(ValueError, match='only weight_decay'):
+            module.verify_original_config_control(work, {**after, **change}, variant)
+    (work / 'train.jsonl').write_text('changed bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match='train.jsonl'):
+        module.verify_original_config_control(work, after, variant)
+
+
+def test_microbatch_control_binds_r45_and_preserves_effective_batch(module, tmp_path, monkeypatch):
+    parent, work = tmp_path / 'r45', tmp_path / 'r46'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R45', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path(
+        'configs/lora_joint3_r45_dit_original_lr5e5_rank32_drop0_wd01_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'batch_size':1, 'grad_accum_steps':16, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank32_drop0_wd01_micro1'
+    module.verify_original_config_control(work, after, variant)
+    for change in ({'learning_rate':1e-4}, {'batch_size':2}, {'grad_accum_steps':8}, {'num_iters':20}):
+        with pytest.raises(ValueError, match='only microbatch'):
             module.verify_original_config_control(work, {**after, **change}, variant)
     (work / 'train.jsonl').write_text('changed bytes', encoding='utf-8')
     with pytest.raises(ValueError, match='train.jsonl'):
