@@ -220,6 +220,20 @@ def test_r39_diagnostic_requires_exact_stopped_parent_and_reuses_all_45(module):
         'fresh_id_1808', 'fresh_th_1844', 'fresh_tl_1913'}
 
 
+def test_r45_u10_requires_passed_early_gate_and_preserves_later_rejection(module):
+    result = {'decision':'rejected', 'gates':{
+        '9':{'decision':'pilot_pass', 'reason':None, 'completed':45, 'skipped':0},
+        '39':{'decision':'rejected', 'reason':'new_suspected_overread', 'completed':3, 'skipped':42}}}
+    assert module.parent_gate(module.R45_PROFILE, {'stage':'rejected'}, result) == (9, 10, 45)
+    assert module.R45_PROFILE in module.PAIRED_PROFILES
+    for stage in ('pilot_complete', 'training'):
+        with pytest.raises(ValueError, match='r45'):
+            module.parent_gate(module.R45_PROFILE, {'stage':stage}, result)
+    result['gates']['9']['reason'] = 'new_suspected_overread'
+    with pytest.raises(ValueError, match='r45'):
+        module.parent_gate(module.R45_PROFILE, {'stage':'rejected'}, result)
+
+
 def test_u40_fronts_new_id_failure_without_changing_coverage_inputs_or_seed_budget(module):
     cases = module.frozen._read_manifest(Path('eval_cases/fresh_text_holdout_20261028.jsonl'))
     guards = {'fresh_id_1808', 'fresh_th_1689', 'fresh_tl_1913'}
