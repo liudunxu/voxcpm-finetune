@@ -52,6 +52,7 @@ checkpoints/
 /work/quality_autopilot_20261031/
 /work/storage_dedupe_20261030/
 /work/final_text_reservation_20261030/
+/work/development_id_supplement_20261031/
 wandb/
 logs/
 *.wav

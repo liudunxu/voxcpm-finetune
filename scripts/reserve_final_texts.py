@@ -51,7 +51,33 @@ def select(rows, excluded, lang, count=30):
     return ordered[:count], {'eligible':len(ordered), 'excluded':dict(reasons)}
 
 
-def prepare(work):
+def supplement_cases(selected, old_cases):
+    """Keep the two encoding-risk slots' conditions, while retaining their old cases separately."""
+    slots = sorted({r['sentence_id'] for r in old_cases if r['lang'] == 'id'
+                    and input_issue(r) == 'encoding_suspect'})
+    if len(slots) != len(selected) or len(slots) != 2:
+        raise ValueError('Expected two encoding-risk ID texts and two clean supplements')
+    if (any(input_issue(r) for r in selected)
+            or len({prior.frozen.evaluation._norm(r['text']) for r in selected}) != 2):
+        raise ValueError('Supplements must be two distinct clean texts')
+    cases = []
+    for slot, row in zip(slots, selected):
+        pair = [r for r in old_cases if r['sentence_id'] == slot]
+        if len(pair) != 2 or {r['condition'] for r in pair} != {'plain', 'control'}:
+            raise ValueError('Expected both original conditions for each ID slot')
+        sentence = f"supplement_20261031_id_{row['source_sentence_id']}"
+        for old in pair:
+            cases.append({**old, **row, 'sentence_id':sentence,
+                'case_id':sentence+'_'+old['condition'], 'cohort':'development_id_supplement_20261031',
+                'evaluation_use':'development_only', 'conditioning_slot':old['case_id'],
+                'note':'Clean text supplement for development coverage, using the old slot conditioning. '
+                       'Original encoding-risk case remains a separate stress case, unchanged. '
+                       'No source wording correction or generated outcomes used for selection; '
+                       'semantic/pretraining/speaker novelty and native quality unverified.'})
+    return cases
+
+
+def prepare(work, *, id_supplement=False):
     if work.exists():
         raise FileExistsError(work)
     frozen, norm = prior.frozen, prior.frozen.evaluation._norm
@@ -62,6 +88,10 @@ def prepare(work):
     paths |= set((frozen.ROOT/'eval_cases').glob('*.jsonl'))
     for pattern in ('*/run/train.jsonl', '*/run/val.jsonl', '*/run/cases.jsonl', '*/cases.jsonl'):
         paths |= set(DATA.glob(pattern))
+    if id_supplement:
+        reserved = frozen.ROOT/'eval_cases/reserved_final_20261030.jsonl'
+        prior.review.checked(reserved, 'cc7da8b05f6e78c92b5a7789e9cc95b0eadfb5047caf3287f3acf47b6b55fd0c')
+        paths.add(reserved)
     if prior.SOURCE/'train.jsonl' not in paths or not paths:
         raise ValueError('Missing current corpus')
     inputs, known, excluded = {}, [], set()
@@ -90,7 +120,7 @@ def prepare(work):
             inputs[path] = parent['inputs_sha256'][path]
             prior.review.checked(path, inputs[path])
     selected, counts = {}, {}
-    for lang, (config, digest) in TSVS.items():
+    for lang, (config, digest) in ({'id':TSVS['id']} if id_supplement else TSVS).items():
         path = DATA/'hf_home/hub/datasets--google--fleurs/snapshots'/REVISION/'data'/config/'test.tsv'
         prior.review.checked(path, digest)
         inputs[str(path)] = digest
@@ -98,7 +128,7 @@ def prepare(work):
         # Near-duplicate audit indexes only 30 candidates, avoiding a large corpus index.
         rejected = set()
         for _ in range(10):
-            chosen, detail = select(pool, excluded | rejected, lang)
+            chosen, detail = select(pool, excluded | rejected, lang, count=2 if id_supplement else 30)
             index = HoldoutIndex([{**r, 'lang':lang, 'location':r['source_sentence_id']} for r in chosen])
             conflicts = {match['normalized_holdout'] for row in known if row['lang']==lang
                          for match in index.matches(row)}
@@ -108,9 +138,9 @@ def prepare(work):
         else:
             raise ValueError('Repeated near-overlap; no automatic relaxation')
         selected[lang], counts[lang] = chosen, {**detail, 'near_rejected':len(rejected)}
-    paired = build_cases(selected, references)
+    paired = [] if id_supplement else build_cases(selected, references)
     positions = {(lang,r['source_sentence_id']):i for lang, rows in selected.items() for i,r in enumerate(rows)}
-    cases = []
+    cases = supplement_cases(selected['id'], old_cases) if id_supplement else []
     for row in paired:
         condition = 'control' if positions[row['lang'],row['source_sentence_id']] % 2 else 'plain'
         if row['condition'] != condition:
@@ -122,7 +152,8 @@ def prepare(work):
                    'No correction of source wording. Exact and >=40-char edit-distance<=2 local exclusion; '
                    'semantic/pretraining/speaker novelty and native quality remain unverified. '
                    'Existing stress/short/numeric development tests remain separate.'})
-    if len(cases) != 90 or len({r['case_id'] for r in cases}) != 90:
+    expected = 4 if id_supplement else 90
+    if len(cases) != expected or len({r['case_id'] for r in cases}) != expected:
         raise ValueError('Invalid reservation')
     for path in (Path(__file__),):
         inputs[str(path)] = frozen.sha256(path)
@@ -132,15 +163,22 @@ def prepare(work):
     from voxft.data.pipeline import _write_jsonl
     _write_jsonl(cases, work/'cases.jsonl')
     prior.save(work/'plan.json', {'inputs_sha256':inputs, 'cases_sha256':frozen.sha256(work/'cases.jsonl'),
-        'by_lang':counts, 'texts_per_lang':30, 'conditions_per_lang':{'plain':15,'control':15},
-        'seeds':frozen.SEEDS, 'outputs_per_model':450, 'base_required':True, 'evaluated':False,
+        'by_lang':counts, 'texts_per_lang':({'id':2} if id_supplement else 30),
+        'conditions_per_lang':{'plain':2,'control':2} if id_supplement else {'plain':15,'control':15},
+        'seeds':frozen.SEEDS, 'outputs_per_model':expected*len(frozen.SEEDS), 'base_required':True, 'evaluated':False,
         'known_manifest_count':len(paths), 'known_report_count':len(reports), 'known_normalized_texts':len(excluded),
-        'policy':'Reserve against future training; do not tune on these scores. No source audio download, '
+        'policy':('Development supplement, protect from training; original cases and final90 unchanged. '
+                  if id_supplement else 'Reserve against future training; do not tune on these scores. ') +
+                 'No source audio download, '
                  'model inference, expected-ASR prompt, production change or automatic pass claim.'})
-    print('RESERVED 90 texts, 450 outputs/model only after candidate selection; no inference', flush=True)
+    print('RESERVED 2 ID development texts, 20 outputs/model; no inference' if id_supplement else
+          'RESERVED 90 texts, 450 outputs/model only after candidate selection; no inference', flush=True)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
-    prepare(parser.parse_args().work)
+    parser.add_argument('--id-supplement', action='store_true',
+                        help='Freeze two new ID development texts; exclude the existing final90')
+    args = parser.parse_args()
+    prepare(args.work, id_supplement=args.id_supplement)
