@@ -4,6 +4,76 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## lora_joint3_r44_dit_original_lr5e5_rank32_drop0_early20_staged
+
+- 生成时间：2026-10-31 18:15:21
+- 结论：**不通过：10更新首门新增疑似多读；5条输出与终态已核验**
+- 下一步：不再机械缩短预算；检验尚未单测的weight_decay .01→.1，仍先在10更新判退。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 32/32/0.0 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 0.17012227538543329 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /Users/dunxu.liu/workspace/dubbing/voxcpm_finetune/work/r44_early20_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "th": 704, "tl": 346, "zh": 169, "en": 80} |
+| val loss 首→末 | 1.0276 (step 0) → 1.0276 (step 0)，最优 1.0276（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=None
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=None、steps=None、retry_badcase=None、ASR=None、1 个 case × seed = 5 条样本
+
+| 语种 | base CER | r44_u10 CER |
+|---|---|---|
+| th | 0.0025 | 0.0835 |
+| **总体** | 0.0025 | 0.0835 |
+| 疑似漏尾 | 0.0 | 0.2 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `r44_u10` 红线：th 0.0025→0.0835
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；尾静音策略=absolute，p90尾静音绝对值 >0.5s（增量仅观察）；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `r44_u10`：无
+
+逐 seed 与严重度分解（参考、不作门禁；`len_ratio` ≥2.0 记灾难级，其余多读记中等级）：
+- `base`
+  - th（5 条）中等 0 / 灾难 0 ｜ s42 多读0/1 max1.00× p90尾0.14s ｜ s43 多读0/1 max1.00× p90尾0.00s ｜ s44 多读0/1 max0.99× p90尾0.08s ｜ s45 多读0/1 max1.00× p90尾0.08s ｜ s46 多读0/1 max1.00× p90尾0.10s
+- `r44_u10`
+  - th（5 条）中等 1 / 灾难 0 ｜ s42 多读0/1 max1.00× p90尾0.14s ｜ s43 多读0/1 max1.00× p90尾0.12s ｜ s44 多读0/1 max1.00× p90尾0.22s ｜ s45 多读0/1 max1.00× p90尾0.24s ｜ s46 多读1/1 max1.42× p90尾0.16s
+
+报告文件：`terminal_base_report.json`、`terminal_r44_report.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+r44保留r39全部YAML值和118步LR调度，仅将预算/门改为10/20更新；10更新首门TH1844 control五seed后，seed46 CER0→.4177、len_ratio1→1.418、时长4.80→8.48s、speech_ratio .8745→.7069，新增疑似多读/少读，余40条不补抽，20更新未执行。r43不同训练seed在40更新同seed也严重退化，显示该输入/推理seed脆弱，不认证训练seed或时长因果。仅一个TH文本，ID/TL未评。21,020输入、35份产物SHA、完整10更新快照/latest及10对CPU声学通过；96个optimizer状态均10、3,342,336参数、未评分WAV0、GPU0MiB。verification SHA 17dfeef28d227a1fcbefaf46451f184d8fd17c04abfeaf10b34c8091b666da8e。来源与继承许可：cv22_id/th CC0；fleurs_en/id/th/tl/zh CC-BY-4.0；gigaspeech2_id/th Apache-2.0；yodas_th CC-BY-3.0。最终90未用，母语未验证，不部署或发布权重。
+
+---
+
 ## lora_joint3_r43_dit_original_lr5e5_rank32_drop0_seed43_staged
 
 - 生成时间：2026-10-31 17:50:22

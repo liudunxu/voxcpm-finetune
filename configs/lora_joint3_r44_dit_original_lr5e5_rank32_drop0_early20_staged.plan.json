@@ -27,5 +27,10 @@
   "storage_budget": "Two rank32 snapshots plus latest, evaluation/runtime allowance and 4GiB execution reserve; start threshold4.85GiB.",
   "final_holdout_used": false,
   "production_changed": false,
-  "native_quality": "unverified"
+  "native_quality": "unverified",
+  "terminal_decision": "rejected",
+  "terminal_reason": "new_suspected_overread",
+  "completed_outputs": 5,
+  "skipped_outputs_not_to_retry": 40,
+  "verification_sha256": "17dfeef28d227a1fcbefaf46451f184d8fd17c04abfeaf10b34c8091b666da8e"
 }
