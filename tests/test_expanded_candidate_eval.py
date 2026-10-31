@@ -234,6 +234,17 @@ def test_r45_u10_requires_passed_early_gate_and_preserves_later_rejection(module
         module.parent_gate(module.R45_PROFILE, {'stage':'rejected'}, result)
 
 
+def test_r46_u10_binds_its_own_terminal_counts_and_early_snapshot(module):
+    result = {'decision':'rejected', 'gates':{
+        '9':{'decision':'pilot_pass', 'reason':None, 'completed':45, 'skipped':0},
+        '39':{'decision':'rejected', 'reason':'new_suspected_overread', 'completed':2, 'skipped':43}}}
+    assert module.parent_gate(module.R46_PROFILE, {'stage':'rejected'}, result) == (9, 10, 45)
+    assert module.R46_PROFILE in module.PAIRED_PROFILES
+    result['gates']['39']['completed'] = 3
+    with pytest.raises(ValueError, match='r46'):
+        module.parent_gate(module.R46_PROFILE, {'stage':'rejected'}, result)
+
+
 def test_u40_fronts_new_id_failure_without_changing_coverage_inputs_or_seed_budget(module):
     cases = module.frozen._read_manifest(Path('eval_cases/fresh_text_holdout_20261028.jsonl'))
     guards = {'fresh_id_1808', 'fresh_th_1689', 'fresh_tl_1913'}

@@ -24,13 +24,18 @@ R45 = Path('/root/autodl-tmp/r45_wd01_20261031/run')
 R45_SHA = '8108b5ae58fe4f5d29204338d2438b77ba565d6d044477c43e20d613a7320281'
 R45_VERIFICATION_SHA = '6cf3862de8cfb8aee054387cb9d21bcfb6eac57f6d98c656d2c235b3289807d0'
 R45_PROFILE = 'r45_u10_diagnostic'
+R46 = Path('/root/autodl-tmp/r46_micro1_20261031/run')
+R46_SHA = 'f11da0f3c90c256f73b167d918b151a9e54a6528c47c6456a8c405d320050c91'
+R46_VERIFICATION_SHA = 'aa7c4026383cb12e971f54eeacd25f3e8ed5bcde4d7728d724f9db5f20691147'
+R46_PROFILE = 'r46_u10_diagnostic'
+U10_PROFILES = (R45_PROFILE, R46_PROFILE)
 U40 = Path('/root/autodl-tmp/r39_u40_20261031')
 HALF = Path('/root/autodl-tmp/r39_u40_half_20261031')
 HALF_RUN = HALF / 'run'
 HALF_SHA = '2f965f37e3ee71784d29b2c37e90b731671c5bf0bf598b22a2f8d775a7915596'
 HALF_VERIFICATION_SHA = '28c88e1a65afeb1ecae5b585146ac1fb4097c5e0270721cd60062901d7e997a0'
 HALF_PROFILE = 'r39_u40_half_expansion'
-PAIRED_PROFILES = (*R39_PROFILES, R45_PROFILE, HALF_PROFILE)
+PAIRED_PROFILES = (*R39_PROFILES, *U10_PROFILES, HALF_PROFILE)
 
 
 def publish(path, value):
@@ -88,15 +93,16 @@ def select_jobs(cases, pilot, *, canary_first=False, id_canary_first=False):
 
 
 def parent_gate(profile, status, result):
-    if profile == R45_PROFILE:
+    if profile in U10_PROFILES:
         gates = result.get('gates', {})
+        completed = 3 if profile == R45_PROFILE else 2
         if (status['stage'] != 'rejected' or result['decision'] != 'rejected'
                 or set(gates) != {'9', '39'}
                 or gates['9'] != {'decision':'pilot_pass', 'reason':None,
                                   'completed':45, 'skipped':0}
                 or gates['39'] != {'decision':'rejected', 'reason':'new_suspected_overread',
-                                   'completed':3, 'skipped':42}):
-            raise ValueError('Expected verified r45 ten-update pass and forty-update rejection')
+                                   'completed':completed, 'skipped':45-completed}):
+            raise ValueError(f'Expected verified {profile} ten-update pass and forty-update rejection')
         return 9, 10, 45
     if profile in R39_PROFILES:
         gates = result.get('gates', {})
@@ -141,14 +147,16 @@ def prepare(work, profile='r33'):
             raise ValueError('Expected verified complete u40 half-strength probe')
         for path, expected in verification['outputs_sha256'].items():
             prior.review.checked(path, expected)
-    elif profile == R45_PROFILE:
-        candidate, digest = R45, R45_SHA
-        prior.review.checked(candidate / 'verification.json', R45_VERIFICATION_SHA)
+    elif profile in U10_PROFILES:
+        candidate, digest, verification_sha, completed = {
+            R45_PROFILE:(R45, R45_SHA, R45_VERIFICATION_SHA, 48),
+            R46_PROFILE:(R46, R46_SHA, R46_VERIFICATION_SHA, 47)}[profile]
+        prior.review.checked(candidate / 'verification.json', verification_sha)
         verification = read(candidate / 'verification.json')
-        if (verification['status'] != 'rejected_verified' or verification['completed_outputs'] != 48
+        if (verification['status'] != 'rejected_verified' or verification['completed_outputs'] != completed
                 or verification['optimizer_step_counts'] != {'10':96, '40':96}
                 or verification['unscored_wavs'] != 0 or verification['plan_sha256'] != digest):
-            raise ValueError('Incomplete r45 terminal verification')
+            raise ValueError(f'Incomplete {profile} terminal verification')
         for path, expected in verification['outputs_sha256'].items():
             prior.review.checked(path, expected)
     elif profile in R39_PROFILES:
@@ -254,7 +262,7 @@ def prepare(work, profile='r33'):
                 inputs[str(path)] = frozen.sha256(path)
     for path, digest in inputs.items():
         prior.review.checked(path, digest)
-    required_gib = 4.85 if profile == R45_PROFILE else 5.2
+    required_gib = 4.85 if profile in U10_PROFILES else 5.2
     if shutil.disk_usage(work.parent).free < required_gib * 1024**3:
         raise RuntimeError(f'Need {required_gib} GiB for bounded outputs, four runtimes and 4 GiB reserve')
     work.mkdir()
@@ -270,7 +278,7 @@ def prepare(work, profile='r33'):
             'r39 early profile tests the existing 80-update snapshot, not the rejected latest; '
             'r39 u40 profile tests the existing 40-update snapshot and fronts ID1973 in '
             'both unchanged conditions, plain first, after its 80-update failure. '
-            'r45 u10 tests the complete ten-update snapshot whose45-output gate passed; '
+            'r45/r46 u10 test the complete ten-update snapshot whose45-output gate passed; '
             'the later forty-update rejection remains unchanged. '
             'same 300-job diagnostic coverage, 45 reused, at most 255 new. '
             'Four workers share stage barriers. On rejection finish only in-flight outputs and '

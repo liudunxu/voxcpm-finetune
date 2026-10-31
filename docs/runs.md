@@ -4,6 +4,53 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## lora_joint3_r46_dit_original_lr5e5_rank32_drop0_wd01_micro1_staged
+
+- 生成时间：2026-10-31 19:45
+- 结论：**不通过：40更新第2条TH1844 control/s43新增疑似多读；10更新45条小门通过但不认证收益**
+- 下一步：只复用10更新完整快照做同一300-job开发诊断；不续训、不补抽u40。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 32/32/0.0 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 1 × 16 × 1 = 16（相对r45仅2×8→1×16） |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.1 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/r46_micro1_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "th": 704, "tl": 346, "zh": 169, "en": 80} |
+| val loss 首→末 | 1.010839 (step 0) → 1.010839 (step 0)，最优 1.010839（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，独立原音1637、max_exposure=2
+- 带 ref_audio：475次/435独立，TL可信ref0；带控制前缀：0
+- 实际时长份额：ID28.3043%、TH28.3412%、TL28.3342%、zh9.9916%、en5.0287%
+- 来源许可：cv22_id/th CC0；fleurs_en/id/th/tl/zh CC-BY-4.0；gigaspeech2_id/th Apache-2.0；yodas_th CC-BY-3.0
+
+### 验收（离线轨）
+
+- 同一45-output首门、五seed、Whisper large-v3；均值仅观察。
+
+| 语种 | base CER | r46/u10 CER | 疑似少读 base→candidate | 多读 base→candidate |
+|---|---:|---:|---:|---:|
+| id | 0.0000 | 0.0025 | 0→0 | 0→0 |
+| th | 0.0574 | 0.0445 | 0.04→0 | 0→0 |
+| tl | 0.0246 | 0.0287 | 0→0 | 0→0 |
+
+- 40更新第2条TH1844 control/s43：CER 0→.6582、len_ratio 1→1.658、时长4.80→10.08s、speech_ratio .954→.7376；余43条不补抽，80/118未执行。
+- 21,838输入、172份产物SHA、10/40更新两个完整快照/latest及94份配对CPU声学通过；optimizer状态10/40均96、3,342,336参数、未评分WAV0、GPU0MiB。
+- verification SHA `aa7c4026383cb12e971f54eeacd25f3e8ed5bcde4d7728d724f9db5f20691147`；最终90未用，母语质量未验证，不部署或发布。
+
+---
+
 ## r45_u10_20261031 开发诊断
 
 - 生成时间：2026-10-31 19:07
