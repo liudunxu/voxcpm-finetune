@@ -1,0 +1,30 @@
+pretrained_path: /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915
+train_manifest: /root/autodl-tmp/r44_early20_20261031_v2/run/train.jsonl
+val_manifest: /root/autodl-tmp/r44_early20_20261031_v2/run/val.jsonl
+sample_rate: 16000
+out_sample_rate: 48000
+batch_size: 2
+grad_accum_steps: 8
+num_workers: 8
+num_iters: 118
+log_interval: 10
+valid_interval: 250
+save_interval: 1
+weight_decay: 0.01
+warmup_steps: 12
+max_batch_tokens: 8192
+max_grad_norm: 1.0
+learning_rate: 5.0e-05
+lora:
+  enable_lm: false
+  enable_dit: true
+  enable_proj: false
+  r: 32
+  alpha: 32
+  dropout: 0.0
+max_steps: 118
+save_path: /root/autodl-tmp/r44_early20_20261031_v2/run/checkpoint
+tensorboard: /root/autodl-tmp/r44_early20_20261031_v2/run/checkpoint/logs
+lambdas:
+  loss/diff: 1.0
+  loss/stop: 1.0

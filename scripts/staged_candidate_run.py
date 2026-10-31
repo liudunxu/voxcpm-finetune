@@ -27,7 +27,8 @@ ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5', 'dit_original_lr5e5_r
                      'dit_original_lr5e5_rank32_drop0', 'dit_original_lr5e5_rank32_drop0_proj',
                      'dit_original_lr5e5_rank32_drop0_stop2',
                      'dit_original_lr5e5_rank16_drop0',
-                     'dit_original_lr5e5_rank32_drop0_seed43')
+                     'dit_original_lr5e5_rank32_drop0_seed43',
+                     'dit_original_lr5e5_rank32_drop0_early20')
 PAIRED_VARIANTS = ('dit_paired', *ORIGINAL_VARIANTS)
 R35 = Path('/root/autodl-tmp/r35_dit_paired_20261031/run')
 R35_SHA = 'c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b'
@@ -52,6 +53,9 @@ R41_VERIFICATION_SHA = '0be5a7a666dc6a36356d6aa233fc63734e04b7ae7b2b46f86c9c811b
 R42 = Path('/root/autodl-tmp/r42_rank16_20261031/run')
 R42_SHA = 'b69c6412539dd1e31635d0242a8b1c8ecb940655847e09d4cd31e35a247c326a'
 R42_VERIFICATION_SHA = '4d48112d98f2474f910b17acf0bfff112492ebb1412f002b9dbedb19e0752f7e'
+R43 = Path('/root/autodl-tmp/r43_seed43_20261031/run')
+R43_SHA = 'cd78d53cc0f1058bc120c55d43abcf876018b7e4c6aa5b518d6f94f8eafc3993'
+R43_VERIFICATION_SHA = 'ea0bf0f8debeb70f18a1c7ec88c99de0a066951d33d21cf83064dacb964da54d'
 
 
 def acoustic_gate(rows, baseline, *, paired_extremes=False):
@@ -158,6 +162,13 @@ VARIANTS['dit_original_lr5e5_rank32_drop0_seed43'] = {**VARIANTS['dit_original_l
                  'stop-weight variants all overread at40 updates; test training-trajectory sensitivity '
                  'with identical config bytes, data/order recipe, rank32, dropout0, lr5e-5 and118 updates. '
                  'One additional training seed is not a stability or causal claim; final selection needs independent validation.'}
+VARIANTS['dit_original_lr5e5_rank32_drop0_early20'] = {**VARIANTS['dit_original_lr5e5_rank32_drop0'],
+    'free_gib':4.85,
+    'run_name':'lora_joint3_r44_dit_original_lr5e5_rank32_drop0_early20_staged',
+    'hypothesis':'Relative to r39, change only the training budget and gate positions: preserve every YAML '
+                 'value and the original118-update LR schedule, but save/evaluate at10 and20 updates and stop '
+                 'after the second gate. r43 rejected a second training seed at40 updates; test whether severe '
+                 'paired regressions are already present before the first previously observed checkpoint.'}
 
 
 def candidate_config(parent, work, variant, *, train_rows=None):
@@ -182,6 +193,8 @@ def candidate_config(parent, work, variant, *, train_rows=None):
 
 
 def gate_steps(cfg, variant):
+    if variant == 'dit_original_lr5e5_rank32_drop0_early20':
+        return (9, 19)
     if variant not in PAIRED_VARIANTS:
         return GATES
     block = math.ceil(cfg['num_iters'] / 3)
@@ -248,7 +261,8 @@ def verify_original_config_control(work, cfg, variant):
                    'dit_original_lr5e5_rank32_drop0_proj':R39,
                    'dit_original_lr5e5_rank32_drop0_stop2':R39,
                    'dit_original_lr5e5_rank16_drop0':R39,
-                   'dit_original_lr5e5_rank32_drop0_seed43':R39}[variant]
+                   'dit_original_lr5e5_rank32_drop0_seed43':R39,
+                   'dit_original_lr5e5_rank32_drop0_early20':R39}[variant]
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
         if frozen.sha256(work / name) != frozen.sha256(parent_work / name):
             raise ValueError(f'Original control changed {name}')
@@ -256,9 +270,10 @@ def verify_original_config_control(work, cfg, variant):
     paths = {'train_manifest', 'val_manifest', 'save_path', 'tensorboard'}
     changed = {key for key in set(parent) | set(cfg)
                if key not in paths and parent.get(key) != cfg.get(key)}
-    if variant == 'dit_original_lr5e5_rank32_drop0_seed43':
+    if variant in {'dit_original_lr5e5_rank32_drop0_seed43',
+                   'dit_original_lr5e5_rank32_drop0_early20'}:
         if changed:
-            raise ValueError('Expected identical config bytes; only training seed differs from r39')
+            raise ValueError('Expected identical config bytes; only training seed or early budget differs from r39')
     elif variant == 'dit_original_lr5e5_rank16_drop0':
         if (changed != {'lora'} or parent['lora']['r'] != 32 or parent['lora']['alpha'] != 32
                 or cfg['lora'] != {**parent['lora'], 'r':16, 'alpha':16}):
@@ -419,7 +434,8 @@ def prepare(work, variant='rank32'):
                 inputs.update(verification['outputs_sha256'])
                 inputs[str(R41 / 'plan.json')] = R41_SHA
                 inputs[str(R41 / 'verification.json')] = R41_VERIFICATION_SHA
-            if variant == 'dit_original_lr5e5_rank32_drop0_seed43':
+            if variant in {'dit_original_lr5e5_rank32_drop0_seed43',
+                           'dit_original_lr5e5_rank32_drop0_early20'}:
                 prior.review.checked(R42 / 'plan.json', R42_SHA)
                 prior.review.checked(R42 / 'verification.json', R42_VERIFICATION_SHA)
                 verification = read(R42 / 'verification.json')
@@ -432,6 +448,19 @@ def prepare(work, variant='rank32'):
                 inputs.update(verification['outputs_sha256'])
                 inputs[str(R42 / 'plan.json')] = R42_SHA
                 inputs[str(R42 / 'verification.json')] = R42_VERIFICATION_SHA
+            if variant == 'dit_original_lr5e5_rank32_drop0_early20':
+                prior.review.checked(R43 / 'plan.json', R43_SHA)
+                prior.review.checked(R43 / 'verification.json', R43_VERIFICATION_SHA)
+                verification = read(R43 / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R43_SHA
+                        or verification['optimizer_step_counts'] != {'40':96}
+                        or verification['completed_outputs'] != 5 or verification['unscored_wavs'] != 0
+                        or verification['reason'] != 'two_large_paired_cer_regressions'):
+                    raise ValueError('Expected verified r43 paired-CER failure')
+                inputs.update(read(R43 / 'plan.json')['inputs_sha256'])
+                inputs.update(verification['outputs_sha256'])
+                inputs[str(R43 / 'plan.json')] = R43_SHA
+                inputs[str(R43 / 'verification.json')] = R43_VERIFICATION_SHA
     if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
         prior.strength.check_inputs(R33_DEVELOPMENT)
@@ -517,11 +546,13 @@ def prepare(work, variant='rank32'):
             'sources', 'language_shares')}, 'inputs_sha256': inputs, 'rank': cfg['lora']['r'],
         **data, 'data_source':str(data_source),
         'variant':variant, 'run_name':settings['run_name'], 'training_seed':settings.get('training_seed',42),
-        'max_training_updates': cfg['num_iters'],
-        'nominal_epochs':cfg['num_iters'] * cfg['batch_size'] * cfg['grad_accum_steps'] /
+        'max_training_updates':20 if variant == 'dit_original_lr5e5_rank32_drop0_early20' else cfg['num_iters'],
+        'nominal_epochs':(20 if variant == 'dit_original_lr5e5_rank32_drop0_early20' else cfg['num_iters']) *
+                         cfg['batch_size'] * cfg['grad_accum_steps'] /
                          len(frozen._read_manifest(work / 'train.jsonl')),
         'training_authorized': True, 'authorization': 'User continuous iteration and hyperparameter optimization',
         'gates': list(gates), 'gate_optimizer_updates': updates,
+        'stop_after_final_gate':variant == 'dit_original_lr5e5_rank32_drop0_early20',
         'pilot_outputs_per_gate_max': len(jobs), 'new_outputs_max': len(gates) * len(jobs),
         'pilot_mean_cer_observe_only':variant in PAIRED_VARIANTS,
         'paired_extreme_acoustics':variant in ORIGINAL_VARIANTS[3:],
@@ -531,9 +562,9 @@ def prepare(work, variant='rank32'):
         'limits': 'Same training seed, not a multi-seed training causal claim. Initialization shape changes RNG '
                   'consumption. Development pilot only; final independent regression and native quality pending.',
         'execution': 'Save complete checkpoint, wait inside the same live trainer; evaluate fixed five-seed '
-                     'pilot. Reject exits without more updates; pass continues with optimizer/RNG/data iterator intact. '
-                     'Intermediate step labels are zero-based; final label equals the completed update count. '
-                     'No official source patches or resume.'})
+                     'pilot. Reject exits without more updates; pass continues with optimizer/RNG/data iterator intact '
+                     'unless the plan declares stop_after_final_gate. Intermediate labels are zero-based; the official '
+                     'final label equals its completed update count. No official source patches or resume.'})
     print(f'PREPARED {variant}; gates at optimizer updates {list(updates.values())}', flush=True)
 
 
@@ -541,12 +572,16 @@ class GateRejected(Exception):
     pass
 
 
-def checkpoint_gate(work, step, optimizer, *, gates=GATES):
+class EarlyBudgetComplete(Exception):
+    pass
+
+
+def checkpoint_gate(work, step, optimizer, *, gates=GATES, max_updates=None):
     if step not in gates:
         return
     snapshot = work / 'checkpoint' / f'step_{step:07d}'
     actual_updates = {int(state['step']) for state in optimizer.state.values() if 'step' in state}
-    expected = min(step + 1, gates[-1])
+    expected = min(step + 1, max_updates) if max_updates is not None else min(step + 1, gates[-1])
     if actual_updates != {expected}:
         raise ValueError(f'Optimizer steps disagree: {actual_updates}')
     directory = work / f'gate_{step}'
@@ -588,12 +623,16 @@ def train(work):
         if step not in gates:
             return  # Skip redundant non-gate snapshots; training math is unchanged.
         original(model, optimizer, scheduler, save_dir, step, *args, **kwargs)
-        checkpoint_gate(work, step, optimizer, gates=gates)
+        checkpoint_gate(work, step, optimizer, gates=gates, max_updates=cfg['num_iters'])
+        if plan.get('stop_after_final_gate') and step == gates[-1]:
+            raise EarlyBudgetComplete
 
     module.save_checkpoint = save_and_wait
     module.Accelerator = _seeded_accelerator(original_accelerator, plan.get('training_seed',42))
     try:
         module.train(**cfg)
+    except EarlyBudgetComplete:
+        pass
     except GateRejected as error:
         save(work / 'training_stopped.json', {'reason': str(error), 'time': time.time(),
             'status': 'rejected_at_complete_checkpoint', 'step_label': read(work / 'checkpoint/latest/training_state.json')['step']})

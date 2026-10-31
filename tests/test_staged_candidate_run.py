@@ -77,6 +77,9 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     assert seed43 == drop0
     assert module.VARIANTS['dit_original_lr5e5_rank32_drop0_seed43']['training_seed'] == 43
     assert module.gate_steps(seed43, 'dit_original_lr5e5_rank32_drop0_seed43') == gates
+    early20 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_early20', train_rows=1881)
+    assert early20 == drop0
+    assert module.gate_steps(early20, 'dit_original_lr5e5_rank32_drop0_early20') == (9, 19)
 
 
 def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
@@ -226,8 +229,11 @@ def test_rank16_control_binds_r39_and_only_changes_rank(module, tmp_path, monkey
         module.verify_original_config_control(work, after, variant)
 
 
-def test_seed43_control_keeps_config_and_sets_official_accelerator_seed(module, tmp_path, monkeypatch):
-    parent, work = tmp_path / 'r39', tmp_path / 'r43'
+@pytest.mark.parametrize('variant', ['dit_original_lr5e5_rank32_drop0_seed43',
+                                     'dit_original_lr5e5_rank32_drop0_early20'])
+def test_seed_or_early_budget_control_keeps_config_and_sets_official_accelerator_seed(
+        module, tmp_path, monkeypatch, variant):
+    parent, work = tmp_path / 'r39', tmp_path / 'candidate'
     parent.mkdir()
     work.mkdir()
     monkeypatch.setattr(module, 'R39', parent)
@@ -238,7 +244,6 @@ def test_seed43_control_keeps_config_and_sets_official_accelerator_seed(module, 
         'configs/lora_joint3_r39_dit_original_lr5e5_rank32_drop0_staged.yaml').read_text())
     (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
     after = {**before, 'save_path':str(work)}
-    variant = 'dit_original_lr5e5_rank32_drop0_seed43'
     module.verify_original_config_control(work, after, variant)
     with pytest.raises(ValueError, match='identical config'):
         module.verify_original_config_control(work, {**after, 'learning_rate':1e-4}, variant)
@@ -370,10 +375,11 @@ def test_new_failure_canary_precedes_guards_without_moving_training_inputs(modul
 
 
 @pytest.mark.parametrize('decision', ['pilot_pass', 'rejected'])
-@pytest.mark.parametrize('step,updates,gates', [(150,151,(150,300,459)), (39,40,(39,79,118)),
-                                               (79,80,(39,79,118)), (118,118,(39,79,118))])
+@pytest.mark.parametrize('step,updates,gates,max_updates', [
+    (150,151,(150,300,459),459), (39,40,(39,79,118),118),
+    (79,80,(39,79,118),118), (118,118,(39,79,118),118), (19,20,(9,19),118)])
 def test_gate_waits_on_complete_snapshot_and_rejects_before_more_updates(
-        module, tmp_path, monkeypatch, decision, step, updates, gates):
+        module, tmp_path, monkeypatch, decision, step, updates, gates, max_updates):
     snapshot = tmp_path / f'checkpoint/step_{step:07d}'
     snapshot.mkdir(parents=True)
     (snapshot / 'weights').write_bytes(b'unchanged')
@@ -389,12 +395,46 @@ def test_gate_waits_on_complete_snapshot_and_rejects_before_more_updates(
     monkeypatch.setattr(module.time, 'sleep', decide)
     if decision == 'rejected':
         with pytest.raises(module.GateRejected):
-            module.checkpoint_gate(tmp_path, step, optimizer, gates=gates)
+            module.checkpoint_gate(tmp_path, step, optimizer, gates=gates, max_updates=max_updates)
     else:
-        module.checkpoint_gate(tmp_path, step, optimizer, gates=gates)
+        module.checkpoint_gate(tmp_path, step, optimizer, gates=gates, max_updates=max_updates)
     assert sleeps == [True]
     assert (snapshot / 'weights').read_bytes() == b'unchanged'
     assert optimizer.state[0]['step'].item() == updates
+
+
+def test_early_budget_stops_after_final_pass_without_changing_lr_schedule(module, tmp_path, monkeypatch):
+    module.save(tmp_path / 'train.yaml', {'num_iters':118})
+    module.save(tmp_path / 'plan.json', {'variant':'dit_original_lr5e5_rank32_drop0_early20',
+        'training_seed':42, 'stop_after_final_gate':True})
+    calls = []
+
+    def accelerator(**kwargs):
+        return kwargs
+
+    def save_checkpoint(*args):
+        pass
+
+    fake = SimpleNamespace(Accelerator=accelerator, save_checkpoint=save_checkpoint)
+
+    def official_train(**cfg):
+        assert cfg == {'num_iters':118}
+        for step in (19, 20):
+            calls.append(step)
+            fake.save_checkpoint(None, None, None, None, step)
+
+    fake.train = official_train
+    spec = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda official: None))
+    monkeypatch.setattr(module.importlib.util, 'spec_from_file_location', lambda *args: spec)
+    monkeypatch.setattr(module.importlib.util, 'module_from_spec', lambda spec: fake)
+    updates = []
+    monkeypatch.setattr(module, 'checkpoint_gate',
+        lambda work, step, optimizer, **kwargs: updates.append(kwargs['max_updates']))
+    module.train(tmp_path)
+    assert calls == [19]
+    assert updates == [118]
+    assert fake.save_checkpoint is save_checkpoint
+    assert fake.Accelerator is accelerator
 
 
 def test_wrong_optimizer_step_and_existing_run_fail_closed(module, tmp_path):
