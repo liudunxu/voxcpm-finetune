@@ -18,6 +18,9 @@ read, save = review.read_json, baseline.save_new
 SOURCE = Path('/root/autodl-tmp/granary_pilot_20261030/run')
 SOURCE_PLAN_SHA = '68cb179fadf983ff130763b07e0956aee0240876062f9cabbc72970111cc7e58'
 SENTENCES = ('fresh_th_1983', 'fresh_th_1994', 'fresh_id_1816', 'fresh_id_1707')
+R39_EARLY = Path('/root/autodl-tmp/r39_early_20261031')
+R39_EARLY_PLAN_SHA = 'f7e5ca1526e5e79e648f73292f0d61b33b8151e5a1c81a49ce6fb249675cdbef'
+R39_EARLY_VERIFICATION_SHA = '048735b2b6fdaeff2a6ea575ca05971cc4204bd20ba782a91fb5bec6699f7588'
 
 
 def key(row):
@@ -263,13 +266,172 @@ def run(work):
             stop(process)
 
 
+def punctuation_jobs(cases):
+    if (len(cases) != 2 or {c['sentence_id'] for c in cases} != {'fresh_id_1973'}
+            or {c['condition'] for c in cases} != {'plain', 'control'}):
+        raise ValueError('Expected ID1973 plain/control pair')
+    jobs = []
+    for model in ('base', 'candidate'):
+        for case in sorted(cases, key=lambda c: c['condition'] != 'plain'):
+            for seed in frozen.SEEDS:
+                changed = punctuated(case)
+                jobs.append({'id':f"commas_{model}_{case['case_id']}_{seed}",
+                             'model':model, 'case':changed, 'seed':seed,
+                             'strength':0. if model == 'base' else 1.})
+    return jobs
+
+
+def prepare_r39_punctuation(work):
+    if work.exists():
+        raise FileExistsError(work)
+    review.checked(R39_EARLY/'run/plan.json', R39_EARLY_PLAN_SHA)
+    review.checked(R39_EARLY/'verification_terminal.json', R39_EARLY_VERIFICATION_SHA)
+    verified = read(R39_EARLY/'verification_terminal.json')
+    if (verified['status'] != 'diagnostic_stopped_verified' or verified['completed_outputs'] != 197
+            or verified['reason'] != 'two_large_paired_cer_regressions' or verified['unscored_wavs'] != 0):
+        raise ValueError('Expected verified r39 early failure')
+    for path,digest in verified['outputs_sha256'].items():
+        review.checked(path,digest)
+    parent = strength.check_inputs(R39_EARLY/'run')
+    result = read(R39_EARLY/'run/result.json')
+    cases = list({j['case']['case_id']:j['case'] for j in read(R39_EARLY/'run/jobs.json')
+                  if j['case']['sentence_id'] == 'fresh_id_1973'}.values())
+    jobs = punctuation_jobs(cases)
+    reused = {name:[r for r in result[field] if r['sentence_id'] == 'fresh_id_1973']
+              for name,field in (('base','matched_base'), ('candidate','rows'))}
+    expected = {(c['case_id'],s) for c in cases for s in frozen.SEEDS}
+    for rows in reused.values():
+        if len(rows) != 10 or {key(r) for r in rows} != expected:
+            raise ValueError('Incomplete existing five-seed endpoints')
+    inputs = dict(parent['inputs_sha256'])
+    inputs.update(verified['outputs_sha256'])
+    for path in (R39_EARLY/'run/plan.json', R39_EARLY/'verification_terminal.json'):
+        inputs[str(path)] = frozen.sha256(path)
+    for folder in ('src','scripts','third_party/VoxCPM/src'):
+        for path in (frozen.ROOT/folder).rglob('*'):
+            if path.suffix in ('.py','.sh'):
+                inputs[str(path)] = frozen.sha256(path)
+    for path,digest in inputs.items():
+        review.checked(path,digest)
+    if shutil.disk_usage(work.parent).free < 4.5*1024**3:
+        raise RuntimeError('Need 4.5 GiB before punctuation probe')
+    work.mkdir()
+    for name,value in (('jobs.json',jobs), ('cases.json',cases), ('reused.json',reused)):
+        save(work/name,value)
+        inputs[str(work/name)] = frozen.sha256(work/name)
+    save(work/'plan.json', {**{k:parent[k] for k in ('base_path','asr_path','speaker_model_path','targets')},
+        'inputs_sha256':inputs, 'profile':'r39_early_punctuation', 'new_outputs':20, 'reused_outputs':20,
+        'training_steps':0, 'max_workers':1, 'seeds':frozen.SEEDS, 'tail_policy':'absolute',
+        'paired_extreme_acoustics':True, 'native_quality':'unverified', 'production_changed':False,
+        'final_holdout_used':False, 'checkpoint_optimizer_updates':80,
+        'early_rejection':'Per-output severe gates within each model against original input, and candidate '
+                          'against same changed-text base; full five-seed condition groups use absolute '
+                          'and paired-extreme acoustic gates. Mean CER observation only.',
+        'note':'ID1973 outcome-selected diagnostic. Parentheses to commas only; preserve every word, '
+               'quote, reference, control and seed. Base first, then candidate, no retries. '
+               'Original 197-output rejection unchanged. No training or production normalizer change; '
+               'success does not establish original-input candidate quality or TH/TL improvement.'})
+    print('PREPARED r39 punctuation: 20 existing endpoints, at most20 new', flush=True)
+
+
+def punctuation_rejection(rows, reused, *, stage_end=False):
+    import staged_candidate_run as staged
+    groups = {model:[r['item'] for r in rows if r['model']==model] for model in ('base','candidate')}
+    last = rows[-1]
+    model, latest = last['model'], last['item']
+    original = {(r['case_id']+'_commas',r['seed']):r for r in reused[model]}
+    comparisons = [(model+'_vs_original',groups[model],original)]
+    if model == 'candidate':
+        comparisons.append(('candidate_vs_commas_base',groups['candidate'],{key(r):r for r in groups['base']}))
+    for label,current,baseline_rows in comparisons:
+        reason = staged.probe.reject_reason(current,baseline_rows)
+        if reason:
+            return label+':'+reason, {}
+        if stage_end:
+            group = [r for r in current if r['case_id']==latest['case_id']]
+            if {r['seed'] for r in group} != set(frozen.SEEDS) or len(group) != 5:
+                raise ValueError('Incomplete condition group')
+            acoustic = staged.acoustic_gate(group,baseline_rows,paired_extremes=True)
+            if acoustic:
+                return label+':stage_acoustic_regression', acoustic
+    return None, {}
+
+
+def run_r39_punctuation(work):
+    plan = strength.check_inputs(work)
+    if (plan['profile'] != 'r39_early_punctuation' or plan['new_outputs'] != 20
+            or plan['training_steps'] != 0 or plan['max_workers'] != 1):
+        raise ValueError('Punctuation scope changed')
+    if subprocess.check_output(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader'],text=True).strip():
+        raise RuntimeError('GPU busy')
+    with (work/'run.started').open('x',encoding='utf-8') as stream:
+        stream.write(frozen.sha256(work/'plan.json'))
+    (work/'items').mkdir()
+    frozen.runtime_environment(work/'runtime')
+    os.environ.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',
+        VOXFT_WHISPER_MODEL_LARGE=plan['asr_path'],VOXFT_SPK_EMB_MODEL=plan['speaker_model_path'],
+        TORCHINDUCTOR_CACHE_DIR=str(work/'runtime/inductor'))
+    frozen.evaluation.EVAL_DIR = work/'raw_reports'
+    frozen.evaluation.infer.CHECKPOINT_DIR = work
+    jobs, reused, rows, started_models = read(work/'jobs.json'), read(work/'reused.json'), [], set()
+    reason, acoustic = None, {}
+    def status(stage, **extra):
+        frozen.write_json(work/'status.json', {'stage':stage,'completed':len(rows),'expected':20,
+            'pid':os.getpid(),'time':time.time(),'reason':reason,**extra})
+    try:
+        status('starting')
+        with fast.cached_services(read(work/'cases.json')):
+            for i,job in enumerate(jobs):
+                model = job['model']
+                if model not in started_models:
+                    save(work/f'runtime_{model}.json',baseline.gpu_services(plan,[j['case'] for j in jobs],model))
+                    started_models.add(model)
+                if shutil.disk_usage(work).free < 4*1024**3:
+                    raise RuntimeError('Disk reserve reached')
+                report = frozen.evaluation.evaluate(plan['targets'][model],'id',[job['case']],
+                    base=plan['base_path'],seeds=[job['seed']],cfg_value=1.8,inference_timesteps=20,
+                    lora_strength=job['strength'])
+                row, = report['items']
+                report['wav_sha256'] = {row['wav']:frozen.sha256(row['wav'])}
+                report['level_metrics'] = review.level_metrics(row['wav'])
+                verify(report,plan,job['case'],model,job['strength'],job['seed'])
+                save(work/'items'/(job['id']+'.json'),report)
+                rows.append({'model':model,'item':{**row,**report['level_metrics']}})
+                reason,acoustic = punctuation_rejection(rows,reused,stage_end=(i+1)%5==0)
+                status('diagnostic_stopped' if reason else 'evaluating',last_job=job['id'])
+                print('DONE',job['id'],reason,flush=True)
+                if reason:
+                    break
+        strength.check_inputs(work)
+        if {str(p) for p in work.glob('auditions/*.wav')} != {r['item']['wav'] for r in rows}:
+            raise ValueError('Unscored punctuation output')
+        decision = 'diagnostic_stopped' if reason else 'diagnostic_complete'
+        save(work/'result.json',{'decision':decision,'reason':reason,'acoustic_failures':acoustic,
+            'rows':rows,'reused':reused,'completed':len(rows),'skipped':20-len(rows),
+            'metrics':{name:frozen.evaluation._report_metrics(items) for name,items in
+                       [(f'original_{m}',v) for m,v in reused.items()]+
+                       [(f'commas_{m}',[r['item'] for r in rows if r['model']==m])
+                        for m in ('base','candidate') if any(r['model']==m for r in rows)]},
+            'wav_sha256':{r['item']['wav']:frozen.sha256(r['item']['wav']) for r in rows},
+            'training_steps':0,'production_changed':False,'native_quality':'unverified','final_holdout_used':False})
+        status(decision)
+    except BaseException as error:
+        status('failed',error=str(error))
+        raise
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('prepare', 'run', 'worker', 'collect'))
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--index', type=int, choices=range(4))
+    parser.add_argument('--profile', choices=('r31','r39_early_punctuation'), default='r31')
     args = parser.parse_args()
-    if args.action == 'worker':
+    if args.profile == 'r39_early_punctuation':
+        if args.action not in ('prepare','run'):
+            parser.error('Punctuation profile uses serial prepare/run only')
+        {'prepare':prepare_r39_punctuation,'run':run_r39_punctuation}[args.action](args.work)
+    elif args.action == 'worker':
         if args.index is None:
             parser.error('worker needs --index')
         worker(args.work, args.index)
