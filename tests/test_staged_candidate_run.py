@@ -67,6 +67,16 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
     proj = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_proj', train_rows=1881)
     assert proj == {**drop0, 'lora':{**drop0['lora'], 'enable_proj':True}}
     assert module.gate_steps(proj, 'dit_original_lr5e5_rank32_drop0_proj') == gates
+    stop2 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_stop2', train_rows=1881)
+    assert stop2 == {**drop0, 'lambdas':{**drop0['lambdas'], 'loss/stop':2.}}
+    assert module.gate_steps(stop2, 'dit_original_lr5e5_rank32_drop0_stop2') == gates
+    rank16 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank16_drop0', train_rows=1881)
+    assert rank16 == {**drop0, 'lora':{**drop0['lora'], 'r':16, 'alpha':16}}
+    assert module.gate_steps(rank16, 'dit_original_lr5e5_rank16_drop0') == gates
+    seed43 = module.candidate_config(parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_seed43', train_rows=1881)
+    assert seed43 == drop0
+    assert module.VARIANTS['dit_original_lr5e5_rank32_drop0_seed43']['training_seed'] == 43
+    assert module.gate_steps(seed43, 'dit_original_lr5e5_rank32_drop0_seed43') == gates
 
 
 def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
@@ -164,6 +174,80 @@ def test_projection_control_binds_r39_and_only_changes_enable_proj(
     (work / changed_file).write_text('changed bytes', encoding='utf-8')
     with pytest.raises(ValueError, match=changed_file):
         module.verify_original_config_control(work, after, variant)
+
+
+@pytest.mark.parametrize('changed_file', [
+    'train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'])
+def test_stop_weight_control_binds_r39_and_only_changes_stop_loss(
+        module, tmp_path, monkeypatch, changed_file):
+    parent, work = tmp_path / 'r39', tmp_path / 'r41'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R39', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path(
+        'configs/lora_joint3_r39_dit_original_lr5e5_rank32_drop0_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'lambdas':{**before['lambdas'], 'loss/stop':2.}, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank32_drop0_stop2'
+    module.verify_original_config_control(work, after, variant)
+    for change in ({'learning_rate':1e-4}, {'num_iters':459},
+                   {'lora':{**after['lora'], 'enable_lm':True}},
+                   {'lambdas':{**after['lambdas'], 'loss/stop':1.}}):
+        with pytest.raises(ValueError, match='only loss/stop'):
+            module.verify_original_config_control(work, {**after, **change}, variant)
+    (work / changed_file).write_text('changed bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match=changed_file):
+        module.verify_original_config_control(work, after, variant)
+
+
+def test_rank16_control_binds_r39_and_only_changes_rank(module, tmp_path, monkeypatch):
+    parent, work = tmp_path / 'r39', tmp_path / 'r42'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R39', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path(
+        'configs/lora_joint3_r39_dit_original_lr5e5_rank32_drop0_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'lora':{**before['lora'], 'r':16, 'alpha':16}, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank16_drop0'
+    module.verify_original_config_control(work, after, variant)
+    for change in ({'learning_rate':1e-4}, {'lambdas':{'loss/diff':1., 'loss/stop':2.}},
+                   {'lora':{**after['lora'], 'alpha':32}}):
+        with pytest.raises(ValueError, match='only DiT rank/alpha'):
+            module.verify_original_config_control(work, {**after, **change}, variant)
+    (work / 'train.jsonl').write_text('changed bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match='train.jsonl'):
+        module.verify_original_config_control(work, after, variant)
+
+
+def test_seed43_control_keeps_config_and_sets_official_accelerator_seed(module, tmp_path, monkeypatch):
+    parent, work = tmp_path / 'r39', tmp_path / 'r43'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R39', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path(
+        'configs/lora_joint3_r39_dit_original_lr5e5_rank32_drop0_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank32_drop0_seed43'
+    module.verify_original_config_control(work, after, variant)
+    with pytest.raises(ValueError, match='identical config'):
+        module.verify_original_config_control(work, {**after, 'learning_rate':1e-4}, variant)
+    calls = []
+    def accelerator(**kwargs):
+        calls.append(kwargs)
+        return 'accelerator'
+    assert module._seeded_accelerator(accelerator, 43)(amp=True) == 'accelerator'
+    assert calls == [{'amp':True, 'seed':43}]
 
 
 @pytest.mark.parametrize('duration,ratio,numeric,expected', [

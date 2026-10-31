@@ -30,7 +30,11 @@ r38在80更新新增疑似多读后停止；r39关闭dropout后40/80更新门通
 u40推理侧强度0.5的三句诊断30/30完成并通过六组门与终态核验；TL平均CER仍6.36%→10.86%，ID有声比例下降，不能称三语种非退化。
 同强度300条扩评在77条因ID1816 control/s45新增疑似多读停止，47新+30复用、余223不补抽；183份产物SHA及154份配对CPU声学已核验。
 u40强度0.25在第2条ID1816 control/s42新增疑似多读，CER .0357→.6696、len_ratio 1.009→1.661，余18不补抽；强度效应非单调，降强度方向淘汰。
-r40仅将`enable_proj` false→true，其余r39数据/rank32/dropout0/lr5e-5/118更新不变，已冷启动并接入40/80/118阶段门；19,895输入及270源码核验通过。
+r40仅将`enable_proj` false→true，在40更新首门第18条TH1994 control/s42新增疑似多读，余27不补抽；19,895输入、74份产物SHA及完整快照/CPU声学终态核验通过。
+r41仅将`loss/stop`权重1→2，在40更新首门第2条TH1844 control/s43新增疑似多读，余43不补抽；20,198输入、26份产物SHA及完整快照/CPU声学终态核验通过。
+r42仅DiT rank/alpha32→16，在40更新首门第16条TH1994 control/s44新增疑似多读，余29不补抽；20,454输入、68份产物SHA及完整快照/CPU声学终态核验通过。
+r43保持r39全部YAML值与数据/任务字节，仅训练seed42→43，在40更新首门TH1844 seed44/46两条严重配对CER退化停止；
+20,753输入、35份产物SHA、完整快照及10对CPU声学核验通过，余40不补抽。下一有界实验检验同轨迹10/20更新早期快照，不再随机换种子。
 ID开发缺口已另冻2文本/4条件行并核验隔离，原风险句和最终90文本不动；新文本未推理。
 最终留出尚未使用。不恢复旧r31的900条任务。
 
@@ -253,12 +257,31 @@ ID开发缺口已另冻2文本/4条件行并核验隔离，原风险句和最终
   s45在半强度失败而s42在四分之一强度失败，全局降强度非单调，不再试更小强度。
   1813输入、269源码、13份产物SHA及四视图8份CPU声学通过，未评分WAV0、GPU0MiB；verification
   `485622e0e078509cbdfe0634cb7b43fc1b53247437355597de83d76a2648a496`，本地`work/r39_u40_quarter_20261031/terminal_analysis.json`。
-- [ ] **r40 projection单变量训练已自动接续** `/root/autodl-tmp/r40_dit_original_proj_20261031/`：仅`enable_proj` false→true。
-  同1881原音行和六份父数据/任务字节，DiT-only/rank32/dropout0/lr5e-5/batch2×8/118更新与全部质量门不变，冷启动。
-  105项相关测试、270源码、19,895输入及父终态321份产物SHA通过；plan `c758c51f32e82522fa1f5b0813880f174c78250c56e6eec9b35c878d0914f324`，
-  launch verification `fb29ec639aee977d5303e551f14051119c9b0d5aac1f0e1e296b2d3dd7e210dc`；driver39211/trainer39272，训练中。
-  启动前清理已终止两轮诊断的未引用编译缓存，回收362,151,936 bytes，引用/SHA/进程/句柄审计通过，4GiB底线保持。
-  下一步核验既有40/80/118门与终态，不重复启动；失败不补抽，小门通过才扩开发诊断，最终90不参与调参，母语未验证，不部署或发布。
+- [x] **r40 projection单变量已拒绝并核验** `/root/autodl-tmp/r40_dit_original_proj_20261031/`：仅`enable_proj` false→true。
+  40更新首门第18条TH1994 control/s42新增疑似多读：CER .0989→.6044、len_ratio 1→1.571、时长7.20→10.88s；余27不补抽，80/118未执行。
+  同完成18条仅TH13/TL5、4个独立文本，ID未评；CER TH7.61→10.30%、TL2.46→2.30%只是小样本观察，不认证三语种结论。
+  19,895输入、74份产物SHA、18WAV/items/claims、完整40更新快照/latest及36份配对CPU声学通过；
+  104个optimizer状态均40、3,833,856参数、未评分WAV0、GPU0MiB。verification
+  `08edce2a0ceec2fd2378b4822065977533e36db080207638bc95f60198a08a2d`，本地`work/r40_dit_original_proj_20261031/terminal_analysis.json`。
+- [x] **r41停止损失单变量已拒绝并核验** `/root/autodl-tmp/r41_stop2_20261031_v2/`：仅`loss/stop`权重1→2。
+  40更新首门第2条TH1844 control/s43新增疑似多读：CER0→.5696、len_ratio1→1.570、时长4.80→9.44s；余43不补抽，80/118未执行。
+  仅同一TH文本2seed，ID/TL未评，不据此声称停止权重与多读的单调因果。20,198输入、26份产物SHA、2WAV/items/claims、
+  完整40更新快照/latest及4份配对CPU声学通过；96个optimizer状态均40、3,342,336参数、未评分WAV0、GPU0MiB。
+  verification `0be5a7a666dc6a36356d6aa233fc63734e04b7ae7b2b46f86c9c811b3bf4c39f`，本地`work/r41_dit_original_stop2_20261031/terminal_analysis.json`。
+- [x] **r42低容量单变量已拒绝并核验** `/root/autodl-tmp/r42_rank16_20261031/`：仅DiT rank/alpha32→16。
+  40更新首门第16条TH1994 control/s44新增疑似多读：CER .2747→.6593、len_ratio1.220→1.593、时长7.68→10.56s；余29不补抽。
+  base同seed本有额外转写/疑似少读，候选恶化仍不多加认证；仅TH11/TL5、4文本，ID未评。20,454输入、68份产物SHA、
+  16WAV/items/claims、完整快照/latest及32对CPU声学通过；96个optimizer40、1,671,168参数、未评分WAV0、GPU0MiB。
+  verification `4d48112d98f2474f910b17acf0bfff112492ebb1412f002b9dbedb19e0752f7e`，本地`work/r42_rank16_20261031/terminal_analysis.json`。
+- [x] **r43训练种子对照已拒绝并核验** `/root/autodl-tmp/r43_seed43_20261031/`：r39全部YAML值不变，仅训练seed42→43。
+  同1881原音行和六份父数据/任务字节，CONFIG_DIFF为空；包装层向只读官方Accelerator注入plan种子并在结束后恢复，submodule未改。
+  40更新首门TH1844 control五seed后，seed44/46分别CER 0→.2532/.3797、len_ratio1→1.253/1.304，
+  新增额外转写并触发两条严重配对CER退化，余40条不补抽，80/118未执行；仅一个TH文本，ID/TL未评。
+  51项针对测试、273源码、20,753输入、35份产物SHA、完整40更新快照/latest及10份配对CPU声学通过；
+  96个optimizer状态均40、3,342,336参数、未评分WAV0、GPU0MiB。verification
+  `ea0bf0f8debeb70f18a1c7ec88c99de0a066951d33d21cf83064dacb964da54d`；新增训练种子未消除风险，不认证稳定或因果。
+  启动前审计已终止r40-r42的12,329份无引用缓存（192,657,393 bytes逻辑大小），回收224,456,704 bytes；结果/权重/原音不动，4GiB底线保持。
+  下一步检验同一r39轨迹在40更新之前的10/20更新早期快照；不再随机换种子，最终90不参与调参，母语未验证，不部署或发布。
 
 ## 2026-10-30：数据质量复核、数字豁免与背景音分离
 

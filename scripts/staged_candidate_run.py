@@ -24,7 +24,10 @@ PAIRED = Path('/root/autodl-tmp/quality_reaudit_20261030/paired_candidate_202610
 PAIRED_SHA = '60789ed48d2c4c4c4cec3126c3f7c787b1fb75dc52d186fe7b82e434f2781a82'
 PAIRED_COMPLETION_SHA = 'ed647b04198e11da6ee2a7ce1ea1aac8d3c49a7672dad58b2d1d3d6199f56b28'
 ORIGINAL_VARIANTS = ('dit_original', 'dit_original_lr5e5', 'dit_original_lr5e5_rank32',
-                     'dit_original_lr5e5_rank32_drop0', 'dit_original_lr5e5_rank32_drop0_proj')
+                     'dit_original_lr5e5_rank32_drop0', 'dit_original_lr5e5_rank32_drop0_proj',
+                     'dit_original_lr5e5_rank32_drop0_stop2',
+                     'dit_original_lr5e5_rank16_drop0',
+                     'dit_original_lr5e5_rank32_drop0_seed43')
 PAIRED_VARIANTS = ('dit_paired', *ORIGINAL_VARIANTS)
 R35 = Path('/root/autodl-tmp/r35_dit_paired_20261031/run')
 R35_SHA = 'c8535a2182342b4fea047328840f84836713a986b21a1e637fd2442663df972b'
@@ -40,6 +43,15 @@ R38_VERIFICATION_SHA = 'd628f4239e51473532f16322cd646199404af46436b3a3f515686afd
 R39 = Path('/root/autodl-tmp/r39_drop0_20261031_v2/run')
 R39_SHA = '9b40d522071727eef4163ea70b5662098745c3c27617cd3103ee49074e631b5e'
 R39_VERIFICATION_SHA = '3a9ab7f53efdad4206fed2646b347ccb73e96d6ee87a826220c8e2b26f53f8ea'
+R40 = Path('/root/autodl-tmp/r40_dit_original_proj_20261031/run')
+R40_SHA = 'c758c51f32e82522fa1f5b0813880f174c78250c56e6eec9b35c878d0914f324'
+R40_VERIFICATION_SHA = '08edce2a0ceec2fd2378b4822065977533e36db080207638bc95f60198a08a2d'
+R41 = Path('/root/autodl-tmp/r41_stop2_20261031_v2/run')
+R41_SHA = 'c9ae98637e9439d8e7a163ef8c948f15ff4315f92a4c6b36c70308fc03f62660'
+R41_VERIFICATION_SHA = '0be5a7a666dc6a36356d6aa233fc63734e04b7ae7b2b46f86c9c811b3bf4c39f'
+R42 = Path('/root/autodl-tmp/r42_rank16_20261031/run')
+R42_SHA = 'b69c6412539dd1e31635d0242a8b1c8ecb940655847e09d4cd31e35a247c326a'
+R42_VERIFICATION_SHA = '4d48112d98f2474f910b17acf0bfff112492ebb1412f002b9dbedb19e0752f7e'
 
 
 def acoustic_gate(rows, baseline, *, paired_extremes=False):
@@ -125,6 +137,27 @@ VARIANTS['dit_original_lr5e5_rank32_drop0_proj'] = {**VARIANTS['dit_original_lr5
                  'original rows, DiT/LM switches, rank32, dropout0, lr5e-5 and118-update schedule. '
                  'Full/half/quarter inference strengths fail on different seeds, so test the remaining '
                  'structural branch rather than another strength reduction; r9 was not an isolated control.'}
+VARIANTS['dit_original_lr5e5_rank32_drop0_stop2'] = {**VARIANTS['dit_original_lr5e5_rank32_drop0'],
+    'stop_loss_weight':2.,
+    'run_name':'lora_joint3_r41_dit_original_lr5e5_rank32_drop0_stop2_staged',
+    'hypothesis':'Relative to r39, only double loss/stop weight from1 to2. Overread is the shared '
+                 'terminal failure of r38/r39 and the first-gate failure of projection-enabled r40. '
+                 'Hold the same original rows, DiT-only rank32, dropout0, lr5e-5, training seed and '
+                 '118-update schedule; test stop supervision rather than another capacity or strength change.'}
+VARIANTS['dit_original_lr5e5_rank16_drop0'] = {**VARIANTS['dit_original_lr5e5_rank32_drop0'],
+    'changes':{'enable_lm':False, 'enable_proj':False, 'r':16, 'alpha':16, 'dropout':0.}, 'free_gib':4.9,
+    'run_name':'lora_joint3_r42_dit_original_lr5e5_rank16_drop0_staged',
+    'hypothesis':'Relative to r39, only halve DiT rank/alpha32 to16, keeping alpha/r=1 and stop weight1. '
+                 'Rank32 delayed but did not remove overread; projection and stop-weight branches failed '
+                 'at40 updates. Test smaller adaptation capacity with identical original rows, lr5e-5, '
+                 'training seed and118-update schedule; initialization RNG changes, no causal proof.'}
+VARIANTS['dit_original_lr5e5_rank32_drop0_seed43'] = {**VARIANTS['dit_original_lr5e5_rank32_drop0'],
+    'training_seed':43, 'free_gib':4.9,
+    'run_name':'lora_joint3_r43_dit_original_lr5e5_rank32_drop0_seed43_staged',
+    'hypothesis':'Relative to r39, change only training seed42 to43. Rank/capacity, projection and '
+                 'stop-weight variants all overread at40 updates; test training-trajectory sensitivity '
+                 'with identical config bytes, data/order recipe, rank32, dropout0, lr5e-5 and118 updates. '
+                 'One additional training seed is not a stability or causal claim; final selection needs independent validation.'}
 
 
 def candidate_config(parent, work, variant, *, train_rows=None):
@@ -137,6 +170,8 @@ def candidate_config(parent, work, variant, *, train_rows=None):
             'train_manifest': str(work / 'train.jsonl'), 'val_manifest': str(work / 'val.jsonl'),
             'save_path': str(work / 'checkpoint'), 'tensorboard': str(work / 'checkpoint/logs'),
             'save_interval': 150}
+    if 'stop_loss_weight' in VARIANTS[variant]:
+        result['lambdas'] = {**parent['lambdas'], 'loss/stop':VARIANTS[variant]['stop_loss_weight']}
     if variant in PAIRED_VARIANTS:
         if train_rows != 1881:
             raise ValueError('Expected the frozen 1881-row paired candidate')
@@ -210,7 +245,10 @@ def verify_original_config_control(work, cfg, variant):
         raise ValueError('Undeclared original-audio control')
     parent_work = {'dit_original_lr5e5':R36, 'dit_original_lr5e5_rank32':R37,
                    'dit_original_lr5e5_rank32_drop0':R38,
-                   'dit_original_lr5e5_rank32_drop0_proj':R39}[variant]
+                   'dit_original_lr5e5_rank32_drop0_proj':R39,
+                   'dit_original_lr5e5_rank32_drop0_stop2':R39,
+                   'dit_original_lr5e5_rank16_drop0':R39,
+                   'dit_original_lr5e5_rank32_drop0_seed43':R39}[variant]
     for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
         if frozen.sha256(work / name) != frozen.sha256(parent_work / name):
             raise ValueError(f'Original control changed {name}')
@@ -218,7 +256,18 @@ def verify_original_config_control(work, cfg, variant):
     paths = {'train_manifest', 'val_manifest', 'save_path', 'tensorboard'}
     changed = {key for key in set(parent) | set(cfg)
                if key not in paths and parent.get(key) != cfg.get(key)}
-    if variant == 'dit_original_lr5e5_rank32_drop0_proj':
+    if variant == 'dit_original_lr5e5_rank32_drop0_seed43':
+        if changed:
+            raise ValueError('Expected identical config bytes; only training seed differs from r39')
+    elif variant == 'dit_original_lr5e5_rank16_drop0':
+        if (changed != {'lora'} or parent['lora']['r'] != 32 or parent['lora']['alpha'] != 32
+                or cfg['lora'] != {**parent['lora'], 'r':16, 'alpha':16}):
+            raise ValueError('Expected only DiT rank/alpha 32 to16 relative to r39')
+    elif variant == 'dit_original_lr5e5_rank32_drop0_stop2':
+        if (changed != {'lambdas'} or parent['lambdas']['loss/stop'] != 1.
+                or cfg['lambdas'] != {**parent['lambdas'], 'loss/stop':2.}):
+            raise ValueError('Expected only loss/stop weight 1 to2 relative to r39')
+    elif variant == 'dit_original_lr5e5_rank32_drop0_proj':
         if (changed != {'lora'} or parent['lora']['enable_proj'] is not False
                 or cfg['lora'] != {**parent['lora'], 'enable_proj':True}):
             raise ValueError('Expected only enable_proj false to true relative to r39')
@@ -331,7 +380,7 @@ def prepare(work, variant='rank32'):
                 if yaml.safe_load(official_config.read_text(encoding='utf-8'))['lora']['dropout'] != 0.:
                     raise ValueError('Official dropout rationale changed')
                 inputs[str(official_config)] = frozen.sha256(official_config)
-            if variant == 'dit_original_lr5e5_rank32_drop0_proj':
+            if variant in ORIGINAL_VARIANTS[4:]:
                 prior.review.checked(R39 / 'plan.json', R39_SHA)
                 prior.review.checked(R39 / 'verification.json', R39_VERIFICATION_SHA)
                 verification = read(R39 / 'verification.json')
@@ -344,6 +393,45 @@ def prepare(work, variant='rank32'):
                 inputs.update(verification['outputs_sha256'])
                 inputs[str(R39 / 'plan.json')] = R39_SHA
                 inputs[str(R39 / 'verification.json')] = R39_VERIFICATION_SHA
+            if variant in ORIGINAL_VARIANTS[5:]:
+                prior.review.checked(R40 / 'plan.json', R40_SHA)
+                prior.review.checked(R40 / 'verification.json', R40_VERIFICATION_SHA)
+                verification = read(R40 / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R40_SHA
+                        or verification['optimizer_step_counts'] != {'40':104}
+                        or verification['completed_outputs'] != 18 or verification['unscored_wavs'] != 0
+                        or verification['reason'] != 'new_suspected_overread'):
+                    raise ValueError('Expected verified r40 first-gate overread failure')
+                inputs.update(read(R40 / 'plan.json')['inputs_sha256'])
+                inputs.update(verification['outputs_sha256'])
+                inputs[str(R40 / 'plan.json')] = R40_SHA
+                inputs[str(R40 / 'verification.json')] = R40_VERIFICATION_SHA
+            if variant in ORIGINAL_VARIANTS[6:]:
+                prior.review.checked(R41 / 'plan.json', R41_SHA)
+                prior.review.checked(R41 / 'verification.json', R41_VERIFICATION_SHA)
+                verification = read(R41 / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R41_SHA
+                        or verification['optimizer_step_counts'] != {'40':96}
+                        or verification['completed_outputs'] != 2 or verification['unscored_wavs'] != 0
+                        or verification['reason'] != 'new_suspected_overread'):
+                    raise ValueError('Expected verified r41 first-gate overread failure')
+                inputs.update(read(R41 / 'plan.json')['inputs_sha256'])
+                inputs.update(verification['outputs_sha256'])
+                inputs[str(R41 / 'plan.json')] = R41_SHA
+                inputs[str(R41 / 'verification.json')] = R41_VERIFICATION_SHA
+            if variant == 'dit_original_lr5e5_rank32_drop0_seed43':
+                prior.review.checked(R42 / 'plan.json', R42_SHA)
+                prior.review.checked(R42 / 'verification.json', R42_VERIFICATION_SHA)
+                verification = read(R42 / 'verification.json')
+                if (verification['status'] != 'rejected_verified' or verification['plan_sha256'] != R42_SHA
+                        or verification['optimizer_step_counts'] != {'40':96}
+                        or verification['completed_outputs'] != 16 or verification['unscored_wavs'] != 0
+                        or verification['reason'] != 'new_suspected_overread'):
+                    raise ValueError('Expected verified r42 first-gate overread failure')
+                inputs.update(read(R42 / 'plan.json')['inputs_sha256'])
+                inputs.update(verification['outputs_sha256'])
+                inputs[str(R42 / 'plan.json')] = R42_SHA
+                inputs[str(R42 / 'verification.json')] = R42_VERIFICATION_SHA
     if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
         prior.strength.check_inputs(R33_DEVELOPMENT)
@@ -428,7 +516,8 @@ def prepare(work, variant='rank32'):
     save(work / 'plan.json', {**{k: parent[k] for k in ('base_path', 'asr_path', 'speaker_model_path',
             'sources', 'language_shares')}, 'inputs_sha256': inputs, 'rank': cfg['lora']['r'],
         **data, 'data_source':str(data_source),
-        'variant':variant, 'run_name':settings['run_name'], 'max_training_updates': cfg['num_iters'],
+        'variant':variant, 'run_name':settings['run_name'], 'training_seed':settings.get('training_seed',42),
+        'max_training_updates': cfg['num_iters'],
         'nominal_epochs':cfg['num_iters'] * cfg['batch_size'] * cfg['grad_accum_steps'] /
                          len(frozen._read_manifest(work / 'train.jsonl')),
         'training_authorized': True, 'authorization': 'User continuous iteration and hyperparameter optimization',
@@ -477,14 +566,23 @@ def checkpoint_gate(work, step, optimizer, *, gates=GATES):
         raise GateRejected(result['reason'])
 
 
+def _seeded_accelerator(accelerator, seed):
+    def create(*args, **kwargs):
+        kwargs['seed'] = seed
+        return accelerator(*args, **kwargs)
+    return create
+
+
 def train(work):
     cfg = yaml.safe_load((work / 'train.yaml').read_text(encoding='utf-8'))
-    gates = gate_steps(cfg, read(work / 'plan.json')['variant'])
+    plan = read(work / 'plan.json')
+    gates = gate_steps(cfg, plan['variant'])
     path = frozen.VOXCPM_REPO / 'scripts/train_voxcpm_finetune.py'
     spec = importlib.util.spec_from_file_location('voxft_official_trainer', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     original = module.save_checkpoint
+    original_accelerator = module.Accelerator
 
     def save_and_wait(model, optimizer, scheduler, save_dir, step, *args, **kwargs):
         if step not in gates:
@@ -493,6 +591,7 @@ def train(work):
         checkpoint_gate(work, step, optimizer, gates=gates)
 
     module.save_checkpoint = save_and_wait
+    module.Accelerator = _seeded_accelerator(original_accelerator, plan.get('training_seed',42))
     try:
         module.train(**cfg)
     except GateRejected as error:
@@ -500,6 +599,7 @@ def train(work):
             'status': 'rejected_at_complete_checkpoint', 'step_label': read(work / 'checkpoint/latest/training_state.json')['step']})
     finally:
         module.save_checkpoint = original
+        module.Accelerator = original_accelerator
 
 
 def evaluate_gate(work, step):

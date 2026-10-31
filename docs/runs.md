@@ -4,16 +4,370 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
-## lora_joint3_r40_dit_original_lr5e5_rank32_drop0_proj_staged：已冷启动（2026-10-31）
+## lora_joint3_r43_dit_original_lr5e5_rank32_drop0_seed43_staged
 
-相对r39只改`lora.enable_proj: false→true`，同一基座冷启动；train/val/flagged/mix/jobs/base_items六份字节与r39完全一致。
-仍为1881条/3.541h独立筛查原音，ID/TH/TL时长28.304/28.341/28.334%+zh9.992%/en5.029%，原音≤2×、ref≤3×、TL可信ref0；
-DiT-only、LM关、rank/alpha32、dropout0、lr5e-5、batch2×8、weight_decay.01、clip1、118更新/warmup12，40/80/118更新后各≤45条五seed门。
-105项相关测试、270源码、19,895输入和父终态321份产物SHA通过。plan `c758c51f32e82522fa1f5b0813880f174c78250c56e6eec9b35c878d0914f324`，
-launch verification `fb29ec639aee977d5303e551f14051119c9b0d5aac1f0e1e296b2d3dd7e210dc`；driver39211/trainer39272，训练中，尚无质量结论。
-启动前只清理两轮已终止诊断的未引用编译缓存，309,550,762 bytes逻辑大小、回收362,151,936 bytes；JSON引用/SHA/进程/句柄审计通过，结果/权重/原音不动。
-来源与许可：cv22_id/th CC0、fleurs_en/id/th/tl/zh CC-BY-4.0、gigaspeech2_id/th Apache-2.0、yodas_th CC-BY-3.0。
-小门不自动晋级；最终90未用，母语未验证，不部署或发布。
+- 生成时间：2026-10-31 17:50:22
+- 结论：**不通过：40更新首门两条严重配对CER退化；5条输出与终态已核验**
+- 下一步：检验同一r39轨迹在40更新之前的10/20更新早期快照；不续训、不补抽r43，不再随机换训练种子。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 32/32/0.0 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /Users/dunxu.liu/workspace/dubbing/voxcpm_finetune/work/r43_seed43_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "th": 704, "tl": 346, "zh": 169, "en": 80} |
+| val loss 首→末 | 1.0869 (step 0) → 1.0869 (step 0)，最优 1.0869（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=None
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=None、steps=None、retry_badcase=None、ASR=None、1 个 case × seed = 5 条样本
+
+| 语种 | base CER | r43_u40 CER |
+|---|---|---|
+| th | 0.0025 | 0.1266 |
+| **总体** | 0.0025 | 0.1266 |
+| 疑似漏尾 | 0.0 | 0.4 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `r43_u40` 红线：th 0.0025→0.1266
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；尾静音策略=absolute，p90尾静音绝对值 >0.5s（增量仅观察）；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `r43_u40`：无
+
+逐 seed 与严重度分解（参考、不作门禁；`len_ratio` ≥2.0 记灾难级，其余多读记中等级）：
+- `base`
+  - th（5 条）中等 0 / 灾难 0 ｜ s42 多读0/1 max1.00× p90尾0.14s ｜ s43 多读0/1 max1.00× p90尾0.00s ｜ s44 多读0/1 max0.99× p90尾0.08s ｜ s45 多读0/1 max1.00× p90尾0.08s ｜ s46 多读0/1 max1.00× p90尾0.10s
+- `r43_u40`
+  - th（5 条）中等 0 / 灾难 0 ｜ s42 多读0/1 max1.00× p90尾0.20s ｜ s43 多读0/1 max1.00× p90尾0.08s ｜ s44 多读0/1 max1.25× p90尾0.22s ｜ s45 多读0/1 max1.00× p90尾0.24s ｜ s46 多读0/1 max1.30× p90尾0.08s
+
+报告文件：`terminal_base_report.json`、`terminal_r43_report.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+r43保持r39全部YAML值与数据/任务字节，仅训练seed42→43；40更新首门TH1844 control五seed后，seed44/46分别CER 0→.2532/.3797，新增额外转写与疑似少读标记，len_ratio1→1.253/1.304，时长5.28→6.24s、4.80→9.12s，触发两条严重配对CER退化，余40条不补抽，80/118未执行。仅一个TH文本，ID/TL未评，不认证三语种结论或训练种子因果。20,753输入、35份产物SHA、5WAV/items/claims、完整40更新快照/latest及10份配对CPU声学通过；96个optimizer状态均40、3,342,336参数、未评分WAV0、GPU0MiB。verification SHA ea0bf0f8debeb70f18a1c7ec88c99de0a066951d33d21cf83064dacb964da54d。来源与继承许可：cv22_id/th CC0；fleurs_en/id/th/tl/zh CC-BY-4.0；gigaspeech2_id/th Apache-2.0；yodas_th CC-BY-3.0。最终90未用，母语未验证，不部署或发布权重。
+
+---
+
+## lora_joint3_r43_dit_original_lr5e5_rank32_drop0_seed43_staged
+
+- 生成时间：2026-10-31 12:54:38
+- 结论：**进行中：YAML/数据不变，仅训练seed42→43，20,753项输入及273份源码通过**
+- 下一步：自动核验40/80/118更新阶段门；失败保留证据且不补抽，小门通过才另扩开发诊断，最终90不参与调参。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 32/32/0.0 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/r43_seed43_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "th": 704, "tl": 346, "zh": 169, "en": 80} |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=2
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+r43保持r39全部YAML值，仅训练seed42→43；容量、projection、stop权重单变量均在40更新出现多读，故检查训练轨迹敏感性，不再叠加超参变化。
+六份train/val/flagged/mix/jobs/base_items与r39字节一致，CONFIG_DIFF为空；同一基座冷启动，DiT-only rank/alpha32、LM/proj关、dropout0、stop权重1、lr5e-5、batch2×8、weight_decay.01、clip1、118更新/warmup12。
+只读官方训练器由Accelerator(amp=True)默认42；现有包装层按plan注入43并在结束后恢复，submodule未改。51项针对测试、273份源码SHA、20,753项输入通过。
+plan `cd78d53cc0f1058bc120c55d43abcf876018b7e4c6aa5b518d6f94f8eafc3993`，training_seed=43；driver50681/trainer50731，已观察step0/10/20/30，CUDA训练进行中，尚无质量结论。
+启动前审计已终止r40-r42无引用缓存，12,329文件/192,657,393 bytes逻辑大小，回收224,456,704 bytes；原音/权重/结果不动。rank32快照与768MiB评估预算下启动4.9GiB门、执行4GiB底线。
+来源与继承许可：cv22_id/th CC0；fleurs_en/id/th/tl/zh CC-BY-4.0；gigaspeech2_id/th Apache-2.0；yodas_th CC-BY-3.0。1881条/3.541h，原音≤2×、ref≤3×、TL可信ref0。
+新增一个训练种子不证明稳定或因果，不用于无独立验证的择优；阶段门自动早停，小门通过才另扩开发，不使用最终90，不自动晋级、部署或发布，母语未验证。
+
+
+---
+
+## lora_joint3_r42_dit_original_lr5e5_rank16_drop0_staged
+
+- 生成时间：2026-10-31 12:53:05
+- 结论：**不通过：40更新首门第16条新增疑似多读；16条输出、完整快照及终态已核验**
+- 下一步：已接续r43，仅训练seed42→43；不续训、不补抽r42余29条，不改旧拒绝。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 16/16/0.0 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/r42_rank16_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "th": 704, "tl": 346, "zh": 169, "en": 80} |
+| val loss 首→末 | 1.0430 (step 0) → 1.0430 (step 0)，最优 1.0430（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=2
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、4 个 case × seed = 16 条样本
+
+| 语种 | base CER | r42_u40 CER |
+|---|---|---|
+| th | 0.0743 | 0.1199 |
+| tl | 0.0246 (WER 0.0846) | 0.023 (WER 0.1077) |
+| **总体** | 0.0588 | 0.0896 |
+| 疑似漏尾 | 0.0625 | 0.0625 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `r42_u40` 红线：无
+  - 噪声级（未触发红线，照实记录）：th 0.0743→0.1199
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；尾静音策略=absolute，p90尾静音绝对值 >0.5s（增量仅观察）；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `r42_u40`：无
+
+逐 seed 与严重度分解（参考、不作门禁；`len_ratio` ≥2.0 记灾难级，其余多读记中等级）：
+- `base`
+  - th（11 条）中等 0 / 灾难 0 ｜ s42 多读0/1 max1.00× p90尾0.14s ｜ s43 多读0/3 max1.00× p90尾0.18s ｜ s44 多读0/3 max1.22× p90尾0.10s ｜ s45 多读0/3 max1.03× p90尾0.12s ｜ s46 多读0/1 max1.00× p90尾0.10s
+  - tl（5 条）中等 0 / 灾难 0 ｜ s42 多读0/1 max0.99× p90尾0.00s ｜ s43 多读0/1 max0.99× p90尾0.10s ｜ s44 多读0/1 max1.01× p90尾0.00s ｜ s45 多读0/1 max0.99× p90尾0.02s ｜ s46 多读0/1 max1.01× p90尾0.08s
+- `r42_u40`
+  - th（11 条）中等 1 / 灾难 0 ｜ s42 多读0/1 max1.00× p90尾0.14s ｜ s43 多读0/3 max1.00× p90尾0.12s ｜ s44 多读1/3 max1.59× p90尾0.18s ｜ s45 多读0/3 max1.03× p90尾0.22s ｜ s46 多读0/1 max0.97× p90尾0.14s
+  - tl（5 条）中等 0 / 灾难 0 ｜ s42 多读0/1 max1.00× p90尾0.08s ｜ s43 多读0/1 max0.99× p90尾0.00s ｜ s44 多读0/1 max1.01× p90尾0.04s ｜ s45 多读0/1 max1.01× p90尾0.00s ｜ s46 多读0/1 max1.00× p90尾0.02s
+
+报告文件：`terminal_base_report.json`、`terminal_r42_report.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+r42仅将DiT rank/alpha32→16，40更新首门第16条TH1994 control/seed44新增疑似多读，余29条不补抽，80/118更新未执行。
+base→candidate：CER .2747→.6593、len_ratio 1.220→1.593、时长7.68→10.56s、speech_ratio .8616→.8273；base同seed已有额外转写和疑似少读，候选恶化仍是新增多读风险，不认证母语错读或rank因果。
+16条仅TH11/TL5、4个独立文本，ID未评；小样本CER只是观察，不能称三语种退化或收益。
+20,454输入、68份产物SHA、16WAV/items/claims、完整40更新快照/latest及32份配对CPU声学复核通过；96个optimizer状态均40，1,671,168参数，未评分WAV0，GPU0MiB。
+verification SHA `4d48112d98f2474f910b17acf0bfff112492ebb1412f002b9dbedb19e0752f7e`，本地`work/r42_rank16_20261031/terminal_analysis.json`。
+后续清理仅覆盖已终止r40-r42的无引用编译缓存：12,329文件、192,657,393 bytes逻辑大小，SHA/JSON引用/进程句柄审计后回收224,456,704 bytes；结果、权重、原音不动。证据`/root/autodl-tmp/storage_cache_20261031_r43_v2/`。
+来源与继承许可：cv22_id/th CC0；fleurs_en/id/th/tl/zh CC-BY-4.0；gigaspeech2_id/th Apache-2.0；yodas_th CC-BY-3.0。
+下一有界实验r43保持r39全部YAML值和数据/任务字节，仅训练seed42→43，检验训练轨迹敏感性；不补抽旧失败。最终90未用，母语未验证，不部署或发布权重。
+
+
+---
+
+## lora_joint3_r41_dit_original_lr5e5_rank32_drop0_stop2_staged
+
+- 生成时间：2026-10-31 12:31:18
+- 结论：**不通过：40更新首门第2条新增疑似多读；2条输出、完整快照及终态已核验**
+- 下一步：已接续r42，仅DiT rank/alpha32→16；不续训、不补抽r41余43条，不改旧拒绝。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 32/32/0.0 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/r41_stop2_20261031_v2/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "th": 704, "tl": 346, "zh": 169, "en": 80} |
+| val loss 首→末 | 1.1258 (step 0) → 1.1258 (step 0)，最优 1.1258（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=2
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、1 个 case × seed = 2 条样本
+
+| 语种 | base CER | r41_u40 CER |
+|---|---|---|
+| th | 0.0063 | 0.2912 |
+| **总体** | 0.0063 | 0.2912 |
+| 疑似漏尾 | 0.0 | 0.5 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `r41_u40` 红线：th 0.0063→0.2912
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；尾静音策略=absolute，p90尾静音绝对值 >0.5s（增量仅观察）；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `r41_u40`：overall speech_ratio 0.901→0.851（-0.050）；th speech_ratio 0.901→0.851（-0.050）
+  - 尾静音观察（不否决）：overall p90尾静音 0.080→0.220s（+0.140s）；th p90尾静音 0.080→0.220s（+0.140s）
+
+逐 seed 与严重度分解（参考、不作门禁；`len_ratio` ≥2.0 记灾难级，其余多读记中等级）：
+- `base`
+  - th（2 条）中等 0 / 灾难 0 ｜ s43 多读0/1 max1.00× p90尾0.00s ｜ s44 多读0/1 max0.99× p90尾0.08s
+- `r41_u40`
+  - th（2 条）中等 1 / 灾难 0 ｜ s43 多读1/1 max1.57× p90尾0.22s ｜ s44 多读0/1 max0.99× p90尾0.08s
+
+报告文件：`terminal_base_report.json`、`terminal_r41_report.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+r41仅将loss/stop权重1→2，40更新首门第2条TH1844 control/seed43新增疑似多读，余43条不补抽，80/118更新未执行。
+base→candidate：CER 0→.5696、len_ratio 1→1.570、时长4.80→9.44s、speech_ratio .9540→.8535；这是ASR风险证据，不认证母语错读或停止权重因果。
+仅完成同一TH文本2个seed，ID/TL未评；不能计算或宣称三语种非退化，也不把更早触发单独解释为超参单调效应。
+20,198输入、26份产物SHA、2WAV/items/claims、完整40更新快照/latest及4份配对CPU声学复核通过；96个optimizer状态均40，3,342,336参数，未评分WAV0，GPU0MiB。
+verification SHA `0be5a7a666dc6a36356d6aa233fc63734e04b7ae7b2b46f86c9c811b3bf4c39f`，本地`work/r41_dit_original_stop2_20261031/terminal_analysis.json`。
+首次长目录在prepare前因AF_UNIX路径过长退出，无run/评分/checkpoint；旧源码日志保留，同实验短目录恢复，未改变训练变量。
+来源与继承许可：cv22_id/th CC0；fleurs_en/id/th/tl/zh CC-BY-4.0；gigaspeech2_id/th Apache-2.0；yodas_th CC-BY-3.0。
+下一有界实验r42回到r39的projection-off/stop-weight1，仅将DiT rank/alpha32→16，保持alpha/r=1，其余数据、训练seed、超参和质量门不变。最终90未用，母语未验证，不部署或发布权重。
+
+
+---
+
+## lora_joint3_r40_dit_original_lr5e5_rank32_drop0_proj_staged
+
+- 生成时间：2026-10-31 12:16:33
+- 结论：**不通过：40更新首门第18条新增疑似多读；18条输出、完整快照及终态已核验**
+- 下一步：已接续r41，仅loss/stop权重1→2；不续训、不补抽r40余27条，不改旧拒绝。
+
+### 超参数
+
+| 项 | 值 |
+|---|---|
+| finetune | lora |
+| LoRA r/alpha/dropout | 32/32/0.0 |
+| enable_lm/dit/proj | False/True/True |
+| learning_rate | 5e-05 |
+| batch × 累积 × GPU | 2 × 8 × 1 = 16 |
+| epochs / num_iters | 1.0037214247740565 / 118 |
+| warmup / weight_decay / max_grad_norm | 12 / 0.01 / 1.0 |
+| save/valid_interval | 1/250 |
+| max_batch_tokens | 8192 |
+| 基座 | /root/autodl-tmp/hf_home/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915 |
+| 训练清单 | /root/autodl-tmp/r40_dit_original_proj_20261031/run/train.jsonl |
+| 样本数 / 语种条数 | 1881 / {"id": 582, "th": 704, "tl": 346, "zh": 169, "en": 80} |
+| val loss 首→末 | 1.0004 (step 0) → 1.0004 (step 0)，最优 1.0004（≤10 batch≈20 条随机子集，跨轮不可比、不作选点依据） |
+
+### 数据配比（按时长）
+
+- 总时长 **3.541 h** / 1881 条，max_repeat=2
+- 带 ref_audio：475，带控制前缀：0
+- max_exposure：2
+
+| 语种 | requested | actual | hours |
+|---|---|---|---|
+| en | 0.05 | 0.050287112868304625 | 0.17806666666666668 |
+| id | 0.2833333333333333 | 0.28304308261947375 | 1.0022555555555566 |
+| th | 0.2833333333333333 | 0.2834117794722147 | 1.0035611111111122 |
+| tl | 0.2833333333333333 | 0.28334196240861004 | 1.0033138888888882 |
+| zh | 0.1 | 0.09991606263139734 | 0.35380277777777797 |
+
+### 验收（离线轨）
+
+- case 集与口径：cfg=1.8、steps=20、retry_badcase=False、ASR=large-v3、4 个 case × seed = 18 条样本
+
+| 语种 | base CER | r40_u40 CER |
+|---|---|---|
+| th | 0.0761 | 0.103 |
+| tl | 0.0246 (WER 0.0846) | 0.023 (WER 0.0616) |
+| **总体** | 0.0618 | 0.0808 |
+| 疑似漏尾 | 0.0556 | 0.1111 |
+
+退化语种（红线阈值 ΔCER > 0.05；任一语种触发即整轮不通过）：
+- `r40_u40` 红线：无
+  - 噪声级（未触发红线，照实记录）：th 0.0761→0.1030
+
+时长类门禁（非数字 audio_sec 涨幅 >10% 且 |ΔCER非数字| ≤0.01；尾静音策略=absolute，p90尾静音绝对值 >0.5s（增量仅观察）；speech_ratio 降 >0.05；标定依据见 docs/qc_gates.md）：
+- `r40_u40`：无
+
+逐 seed 与严重度分解（参考、不作门禁；`len_ratio` ≥2.0 记灾难级，其余多读记中等级）：
+- `base`
+  - th（13 条）中等 0 / 灾难 0 ｜ s42 多读0/3 max1.00× p90尾0.14s ｜ s43 多读0/3 max1.00× p90尾0.18s ｜ s44 多读0/3 max1.22× p90尾0.10s ｜ s45 多读0/3 max1.03× p90尾0.12s ｜ s46 多读0/1 max1.00× p90尾0.10s
+  - tl（5 条）中等 0 / 灾难 0 ｜ s42 多读0/1 max0.99× p90尾0.00s ｜ s43 多读0/1 max0.99× p90尾0.10s ｜ s44 多读0/1 max1.01× p90尾0.00s ｜ s45 多读0/1 max0.99× p90尾0.02s ｜ s46 多读0/1 max1.01× p90尾0.08s
+- `r40_u40`
+  - th（13 条）中等 1 / 灾难 0 ｜ s42 多读1/3 max1.57× p90尾0.22s ｜ s43 多读0/3 max1.00× p90尾0.14s ｜ s44 多读0/3 max1.02× p90尾0.10s ｜ s45 多读0/3 max1.01× p90尾0.12s ｜ s46 多读0/1 max1.00× p90尾0.14s
+  - tl（5 条）中等 0 / 灾难 0 ｜ s42 多读0/1 max0.98× p90尾0.02s ｜ s43 多读0/1 max1.00× p90尾0.02s ｜ s44 多读0/1 max1.00× p90尾0.04s ｜ s45 多读0/1 max0.99× p90尾0.12s ｜ s46 多读0/1 max1.00× p90尾0.04s
+
+报告文件：`terminal_base_report.json`、`terminal_r40_report.json`
+
+### 人工盲听
+
+（声学异常与母语评分分开记录；未评的口音/语言自然度/情绪保持未验证，工程检查通过不等于完整语言验收通过）
+
+r40仅将enable_proj false→true，40更新首门第18条TH1994 control/seed42新增疑似多读，余27条不补抽，80/118更新未执行。
+base→candidate：CER .0989→.6044、len_ratio 1.0→1.571、时长7.20→10.88s、speech_ratio .7799→.7624；这是ASR风险证据，不认证母语错读。
+18条仅含TH13/TL5、4个独立文本，ID未评；小样本CER只是观察，不能称三语种退化或收益。
+19,895输入、74份产物SHA、18WAV/items/claims、完整40更新快照/latest与36份配对CPU声学复核通过；104个optimizer状态均40，3,833,856参数，未评分WAV0，GPU0MiB。
+verification SHA `08edce2a0ceec2fd2378b4822065977533e36db080207638bc95f60198a08a2d`，本地`work/r40_dit_original_proj_20261031/terminal_analysis.json`。
+实际val日志仅记录初值1.000390(step0)，40更新早停前未到下一次valid_interval；随机≤20条子集不作选点依据。
+来源与继承许可：cv22_id/th CC0；fleurs_en/id/th/tl/zh CC-BY-4.0；gigaspeech2_id/th Apache-2.0；yodas_th CC-BY-3.0。
+下一有界实验r41回到r39 projection-off，仅将loss/stop权重1→2，针对多读共同失败；其余数据、训练seed、超参和质量门不变。最终90未用，母语未验证，不部署或发布权重。
+
+
+---
 
 ## r39_u40_quarter终态：第2条新增多读，降强度方向淘汰（2026-10-31）
 
