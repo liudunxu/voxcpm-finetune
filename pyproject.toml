@@ -23,6 +23,7 @@ dependencies = [
     "pydantic>=2.0",
     "tensorboardX>=2.6.5",
     "matplotlib>=3.8",
+    "swanlab>=0.10.3",
 ]
 
 [dependency-groups]

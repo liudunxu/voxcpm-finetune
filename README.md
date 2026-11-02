@@ -14,7 +14,7 @@ uv run voxft-ui               # Gradio 6006
 git submodule update --init --recursive
 ```
 
-复制 `.env.example` 为 `.env`，配置 `HF_TOKEN`、`WANDB_API_KEY`、`VOXCPM_BASE_PATH`。数据下载、真实音频加工和训练在远程 GPU 机器执行；本地只做开发与合成小样本测试。
+复制 `.env.example` 为 `.env`，配置 `HF_TOKEN`、`VOXCPM_BASE_PATH`；监控可选 `SWANLAB_API_KEY` 或 `WANDB_API_KEY`。数据下载、真实音频加工和训练在远程 GPU 机器执行；本地只做开发与合成小样本测试。
 
 远程 `.env` 的大盘设置示例（按实际目录调整）：
 
@@ -211,7 +211,7 @@ uv run python -m voxft.train.yaml_builder --train /root/autodl-tmp/voxft_data/pr
 uv run python -m voxft.train.launcher configs/tl_drama_e1.yaml 1
 ```
 
-最后一条打印训练命令；在 GPU 机器上先通过页面预检再启动。wandb 桥接沿用原配置，保存/验证默认每 250 步，结束时官方脚本也保存。不同实验用不同 run 名，不覆盖旧 run；同配置恢复会从 `latest/` 继续。
+最后一条打印训练命令；在 GPU 机器上先通过页面预检再启动。SwanLab/wandb 桥接沿用各自配置，保存/验证默认每 250 步，结束时官方脚本也保存。不同实验用不同 run 名，不覆盖旧 run；同配置恢复会从 `latest/` 继续。
 
 实验顺序：
 

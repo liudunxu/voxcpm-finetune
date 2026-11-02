@@ -837,7 +837,7 @@ def build_ui() -> gr.Blocks:
 重启后用同一配置重新启动即可，无需任何额外参数。SIGTERM/SIGINT 会自动保存。
 
 **效果验证**：
-1. 看曲线：wandb（已配 token 自动桥接）或 `tensorboard --logdir <save_path>/logs` ——
+1. 看曲线：SwanLab/wandb（已配 key 自动桥接）或 `tensorboard --logdir <save_path>/logs` ——
    `loss/diff` 应持续下降后趋平、`val/loss` 不与训练损失背离
 2. 听验证音频：TensorBoard 会按 `valid_interval` 生成样本音频；每个 `save_interval`
    都保留 checkpoint，在「试听」页用不同 step 逐一 A/B 对比

@@ -16,6 +16,24 @@ def stub_wandb(monkeypatch):
     stub = type("wandb_stub", (), {"run": run, "log": run.log, "Audio": lambda *a, **k: a[0]})
     from voxft.train import tb_wandb_bridge
     monkeypatch.setattr(tb_wandb_bridge, "_ensure_wandb", lambda name: stub)
+    monkeypatch.setattr(tb_wandb_bridge, "_ensure_swanlab", lambda name: None)
+    return run
+
+
+@pytest.fixture
+def stub_swanlab(monkeypatch):
+    class Run:
+        def __init__(self):
+            self.logged = []
+
+        def log(self, d, step=None):
+            self.logged.append((dict(d), step))
+
+    run = Run()
+    stub = type("swanlab_stub", (), {"log": run.log, "Audio": lambda *a, **k: a[0]})
+    from voxft.train import tb_wandb_bridge
+    monkeypatch.setattr(tb_wandb_bridge, "_ensure_wandb", lambda name: None)
+    monkeypatch.setattr(tb_wandb_bridge, "_ensure_swanlab", lambda name: stub)
     return run
 
 
@@ -41,11 +59,61 @@ def test_bridge_incremental(tmp_path, stub_wandb):
     assert sync_once(tmp_path, "test_run", state) == 1
 
 
+def test_swanlab_bridge_has_independent_incremental_state(tmp_path, stub_swanlab):
+    from tensorboardX import SummaryWriter
+    from voxft.train.tb_wandb_bridge import sync_once
+
+    w = SummaryWriter(str(tmp_path))
+    w.add_scalar("loss/diff", 1.0, 0)
+    w.close()
+    state: dict = {}
+    assert sync_once(tmp_path, "test_run", state) == 1
+    assert stub_swanlab.logged == [({"loss/diff": 1.0}, 0)]
+    assert state["_swanlab"]["_max_step"] == 0
+    assert "_max_step" not in state
+    assert sync_once(tmp_path, "test_run", state) == 0
+
+
+def test_swanlab_audio_uses_wav_tensor_and_deduplicates(tmp_path, stub_swanlab):
+    import numpy as np
+    from tensorboardX import SummaryWriter
+    from voxft.train.tb_wandb_bridge import sync_once
+
+    w = SummaryWriter(str(tmp_path))
+    w.add_scalar('loss/diff', 1.0, 0)
+    w.add_audio('valid/sample', np.zeros(480, dtype=np.float32), 0, sample_rate=48000)
+    w.close()
+    state: dict = {}
+    assert sync_once(tmp_path, 'test_run', state) == 1
+    assert len(stub_swanlab.logged) == 2
+    assert stub_swanlab.logged[1][0]['valid/sample'].shape == (480,)
+    assert state['_swanlab']['audio:valid/sample:0'] is True
+    assert sync_once(tmp_path, 'test_run', state) == 0
+
+
+def test_wandb_failure_does_not_block_swanlab(tmp_path, stub_swanlab, monkeypatch):
+    from tensorboardX import SummaryWriter
+    from voxft.train import tb_wandb_bridge
+
+    def fail(_):
+        raise RuntimeError('wandb blocked')
+
+    monkeypatch.setattr(tb_wandb_bridge, '_ensure_wandb', fail)
+    w = SummaryWriter(str(tmp_path))
+    w.add_scalar('loss/diff', 1.0, 0)
+    w.close()
+    state: dict = {}
+    assert tb_wandb_bridge.sync_once(tmp_path, 'test_run', state) == 1
+    assert stub_swanlab.logged == [({'loss/diff': 1.0}, 0)]
+    assert state['_backend_errors'] == {'wandb': 'wandb blocked'}
+
+
 def test_start_bridge_reports_via_progress_not_print(monkeypatch, capsys):
     """库函数不许 print：UI 的 stdout 可能是断开的 pty，Errno 5 会把已成功的启动报成失败。"""
     from voxft.train import tb_wandb_bridge
 
     monkeypatch.setenv("WANDB_API_KEY", "")
+    monkeypatch.setenv("SWANLAB_API_KEY", "")
     seen = []
     assert tb_wandb_bridge.start_bridge("/nonexistent", "run", progress=seen.append) is None
     assert seen and "WANDB_API_KEY" in seen[0]

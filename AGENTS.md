@@ -153,7 +153,7 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/印尼语高质量语�
 - Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检 + PyAV 视频解码）。
 - torch 平台分流（见 pyproject `[tool.uv.sources]`）：macOS → PyPI 轮子（CPU/MPS）；Linux → pytorch-cu124 index（CUDA 12.4）。训练只在 Linux GPU 机执行。
 - **数据集下载只在远程 GPU 机器进行**：本地开发环境不下载数据集，也无需本地验证下载流程。
-- 密钥走 `.env`（复制 `.env.example`）：`HF_TOKEN`、`WANDB_API_KEY`、`WANDB_PROJECT`、`VOXCPM_BASE_PATH`、`HF_ENDPOINT`（国内默认 `https://hf-mirror.com`，导入 voxft 即自动加载）。
+- 密钥走 `.env`（复制 `.env.example`）：`HF_TOKEN`、`VOXCPM_BASE_PATH`、`HF_ENDPOINT`（国内默认 `https://hf-mirror.com`，导入 voxft 即自动加载）。监控可选 `SWANLAB_API_KEY`/`SWANLAB_PROJECT` 或 `WANDB_API_KEY`/`WANDB_PROJECT`，两个后端独立增量桥接。
 
 ## 远程 GPU 机调试约定（本轮实测沉淀，照这个方式来）
 
@@ -225,11 +225,11 @@ GPU 已 0 MiB）。三个处置，按可靠性排序：
 - 测试用的合成音频**绝不能留在真实数据源目录**里。本轮为测 `ingest` 用 FLEURS 音频拼了个 mp4，产物落进了 `raw/drama_vi/`——那是真实的越南语训练源，必须整目录删掉。`--max-items` 试跑不回写清单，所以污染只限该目录，但仍要清。
 - 切换 `HF_ENDPOINT` 或 xet 模式后，旧的 `blobs/*.incomplete` 会变孤儿（后缀不同、不续传），重跑前手动清。
 - 冒烟 run 的 `step_*` checkpoint 每份约 430MB，测完删掉；`merged_*` 每份 4.6GB，验证完立刻删。
-- **不要 `cat .env`**：里面有 `HF_TOKEN`/`WANDB_API_KEY`，会原样进对话记录。要看配置就 `grep -v TOKEN` 或只看键名。
+- **不要 `cat .env`**：里面有 `HF_TOKEN`/`WANDB_API_KEY`/`SWANLAB_API_KEY`，会原样进对话记录。要看配置就 `grep -v TOKEN` 或只看键名。
 
 ## 目录结构
 - `src/voxft/data/` — 数据源清单（registry）、下载（download）、加工管线（pipeline）、成片导入（ingest）
-- `src/voxft/train/` — yaml_builder（生成官方训练配置）、launcher（子进程启动训练）、tb_wandb_bridge（TensorBoard→wandb 桥接）
+- `src/voxft/train/` — yaml_builder（生成官方训练配置）、launcher（子进程启动训练）、tb_wandb_bridge（TensorBoard→wandb/SwanLab 桥接）
 - `src/voxft/lora/merge.py` — LoRA 合并导出完整模型
 - `src/voxft/hub/sync.py` — HuggingFace 上传
 - `src/voxft/qc/utmos.py` — UTMOS 音质打分（移植自 OmniVoice，注明来源）

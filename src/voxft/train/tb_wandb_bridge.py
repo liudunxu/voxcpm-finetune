@@ -1,7 +1,7 @@
-"""TensorBoard → wandb 旁路桥接。
+"""TensorBoard → wandb/SwanLab 旁路桥接。
 
 官方训练脚本只写 tensorboardX 日志；此模块周期读取 event 文件，
-把标量与验证音频转发到 wandb，不侵入 submodule 代码。
+把标量与验证音频转发到配置的监控后端，不侵入 submodule 代码。
 """
 from __future__ import annotations
 
@@ -10,9 +10,6 @@ import time
 from pathlib import Path
 
 from ..paths import env
-
-AUDIO_SR = 48000  # 官方用 out_sample_rate 写验证音频
-
 
 def _ensure_wandb(run_name: str):
     if not env("WANDB_API_KEY"):
@@ -23,18 +20,19 @@ def _ensure_wandb(run_name: str):
     return wandb
 
 
-def sync_once(tb_dir: str | Path, run_name: str, state: dict) -> int:
-    """增量同步一次；返回本轮转发的标量条数。
+def _ensure_swanlab(run_name: str):
+    if not env("SWANLAB_API_KEY"):
+        return None
+    import swanlab
+    try:
+        swanlab.get_run()
+    except RuntimeError:
+        swanlab.init(project=env("SWANLAB_PROJECT", env("WANDB_PROJECT", "voxcpm-finetune")),
+                     name=run_name)
+    return swanlab
 
-    state["_max_step"] 记录已上报的全局最大 step；wandb 要求 step 单调，
-    event 文件里验证指标可能晚于更晚的训练步落盘，早于它的直接丢弃。
-    """
-    wandb = _ensure_wandb(run_name)
-    if wandb is None:
-        return 0
-    from tbparse import SummaryReader
 
-    reader = SummaryReader(str(tb_dir))
+def _sync_backend(reader, tb_dir, backend, state: dict) -> int:
     n = 0
     max_step = state.get("_max_step", -1)
     try:
@@ -46,40 +44,74 @@ def sync_once(tb_dir: str | Path, run_name: str, state: dict) -> int:
                 continue
             state[tag] = step
             if step <= max_step:
-                continue  # 晚到的旧步数，wandb 会拒收
+                continue
             pending.setdefault(step, {})[tag] = value
         for step in sorted(pending):
-            wandb.log(pending[step], step=step)
+            backend.log(pending[step], step=step)
             n += len(pending[step])
             max_step = step
     except Exception:
         pass
     state["_max_step"] = max_step
     try:
-        tensors = reader.tensors
-        for _, row in tensors.iterrows():
-            tag, step = row["tag"], int(row["step"])
-            key = f"audio:{tag}:{step}"
-            if state.get(key) or step <= max_step:
-                continue
-            state[key] = True
-            import numpy as np
-            arr = np.asarray(row["value"], dtype=np.float32).reshape(-1)
-            wandb.log({tag: wandb.Audio(arr, sample_rate=AUDIO_SR)}, step=step)
-            max_step = step
+        import io
+        import soundfile as sf
+        from tensorboard.backend.event_processing.event_file_loader import EventFileLoader
+        for path in sorted(Path(tb_dir).rglob('events.out.tfevents.*')):
+            for event in EventFileLoader(str(path)).Load():
+                step = int(event.step)
+                for value in event.summary.value:
+                    if value.WhichOneof('value') != 'tensor' or not value.tensor.string_val:
+                        continue
+                    raw = value.tensor.string_val[0]
+                    if not raw.startswith(b'RIFF'):
+                        continue
+                    key = f"audio:{value.tag}:{step}"
+                    if state.get(key) or step < max_step:
+                        continue
+                    arr, sample_rate = sf.read(io.BytesIO(raw), dtype='float32')
+                    backend.log({value.tag: backend.Audio(arr, sample_rate=sample_rate)}, step=step)
+                    state[key] = True
+                    max_step = max(max_step, step)
     except Exception:
         pass
     state["_max_step"] = max_step
     return n
 
 
+def sync_once(tb_dir: str | Path, run_name: str, state: dict) -> int:
+    """增量同步到各后端；每个后端独立记录全局最大 step 和逐 tag 进度。"""
+    backends = []
+    errors = {}
+    for name, ensure, backend_state in (('wandb', _ensure_wandb, state),
+                                        ('swanlab', _ensure_swanlab, state.setdefault('_swanlab', {}))):
+        try:
+            backend = ensure(run_name)
+        except Exception as error:
+            errors[name] = str(error)
+            continue
+        if backend is not None:
+            backends.append((backend, backend_state))
+    state['_backend_errors'] = errors
+    if not backends:
+        if errors:
+            raise RuntimeError('Monitoring backend initialization failed: '
+                               + '; '.join(f'{name}: {error}' for name, error in errors.items()))
+        return 0
+    from tbparse import SummaryReader
+
+    reader = SummaryReader(str(tb_dir))
+    return sum(_sync_backend(reader, tb_dir, backend, backend_state)
+               for backend, backend_state in backends)
+
+
 def start_bridge(tb_dir: str | Path, run_name: str, interval: float = 30.0,
                  stop_event: threading.Event | None = None, progress=None
                  ) -> threading.Thread | None:
     """后台线程周期同步，直到 stop_event 被置位或 tb_dir 消失。"""
-    if not env("WANDB_API_KEY"):
+    if not env("WANDB_API_KEY") and not env("SWANLAB_API_KEY"):
         if progress:
-            progress("[wandb] 未配置 WANDB_API_KEY，跳过监控桥接")
+            progress("[monitor] 未配置 WANDB_API_KEY 或 SWANLAB_API_KEY，跳过监控桥接")
         return None
     stop_event = stop_event or threading.Event()
 
