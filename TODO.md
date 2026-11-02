@@ -16,7 +16,8 @@ r48仅enable_lm的本地准备保留、未启动；先走更快的r46/u10 + 固�
   2026-11-02 09:56远端已启动一次性对照，driver PID2137；预检90文本、固定seed、候选权重SHA及
   6,573,527,040 bytes磁盘预算通过。base 360/360条已完成并合并，报告SHA
   `9ce8fdd4134249d6da7d5cc619b1beb0e62a04c53d3a9decc575d12b55571b18`；candidate四分片19551/19553/19555/19557正在运行，
-  尚无最终质量结论。证据`work/r46_keepbest_final_20261102/{launch_verification,progress}.json`。
+  10:48已观察到201/360条WAV，driver/GPU进程存活，磁盘剩余5,502,832,640 bytes，尚无最终质量结论。
+  证据`work/r46_keepbest_final_20261102/{launch_verification,progress}.json`。
 - [ ] 最终逐语种工程可用线：择优后mean CER增量≤.05、严重case数不超过base、候选无空转写/近静音；
   严重单条仍不放行。通过也只交付工程候选与试听/复核材料，母语质量未验证，不自动部署或发布。
 
