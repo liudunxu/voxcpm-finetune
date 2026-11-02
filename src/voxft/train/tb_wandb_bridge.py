@@ -27,8 +27,7 @@ def _ensure_swanlab(run_name: str):
     try:
         swanlab.get_run()
     except RuntimeError:
-        swanlab.init(project=env("SWANLAB_PROJECT", env("WANDB_PROJECT", "voxcpm-finetune")),
-                     name=run_name)
+        swanlab.init(project=env("WANDB_PROJECT", "voxcpm-finetune"), name=run_name)
     return swanlab
 
 
