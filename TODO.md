@@ -13,8 +13,10 @@ r48仅enable_lm的本地准备保留、未启动；先走更快的r46/u10 + 固�
 - [x] 候选已据此冻结，不再用开发集调参：r46 microbatch1×16的10更新快照 + 上述4候选QC。
   最终90文本只对这一次候选做base/candidate同口径对照，每case同4seed；这不是5seed稳定性的旧口径，
   是用户授权的4次生成生产预算验证。最终集一旦使用，不再用于后续调参。
-  2026-11-02 09:56远端已启动一次性对照，driver PID2137、base四分片2143/2145/2147/2149；
-  预检90文本、固定seed、候选权重SHA及6,573,527,040 bytes磁盘预算通过，证据`work/r46_keepbest_final_20261102/launch_verification.json`。
+  2026-11-02 09:56远端已启动一次性对照，driver PID2137；预检90文本、固定seed、候选权重SHA及
+  6,573,527,040 bytes磁盘预算通过。base 360/360条已完成并合并，报告SHA
+  `9ce8fdd4134249d6da7d5cc619b1beb0e62a04c53d3a9decc575d12b55571b18`；candidate四分片19551/19553/19555/19557正在运行，
+  尚无最终质量结论。证据`work/r46_keepbest_final_20261102/{launch_verification,progress}.json`。
 - [ ] 最终逐语种工程可用线：择优后mean CER增量≤.05、严重case数不超过base、候选无空转写/近静音；
   严重单条仍不放行。通过也只交付工程候选与试听/复核材料，母语质量未验证，不自动部署或发布。
 
