@@ -14,6 +14,17 @@ def module(monkeypatch):
     return importlib.import_module('staged_candidate_run')
 
 
+def test_monitoring_bridge_accepts_swanlab_only(module, monkeypatch):
+    monkeypatch.delenv('WANDB_API_KEY', raising=False)
+    monkeypatch.delenv('SWANLAB_API_KEY', raising=False)
+    assert not module._monitoring_configured()
+    monkeypatch.setenv('SWANLAB_API_KEY', 'test')
+    assert module._monitoring_configured()
+    monkeypatch.delenv('SWANLAB_API_KEY')
+    monkeypatch.setenv('WANDB_API_KEY', 'test')
+    assert module._monitoring_configured()
+
+
 def test_rank_experiment_preserves_learning_schedule(module, tmp_path):
     parent = yaml.safe_load((Path(__file__).resolve().parents[1] /
         'configs/lora_joint3_r31_granary_consensus_459.yaml').read_text())

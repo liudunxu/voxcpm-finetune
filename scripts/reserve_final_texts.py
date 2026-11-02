@@ -34,7 +34,7 @@ def input_issue(row):
     return None
 
 
-def select(rows, excluded, lang, count=30):
+def select(rows, excluded, lang, count=30, namespace='final_20261030'):
     eligible, reasons = {}, Counter()
     norm = prior.frozen.evaluation._norm
     for row in rows:
@@ -45,7 +45,7 @@ def select(rows, excluded, lang, count=30):
         else:
             eligible.setdefault(key, row)
     ordered = sorted(eligible.values(), key=lambda row: hashlib.sha256(
-        f"final_20261030:{lang}:{row['source_sentence_id']}:{row['text']}".encode()).hexdigest())
+        f"{namespace}:{lang}:{row['source_sentence_id']}:{row['text']}".encode()).hexdigest())
     if len(ordered) < count:
         raise ValueError(f'Insufficient clean unseen texts for {lang}: {len(ordered)}')
     return ordered[:count], {'eligible':len(ordered), 'excluded':dict(reasons)}
@@ -77,7 +77,7 @@ def supplement_cases(selected, old_cases):
     return cases
 
 
-def prepare(work, *, id_supplement=False):
+def prepare(work, *, id_supplement=False, namespace='final_20261030'):
     if work.exists():
         raise FileExistsError(work)
     frozen, norm = prior.frozen, prior.frozen.evaluation._norm
@@ -101,7 +101,8 @@ def prepare(work, *, id_supplement=False):
             if row.get('text'):
                 excluded.add(norm(target_text(row)))
                 if row.get('lang') in TSVS:
-                    known.append({**row, 'location': {'file':str(path), 'row':number}})
+                    known.append({'text':target_text(row), 'lang':row['lang'],
+                                  'location':{'file':str(path), 'row':number}})
     reports = sorted((DATA/'voxft_ckpt/eval').glob('*.json'))
     for path in reports:
         inputs[str(path)] = frozen.sha256(path)
@@ -109,7 +110,8 @@ def prepare(work, *, id_supplement=False):
             if row.get('text'):
                 excluded.add(norm(target_text(row)))
                 if row.get('lang') in TSVS:
-                    known.append({**row, 'location': {'file':str(path), 'row':number}})
+                    known.append({'text':target_text(row), 'lang':row['lang'],
+                                  'location':{'file':str(path), 'row':number}})
     prior.review.checked(prior.SOURCE/'plan.json', prior.SOURCE_PLAN_SHA)
     parent = prior.read(prior.SOURCE/'plan.json')
     inputs[str(prior.SOURCE/'plan.json')] = prior.SOURCE_PLAN_SHA
@@ -128,7 +130,8 @@ def prepare(work, *, id_supplement=False):
         # Near-duplicate audit indexes only 30 candidates, avoiding a large corpus index.
         rejected = set()
         for _ in range(10):
-            chosen, detail = select(pool, excluded | rejected, lang, count=2 if id_supplement else 30)
+            chosen, detail = select(pool, excluded | rejected, lang,
+                                    count=2 if id_supplement else 30, namespace=namespace)
             index = HoldoutIndex([{**r, 'lang':lang, 'location':r['source_sentence_id']} for r in chosen])
             conflicts = {match['normalized_holdout'] for row in known if row['lang']==lang
                          for match in index.matches(row)}
@@ -145,9 +148,9 @@ def prepare(work, *, id_supplement=False):
         condition = 'control' if positions[row['lang'],row['source_sentence_id']] % 2 else 'plain'
         if row['condition'] != condition:
             continue
-        sentence = row['sentence_id'].replace('fresh_', 'reserved_20261030_', 1)
+        sentence = row['sentence_id'].replace('fresh_', namespace + '_', 1)
         cases.append({**row, 'sentence_id':sentence, 'case_id':sentence+'_'+condition,
-            'cohort':'reserved_final_20261030', 'evaluation_use':'once_after_candidate_selection',
+            'cohort':namespace, 'evaluation_use':'once_after_candidate_selection',
             'note':'Clean nonnumeric read-speech text reservation; no generated outcomes inspected. '
                    'No correction of source wording. Exact and >=40-char edit-distance<=2 local exclusion; '
                    'semantic/pretraining/speaker novelty and native quality remain unverified. '
@@ -180,5 +183,7 @@ if __name__ == '__main__':
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--id-supplement', action='store_true',
                         help='Freeze two new ID development texts; exclude the existing final90')
+    parser.add_argument('--namespace', default='final_20261030',
+                        help='Reservation IDs/cohort and deterministic selection salt; default preserves the original')
     args = parser.parse_args()
-    prepare(args.work, id_supplement=args.id_supplement)
+    prepare(args.work, id_supplement=args.id_supplement, namespace=args.namespace)

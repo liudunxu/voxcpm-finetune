@@ -118,3 +118,68 @@ def test_start_bridge_reports_via_progress_not_print(monkeypatch, capsys):
     assert tb_wandb_bridge.start_bridge("/nonexistent", "run", progress=seen.append) is None
     assert seen and "WANDB_API_KEY" in seen[0]
     assert capsys.readouterr().out == ""
+
+
+def test_failed_scalar_is_reported_and_retried(tmp_path, stub_swanlab, monkeypatch):
+    from tensorboardX import SummaryWriter
+    from voxft.train import tb_wandb_bridge
+
+    writer = SummaryWriter(str(tmp_path))
+    writer.add_scalar('loss/diff', 1.0, 0)
+    writer.close()
+    backend = type('Backend', (), {})()
+    backend.log = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('upload failed'))
+    monkeypatch.setattr(tb_wandb_bridge, '_ensure_swanlab', lambda _: backend)
+    state = {}
+    with pytest.raises(RuntimeError, match='synchronization failed'):
+        tb_wandb_bridge.sync_once(tmp_path, 'test_run', state)
+    assert state['_backend_errors'] == {'swanlab': 'upload failed'}
+    assert 'loss/diff' not in state['_swanlab']
+    backend.log = stub_swanlab.log
+    assert tb_wandb_bridge.sync_once(tmp_path, 'test_run', state) == 1
+    assert state['_backend_errors'] == {}
+    assert stub_swanlab.logged == [({'loss/diff': 1.0}, 0)]
+
+
+def test_sync_failure_does_not_block_other_backend(tmp_path, stub_swanlab, monkeypatch):
+    from tensorboardX import SummaryWriter
+    from voxft.train import tb_wandb_bridge
+
+    writer = SummaryWriter(str(tmp_path))
+    writer.add_scalar('loss/diff', 1.0, 0)
+    writer.close()
+    failing = type('Backend', (), {})()
+    failing.log = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('wandb upload failed'))
+    monkeypatch.setattr(tb_wandb_bridge, '_ensure_wandb', lambda _: failing)
+    state = {}
+    assert tb_wandb_bridge.sync_once(tmp_path, 'test_run', state) == 1
+    assert state['_backend_errors'] == {'wandb': 'wandb upload failed'}
+    assert stub_swanlab.logged == [({'loss/diff': 1.0}, 0)]
+
+
+def test_failed_audio_is_retried_without_duplicating_scalar(tmp_path, stub_swanlab, monkeypatch):
+    import numpy as np
+    from tensorboardX import SummaryWriter
+    from voxft.train import tb_wandb_bridge
+
+    writer = SummaryWriter(str(tmp_path))
+    writer.add_scalar('loss/diff', 1.0, 0)
+    writer.add_audio('valid/sample', np.zeros(480, dtype=np.float32), 0, sample_rate=48000)
+    writer.close()
+    backend = type('Backend', (), {})()
+    backend.Audio = lambda value, sample_rate: value
+    def fail_audio(data, step=None):
+        if 'valid/sample' in data:
+            raise RuntimeError('audio upload failed')
+        return stub_swanlab.log(data, step=step)
+    backend.log = fail_audio
+    monkeypatch.setattr(tb_wandb_bridge, '_ensure_swanlab', lambda _: backend)
+    state = {}
+    with pytest.raises(RuntimeError, match='synchronization failed'):
+        tb_wandb_bridge.sync_once(tmp_path, 'test_run', state)
+    assert state['_swanlab']['loss/diff'] == 0
+    assert 'audio:valid/sample:0' not in state['_swanlab']
+    backend.log = stub_swanlab.log
+    assert tb_wandb_bridge.sync_once(tmp_path, 'test_run', state) == 0
+    assert state['_backend_errors'] == {}
+    assert len(stub_swanlab.logged) == 2

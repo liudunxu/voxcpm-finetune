@@ -34,47 +34,44 @@ def _ensure_swanlab(run_name: str):
 def _sync_backend(reader, tb_dir, backend, state: dict) -> int:
     n = 0
     max_step = state.get("_max_step", -1)
-    try:
-        scalars = reader.scalars
-        pending: dict[int, dict[str, float]] = {}
-        for _, row in scalars.iterrows():
-            tag, step, value = row["tag"], int(row["step"]), float(row["value"])
-            if step <= state.get(tag, -1):
-                continue
+    scalars = reader.scalars
+    pending: dict[int, dict[str, float]] = {}
+    for _, row in scalars.iterrows():
+        tag, step, value = row["tag"], int(row["step"]), float(row["value"])
+        if step <= state.get(tag, -1):
+            continue
+        if step <= max_step:
             state[tag] = step
-            if step <= max_step:
-                continue
-            pending.setdefault(step, {})[tag] = value
-        for step in sorted(pending):
-            backend.log(pending[step], step=step)
-            n += len(pending[step])
-            max_step = step
-    except Exception:
-        pass
+            continue
+        pending.setdefault(step, {})[tag] = value
+    for step in sorted(pending):
+        backend.log(pending[step], step=step)
+        for tag in pending[step]:
+            state[tag] = step
+        n += len(pending[step])
+        max_step = step
     state["_max_step"] = max_step
-    try:
-        import io
-        import soundfile as sf
-        from tensorboard.backend.event_processing.event_file_loader import EventFileLoader
-        for path in sorted(Path(tb_dir).rglob('events.out.tfevents.*')):
-            for event in EventFileLoader(str(path)).Load():
-                step = int(event.step)
-                for value in event.summary.value:
-                    if value.WhichOneof('value') != 'tensor' or not value.tensor.string_val:
-                        continue
-                    raw = value.tensor.string_val[0]
-                    if not raw.startswith(b'RIFF'):
-                        continue
-                    key = f"audio:{value.tag}:{step}"
-                    if state.get(key) or step < max_step:
-                        continue
-                    arr, sample_rate = sf.read(io.BytesIO(raw), dtype='float32')
-                    backend.log({value.tag: backend.Audio(arr, sample_rate=sample_rate)}, step=step)
-                    state[key] = True
-                    max_step = max(max_step, step)
-    except Exception:
-        pass
-    state["_max_step"] = max_step
+
+    import io
+    import soundfile as sf
+    from tensorboard.backend.event_processing.event_file_loader import EventFileLoader
+    for path in sorted(Path(tb_dir).rglob('events.out.tfevents.*')):
+        for event in EventFileLoader(str(path)).Load():
+            step = int(event.step)
+            for value in event.summary.value:
+                if value.WhichOneof('value') != 'tensor' or not value.tensor.string_val:
+                    continue
+                raw = value.tensor.string_val[0]
+                if not raw.startswith(b'RIFF'):
+                    continue
+                key = f"audio:{value.tag}:{step}"
+                if state.get(key) or step < max_step:
+                    continue
+                arr, sample_rate = sf.read(io.BytesIO(raw), dtype='float32')
+                backend.log({value.tag: backend.Audio(arr, sample_rate=sample_rate)}, step=step)
+                state[key] = True
+                max_step = max(max_step, step)
+                state["_max_step"] = max_step
     return n
 
 
@@ -90,7 +87,7 @@ def sync_once(tb_dir: str | Path, run_name: str, state: dict) -> int:
             errors[name] = str(error)
             continue
         if backend is not None:
-            backends.append((backend, backend_state))
+            backends.append((name, backend, backend_state))
     state['_backend_errors'] = errors
     if not backends:
         if errors:
@@ -100,8 +97,18 @@ def sync_once(tb_dir: str | Path, run_name: str, state: dict) -> int:
     from tbparse import SummaryReader
 
     reader = SummaryReader(str(tb_dir))
-    return sum(_sync_backend(reader, tb_dir, backend, backend_state)
-               for backend, backend_state in backends)
+    n, succeeded = 0, 0
+    for name, backend, backend_state in backends:
+        try:
+            n += _sync_backend(reader, tb_dir, backend, backend_state)
+            succeeded += 1
+        except Exception as error:
+            errors[name] = str(error)
+    state['_backend_errors'] = errors
+    if errors and not succeeded:
+        raise RuntimeError('Monitoring backend synchronization failed: '
+                           + '; '.join(f'{name}: {error}' for name, error in errors.items()))
+    return n
 
 
 def start_bridge(tb_dir: str | Path, run_name: str, interval: float = 30.0,
@@ -120,9 +127,11 @@ def start_bridge(tb_dir: str | Path, run_name: str, interval: float = 30.0,
             if Path(tb_dir).exists():
                 try:
                     sync_once(tb_dir, run_name, state)
+                    if progress and state.get('_backend_errors'):
+                        progress(f"[monitor] 部分后端异常: {state['_backend_errors']}")
                 except Exception as exc:
                     if progress:
-                        progress(f"[wandb] 桥接异常: {exc}")
+                        progress(f"[monitor] 桥接异常: {exc}")
             stop_event.wait(interval)
 
     t = threading.Thread(target=loop, daemon=True)
@@ -138,6 +147,8 @@ if __name__ == "__main__":
     state: dict = {}
     while True:
         n = sync_once(sys.argv[1], sys.argv[2], state)
+        if state.get('_backend_errors'):
+            print(f"后端异常: {state['_backend_errors']}", file=sys.stderr, flush=True)
         if n:
             print(f"已转发 {n} 条指标")
         time.sleep(30)

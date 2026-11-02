@@ -25,6 +25,21 @@ def test_reservation_excludes_known_or_suspect_text_without_repair(monkeypatch):
         module.select(rows, excluded, 'id', count=4)
 
 
+def test_future_namespace_is_deterministic_and_preserves_default_selection(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]/'scripts'))
+    module = importlib.import_module('reserve_final_texts')
+    words = ('alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta')
+    rows = [{'source_sentence_id':str(i), 'text':f'Kalimat bersih {word} untuk pemeriksaan.'}
+            for i, word in enumerate(words)]
+    excluded = {module.prior.frozen.evaluation._norm(rows[0]['text'])}
+    default, _ = module.select(rows, excluded, 'id', count=3)
+    future, _ = module.select(rows, excluded, 'id', count=3, namespace='reserved_next_20261102')
+    assert default == module.select(rows, excluded, 'id', count=3)[0]
+    assert future == module.select(list(reversed(rows)), excluded, 'id', count=3,
+                                   namespace='reserved_next_20261102')[0]
+    assert future != default
+
+
 def test_reserved_texts_are_protected_from_future_training(monkeypatch):
     directory = Path(__file__).resolve().parents[1]
     monkeypatch.syspath_prepend(str(directory/'scripts'))
@@ -38,6 +53,27 @@ def test_reserved_texts_are_protected_from_future_training(monkeypatch):
         assert module.input_issue(row) is None
         assert module.prior.frozen.evaluation._norm(row['text']) in excluded
         assert row['evaluation_use'] == 'once_after_candidate_selection'
+
+
+def test_next_reserved_texts_are_clean_disjoint_and_protected(monkeypatch):
+    directory = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(directory/'scripts'))
+    module = importlib.import_module('reserve_final_texts')
+    path = directory/'eval_cases/reserved_next_20261102.jsonl'
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == 'fae8d1643e3d86eae09ee903e99f47887663a2c42bc29f6a01c851dcb063471c'
+    rows = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+    old = [json.loads(line) for line in (directory/'eval_cases/reserved_final_20261030.jsonl')
+           .read_text(encoding='utf-8').splitlines()]
+    norm = module.prior.frozen.evaluation._norm
+    excluded, _ = importlib.import_module('incremental_mix').load_exclusions(directory/'eval_cases')
+    assert len(rows) == 90 and len({r['case_id'] for r in rows}) == 90
+    assert {lang:sum(r['lang'] == lang for r in rows) for lang in ('id','th','tl')} == {'id':30,'th':30,'tl':30}
+    assert {norm(r['text']) for r in rows}.isdisjoint({norm(r['text']) for r in old})
+    for row in rows:
+        assert module.input_issue(row) is None
+        assert row['cohort'] == 'reserved_next_20261102'
+        assert row['evaluation_use'] == 'once_after_candidate_selection'
+        assert norm(row['text']) in excluded
 
 
 def test_id_supplement_keeps_conditioning_and_does_not_rewrite_old_cases(monkeypatch):

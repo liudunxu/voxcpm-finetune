@@ -882,6 +882,10 @@ def evaluate_gate(work, step):
         'rows': rows, 'matched_base': [base[prior.key(r)] for r in rows], 'native_quality': 'unverified'})
 
 
+def _monitoring_configured():
+    return bool(os.environ.get('WANDB_API_KEY') or os.environ.get('SWANLAB_API_KEY'))
+
+
 def run(work):
     plan = prior.strength.check_inputs(work)
     cfg = yaml.safe_load((work / 'train.yaml').read_text(encoding='utf-8'))
@@ -899,12 +903,12 @@ def run(work):
     try:
         for line in Path('/root/voxcpm-finetune/.env').read_text(encoding='utf-8').splitlines():
             key, _, value = line.partition('=')
-            if key.strip() in {'WANDB_API_KEY', 'WANDB_PROJECT'}:
+            if key.strip() in {'WANDB_API_KEY', 'WANDB_PROJECT', 'SWANLAB_API_KEY'}:
                 os.environ.setdefault(key.strip(), value.strip())
         with (work / 'train.log').open('x', encoding='utf-8') as log:
             trainer = subprocess.Popen([sys.executable, '-X', 'utf8', '-u', __file__, 'train', '--work', str(work)],
                 cwd=frozen.VOXCPM_REPO, stdout=log, stderr=subprocess.STDOUT)
-        if os.environ.get('WANDB_API_KEY'):
+        if _monitoring_configured():
             with (work / 'wandb.log').open('x', encoding='utf-8') as log:
                 bridge = subprocess.Popen([sys.executable, '-X', 'utf8', '-u', '-m', 'voxft.train.tb_wandb_bridge',
                     cfg['tensorboard'], plan['run_name']], cwd=frozen.ROOT, stdout=log, stderr=subprocess.STDOUT)

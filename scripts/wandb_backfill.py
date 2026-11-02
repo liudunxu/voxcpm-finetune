@@ -19,6 +19,8 @@ def main() -> int:
     total = 0
     while idle < 3:
         n = sync_once(tb_dir, run_name, state)
+        if state.get('_backend_errors'):
+            print(f"backend_errors={state['_backend_errors']}", flush=True)
         total += n
         max_step = max(state.get('_max_step', -1), state.get('_swanlab', {}).get('_max_step', -1))
         print(f"forwarded={n} total={total} max_step={max_step}", flush=True)
