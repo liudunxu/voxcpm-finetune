@@ -4,6 +4,50 @@
 冻结清单和 eval 报告自动抽取；单模型可用 `python -m voxft.train.runlog`，同轮 A/B 合并记录。
 不要手改原始数字或把不同 case 集混成一张验收表。
 
+## r46_u10_keep_best_final_20261102 工程候选
+
+- 生成时间：2026-11-02
+- 结论：**通过放宽后的工程候选线：最终90独立文本三语种mean CER均下降、严重case不增、候选无空转写/近静音；不是母语质量验收**
+- 下一步：冻结并交付r46/u10 + 固定4候选QC及复核材料；最终留出不再用于调参，不自动部署、上传或发布。
+
+### 继承配置与数据
+
+| 项 | 值 |
+|---|---|
+| 快照 | r46实际10更新（118更新调度中的早期快照，不续训） |
+| LoRA r/alpha/dropout | 32/32/0.0 |
+| enable_lm/dit/proj | False/True/False |
+| learning_rate / warmup / weight_decay / clip | 5e-05 / 12 / 0.1 / 1.0 |
+| batch × 累积 × GPU | 1 × 16 × 1 = 16 |
+| 名义epochs / 实际更新 | 1.0037214247740565 / 10 |
+| val loss | 仅step0的1.010839；≤10 batch随机子集，不作选点依据 |
+| 数据 | 1881行 / 3.541h；ID582、TH704、TL346、zh169、en80；独立原音1637、max_exposure=2 |
+| 实际时长份额 | ID28.3043%、TH28.3412%、TL28.3342%、zh9.9916%、en5.0287% |
+| ref / control | 475次、435独立，TL可信ref0 / 0 |
+| 来源许可 | cv22_id/th CC0；fleurs_en/id/th/tl/zh CC-BY-4.0；gigaspeech2_id/th Apache-2.0；yodas_th CC-BY-3.0 |
+| 推理与择优 | cfg1.8、20步、retry关闭、Whisper large-v3；固定seed42/43/44/45，排除空转写/近静音/多读后按CER择优 |
+
+### 开发选择与最终独立对照
+
+- 开发30文本（每语种10）mean CER：TH .0264→.0279、TL .0189→.0170、ID .0535→.0561；严重case TH/TL 0→0、ID 1→1。
+- 候选随后冻结；最终`reserved_final_20261030.jsonl`只做本次对照，90文本/语种30、每臂360输出。最终4seed是本轮授权的生产QC预算；开发诊断另有seed46，未把4seed写成最终5seed生成。
+- 最终逐语种结果（均为择优后每文本一条）：
+
+| 语种 | base CER | candidate CER | ΔCER | base WER | candidate WER | 疑似少读 base→candidate | 严重case base→candidate |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| th | 0.0437 | 0.0418 | -0.0019 | 不适用（字符级） | 不适用（字符级） | 0.0333→0.0333 | 0→0 |
+| tl | 0.0078 | 0.0075 | -0.0003 | 0.0564 | 0.0500 | 0→0 | 0→0 |
+| id | 0.0111 | 0.0093 | -0.0018 | 0.0373 | 0.0376 | 0→0 | 0→0 |
+
+- TH有1条单case CER增加>.05，但该条非严重；按最新授权不因个别非严重波动否决整轮。小差值不声称统计显著或稳定母语收益。
+- 90输入与固定seed、base/candidate各四个分片及合并报告、候选LoRA/配置、720份WAV的路径/SHA/采样率/帧数/有限值/时长全部核验。
+- 原eval条目无`rms_dbfs`，独立核验直接读取全部WAV重算RMS；实测近静音排除不改变原冻结择优，所选候选无空转写、近静音或多读。
+- keep-best SHA `67981d1e063035486d4eeedbb0a0f9f5261250b4bf410a0c94ed66c4573d98dc`；独立核验SHA `e3139ff5b6dda7da75891298e90d3b2a5fc72ffb7834ceb52d9017be4a9127d1`。
+- 验收`work/r46_keepbest_final_20261102/acceptance.json` SHA `bb35c9baa6e894ff2d46e0268b3704f71ff7efa8018e493bb6c80a3aa68410ef`。
+- 远端任务全部退出、GPU0MiB；母语自然度/口音/情绪未验证，生产未改变，权重未上传或发布。
+
+---
+
 ## lora_joint3_r47_dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24_staged
 
 - 生成时间：2026-10-31 20:55
