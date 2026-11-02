@@ -414,13 +414,29 @@ def end_of_stage(jobs, position):
             current['stage'] == 'guard' and current['case']['lang'] != following['case']['lang'])
 
 
+RESUME_ONLY_FILENAMES = {'optimizer.pth', 'lora_weights.safetensors'}
+
+
+def check_read_only_baseline(work):
+    plan = read(work / 'plan.json')
+    marker = work / 'run.started'
+    if marker.exists() and marker.read_text(encoding='utf-8') != frozen.sha256(work / 'plan.json'):
+        raise ValueError('Run plan changed')
+    for path, digest in plan['inputs_sha256'].items():
+        if Path(path).name not in RESUME_ONLY_FILENAMES:
+            prior.review.checked(path, digest)
+    return plan
+
+
 def prepare(work, variant='rank32'):
     if work.exists():
         raise FileExistsError(work)
     prior.review.checked(prior.SOURCE / 'plan.json', prior.SOURCE_PLAN_SHA)
     parent = read(prior.SOURCE / 'plan.json')
     prior.review.checked(PILOT / 'plan.json', PILOT_SHA)
-    pilot = prior.strength.check_inputs(PILOT)
+    pilot = (check_read_only_baseline(PILOT)
+             if variant == 'dit_original_lr5e5_rank32_drop0_wd01_micro1_lm'
+             else prior.strength.check_inputs(PILOT))
     inputs = {**parent['inputs_sha256'], **pilot['inputs_sha256']}
     jobs, base_items = read(PILOT / 'jobs.json'), read(PILOT / 'base_items.json')
     data_source, mix = prior.SOURCE, None
@@ -625,7 +641,10 @@ def prepare(work, variant='rank32'):
                 inputs[str(R47 / 'verification.json')] = R47_VERIFICATION_SHA
     if variant == 'dit_lr5e5' or variant in PAIRED_VARIANTS:
         prior.review.checked(R33_DEVELOPMENT / 'plan.json', R33_DEVELOPMENT_SHA)
-        prior.strength.check_inputs(R33_DEVELOPMENT)
+        if variant == 'dit_original_lr5e5_rank32_drop0_wd01_micro1_lm':
+            check_read_only_baseline(R33_DEVELOPMENT)
+        else:
+            prior.strength.check_inputs(R33_DEVELOPMENT)
         result = read(R33_DEVELOPMENT / 'result.json')
         if result['reason'] != 'new_suspected_overread' or result['completed'] != 290:
             raise ValueError('Expected frozen r33 expansion failure evidence')
@@ -654,6 +673,9 @@ def prepare(work, variant='rank32'):
         raise ValueError('Reserved final text in training')
     if any(frozen.evaluation._norm(j['case']['text']) in heldout for j in jobs):
         raise ValueError('Reserved final text in development pilot')
+    if variant == 'dit_original_lr5e5_rank32_drop0_wd01_micro1_lm':
+        inputs = {path: digest for path, digest in inputs.items()
+                  if Path(path).name not in RESUME_ONLY_FILENAMES}
     for path, digest in inputs.items():
         prior.review.checked(path, digest)
     settings = VARIANTS[variant]

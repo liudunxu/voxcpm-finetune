@@ -564,3 +564,19 @@ def test_acoustic_gate_rejects_without_content_regression(module):
     assert 'duration_inflation' in module.acoustic_gate([{**r,'audio_sec':8.} for r in baseline], index)
     # User relaxed only relative tail changes; absolute under .5 remains allowed.
     assert module.acoustic_gate([{**r,'tail_silence_sec':.34} for r in baseline], index) == {}
+
+
+def test_read_only_baseline_does_not_require_resume_files(module, tmp_path):
+    keep = tmp_path / 'keep.txt'
+    keep.write_text('unchanged', encoding='utf-8')
+    plan = {'inputs_sha256': {
+        str(keep): module.frozen.sha256(keep),
+        str(tmp_path / 'optimizer.pth'): 'missing-optimizer',
+        str(tmp_path / 'lora_weights.safetensors'): 'missing-weights',
+    }}
+    module.save(tmp_path / 'plan.json', plan)
+    (tmp_path / 'run.started').write_text(module.frozen.sha256(tmp_path / 'plan.json'), encoding='utf-8')
+    assert module.check_read_only_baseline(tmp_path) == plan
+    keep.write_text('changed', encoding='utf-8')
+    with pytest.raises(ValueError, match='Frozen'):
+        module.check_read_only_baseline(tmp_path)
