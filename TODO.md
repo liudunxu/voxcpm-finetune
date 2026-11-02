@@ -12,6 +12,11 @@
   无句子对在三seed同向超过.01。局部ref/case/seed漂移成立，但非整体单向衰退；seed44的ref宏平均-.007805最弱。
   优先回归id1816/tl1775、tl1940/tl1967、th1844/tl1855等；不据此自动开新训练，先灰度加同角色多句盲听。
   证据`work/r46_u10_20261031/timbre_consistency_summary.json`；WavLM不是人耳门限，母语/自然度仍未验证。
+- [x] 用户已完成9组同角色盲听并反馈“A，B组都差不多”，记为无明显整体音色优劣，不排除局部波动；
+  未提供逐轮数值或导出JSON，证据`work/r46_u10_20261031/timbre_blind_user_feedback.json`。
+- [x] 已生成并核验12组用户声学缺陷包及ID/TH/TL各10组母语评审包，公开音频SHA、匿名映射、ZIP和JS语法均通过；
+  用户只评声学/音色/停顿，发音、语调、口音、可懂度及情绪交由对应母语评审，当前评分待回传。
+  页面/包路径见`work/r46_u10_20261031/human_review_verification.json`；未使用新90、未生成新音频。
 - [x] 现有数据CPU审计：TL仅61条独立合格3–8s音频/376.82s，训练中位9.45s且ref0；TH/ID短样本较多，
   不增加重复、不恢复隔离数据、不伪造ref。证据`work/data_next_20261102/data_gap_audit.json`。
 - [x] 已冻结`eval_cases/reserved_next_20261102.jsonl`三语种各30文本，与旧最终90零文本重叠；
