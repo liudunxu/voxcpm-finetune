@@ -10,9 +10,11 @@ r48仅enable_lm的本地准备保留、未启动；先走更快的r46/u10 + 固�
   排除空转写、近静音、多读后按CER择优，base/candidate同规则。`scripts/keep_best_eval.py`三项测试通过。
 - [x] 开发对照TH CER .0264→.0279、TL .0189→.0170、ID .0535→.0561；
   TH/TL严重case均0→0，ID 1→1，无单case CER增加>.05。证据`work/r46_keepbest_final_20261102/development_keep_best.json`。
-- [ ] 候选已据此冻结，不再用开发集调参：r46 microbatch1×16的10更新快照 + 上述4候选QC。
+- [x] 候选已据此冻结，不再用开发集调参：r46 microbatch1×16的10更新快照 + 上述4候选QC。
   最终90文本只对这一次候选做base/candidate同口径对照，每case同4seed；这不是5seed稳定性的旧口径，
   是用户授权的4次生成生产预算验证。最终集一旦使用，不再用于后续调参。
+  2026-11-02 09:56远端已启动一次性对照，driver PID2137、base四分片2143/2145/2147/2149；
+  预检90文本、固定seed、候选权重SHA及6,573,527,040 bytes磁盘预算通过，证据`work/r46_keepbest_final_20261102/launch_verification.json`。
 - [ ] 最终逐语种工程可用线：择优后mean CER增量≤.05、严重case数不超过base、候选无空转写/近静音；
   严重单条仍不放行。通过也只交付工程候选与试听/复核材料，母语质量未验证，不自动部署或发布。
 
