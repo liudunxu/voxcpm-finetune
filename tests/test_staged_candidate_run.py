@@ -91,6 +91,10 @@ def test_paired_candidate_recomputes_schedule_and_retains_optimizer_recipe(modul
         parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24', train_rows=1881)
     assert warmup24 == {**micro1, 'warmup_steps':24}
     assert module.gate_steps(warmup24, 'dit_original_lr5e5_rank32_drop0_wd01_micro1_warmup24') == (9, 39, 79, 118)
+    lm = module.candidate_config(
+        parent, tmp_path, 'dit_original_lr5e5_rank32_drop0_wd01_micro1_lm', train_rows=1881)
+    assert lm == {**micro1, 'lora':{**micro1['lora'], 'enable_lm':True}}
+    assert module.gate_steps(lm, 'dit_original_lr5e5_rank32_drop0_wd01_micro1_lm') == (9, 39, 79, 118)
 
 
 def test_original_lr_control_binds_parent_data_and_single_config_change(module, tmp_path, monkeypatch):
@@ -326,6 +330,30 @@ def test_warmup_control_binds_r46_and_only_changes_ramp(module, tmp_path, monkey
     module.verify_original_config_control(work, after, variant)
     for change in ({'learning_rate':1e-4}, {'warmup_steps':12}, {'batch_size':2}, {'num_iters':20}):
         with pytest.raises(ValueError, match='only warmup'):
+            module.verify_original_config_control(work, {**after, **change}, variant)
+    (work / 'train.jsonl').write_text('changed bytes', encoding='utf-8')
+    with pytest.raises(ValueError, match='train.jsonl'):
+        module.verify_original_config_control(work, after, variant)
+
+
+def test_lm_control_binds_r46_and_only_changes_module_selection(module, tmp_path, monkeypatch):
+    parent, work = tmp_path / 'r46', tmp_path / 'r48'
+    parent.mkdir()
+    work.mkdir()
+    monkeypatch.setattr(module, 'R46', parent)
+    for name in ('train.jsonl', 'val.jsonl', 'flagged.json', 'mix.json', 'jobs.json', 'base_items.json'):
+        (parent / name).write_text('frozen identical bytes', encoding='utf-8')
+        (work / name).write_bytes((parent / name).read_bytes())
+    before = yaml.safe_load(Path(
+        'configs/lora_joint3_r46_dit_original_lr5e5_rank32_drop0_wd01_micro1_staged.yaml').read_text())
+    (parent / 'train.yaml').write_text(yaml.safe_dump(before), encoding='utf-8')
+    after = {**before, 'lora':{**before['lora'], 'enable_lm':True}, 'save_path':str(work)}
+    variant = 'dit_original_lr5e5_rank32_drop0_wd01_micro1_lm'
+    module.verify_original_config_control(work, after, variant)
+    for change in ({'learning_rate':1e-4}, {'warmup_steps':24}, {'batch_size':2},
+                   {'lora':{**after['lora'], 'enable_lm':False}},
+                   {'lora':{**after['lora'], 'enable_proj':True}}):
+        with pytest.raises(ValueError, match='only enable_lm'):
             module.verify_original_config_control(work, {**after, **change}, variant)
     (work / 'train.jsonl').write_text('changed bytes', encoding='utf-8')
     with pytest.raises(ValueError, match='train.jsonl'):
