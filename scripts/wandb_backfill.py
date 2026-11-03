@@ -1,7 +1,7 @@
-"""把已结束训练的 TensorBoard 事件回补到配置的 wandb/SwanLab，然后退出。
+"""把已结束训练的 TensorBoard、数据覆盖和阶段门指标回补到 SwanLab。
 
-用于补桥接漏掉的轮次：sync_once 每次从头读事件目录、按各后端独立状态增量转发，
-所以连续三次读到 0 条就说明已经追平，可以退出。
+sync_once 每次从头读取并增量转发，连续三次读到 0 条就退出。
+阶段门、标量与验证音频按 step 对齐，避免乱序或漏传较早音频。
 """
 import sys
 import time
@@ -22,7 +22,7 @@ def main() -> int:
         if state.get('_backend_errors'):
             print(f"backend_errors={state['_backend_errors']}", flush=True)
         total += n
-        max_step = max(state.get('_max_step', -1), state.get('_swanlab', {}).get('_max_step', -1))
+        max_step = state.get('_max_step', -1)
         print(f"forwarded={n} total={total} max_step={max_step}", flush=True)
         idle = idle + 1 if n == 0 else 0
         time.sleep(5)

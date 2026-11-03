@@ -14,7 +14,7 @@ uv run voxft-ui               # Gradio 6006
 git submodule update --init --recursive
 ```
 
-复制 `.env.example` 为 `.env`，配置 `HF_TOKEN`、`VOXCPM_BASE_PATH`；监控可选 `SWANLAB_API_KEY` 或 `WANDB_API_KEY`。数据下载、真实音频加工和训练在远程 GPU 机器执行；本地只做开发与合成小样本测试。
+复制 `.env.example` 为 `.env`，配置 `HF_TOKEN`、`VOXCPM_BASE_PATH`；监控可选 `SWANLAB_API_KEY`，项目名默认 `voxcpm-finetune`，可用 `SWANLAB_PROJ_NAME` 覆盖。数据下载、真实音频加工和训练在远程 GPU 机器执行；本地只做开发与合成小样本测试。
 
 远程 `.env` 的大盘设置示例（按实际目录调整）：
 
@@ -211,7 +211,11 @@ uv run python -m voxft.train.yaml_builder --train /root/autodl-tmp/voxft_data/pr
 uv run python -m voxft.train.launcher configs/tl_drama_e1.yaml 1
 ```
 
-最后一条打印训练命令；在 GPU 机器上先通过页面预检再启动。SwanLab/wandb 桥接沿用各自配置，保存/验证默认每 250 步，结束时官方脚本也保存。不同实验用不同 run 名，不覆盖旧 run；同配置恢复会从 `latest/` 继续。
+最后一条打印训练命令；在 GPU 机器上先通过页面预检再启动。SwanLab 桥接沿用 `SWANLAB_API_KEY` 配置，保存/验证默认每 250 步，结束时官方脚本也保存。不同实验用不同 run 名，不覆盖旧 run；同配置恢复会从 `latest/` 继续。
+
+桥接除原始 TensorBoard 标量与验证音频外，还上传：按 `lambdas` 加权的 `train/loss/weighted_total`、梯度裁剪比例、训练清单的语种时长/ref/3–8 秒短句覆盖，以及已完成 `gate_*/result.json` 的候选/基座/差值。阶段门按内容、声学、分语种和逐 seed 分组，包含严重配对 CER 退化、新增多读/少读、极端时长与有声比例退化；样本数随指标上传，未评语种不记 0。只上传数值，不上传台词或参考音路径。阶段小门仍不是最终验收，自然度、口音与情绪保持未验证。
+
+SwanLab ≥0.10.3 会用 `define_metric` 自动分成 Training、Validation、Data coverage、Gate status、Content risk、Acoustic and timbre、Gate by language、Gate by seed 八组。已有项目里首次创建的图表位置不会被 SDK 强行改动；需要独立命名看板时，在 WebUI 的多视图里一次性新建视图并选这些分组即可。
 
 实验顺序：
 

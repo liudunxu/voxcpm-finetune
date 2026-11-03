@@ -1801,8 +1801,8 @@ Python 3.11（`.python-version` 已固定）。torch 平台自动分流：macOS 
 
 ```dotenv
 HF_TOKEN=hf_xxx
-WANDB_API_KEY=xxx
-WANDB_PROJECT=voxcpm-finetune
+SWANLAB_API_KEY=xxx
+SWANLAB_PROJ_NAME=voxcpm-finetune
 VOXCPM_BASE_PATH=/root/autodl-tmp/models/VoxCPM2
 
 VOXFT_DATA_ROOT=/root/autodl-tmp/voxft_data

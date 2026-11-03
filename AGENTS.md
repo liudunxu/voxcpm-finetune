@@ -86,7 +86,7 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/印尼语高质量语�
   用户声学评分已完成：22/24无异常；候选1条rough因用户明确指出参考音本身粗糙而记uncertain参考混杂，基座同组另有1条noise；
   两边时长均11正常/1不确定，无系统性A/B声学退化，不据此启动训练。ID/TH/TL母语评审包仍待回传；
   用户不评三语种发音/语调/口音/可懂度/情绪，母语项仍须合格母语评审。
-  SwanLab `.env`非交互真实上传已验证；监控失败可重试并记录分后端错误，支持SwanLab-only。详见TODO顶部。
+  SwanLab `.env`非交互真实上传已验证；监控已收敛为SwanLab-only，失败可重试并记录后端错误，不再读取`WANDB_*`。详见TODO顶部。
   本机接续器已从Codex迁移到Kimi Code：15项测试及真实Kimi→SSH→GPU只读探针通过，JSONL结果由监督器本地校验，静态拒绝保留。
   已另冻ID1783/1961补充开发文本（4条件行），574输入SHA/179721条ID精确与有界近文本隔离通过；
   28原无编码风险ID+2新可构成30文本，旧ID1753/1905风险句不改，补充文本尚未推理；最终90后来仅用于r46一次性验收，不再用于调参。具体状态见TODO。
@@ -170,7 +170,7 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/印尼语高质量语�
 - Python 3.11（.python-version 已固定），依赖由 **uv** 管理：`uv sync`（本地开发）、`uv sync --group qc`（启用 whisper 质检 + PyAV 视频解码）。
 - torch 平台分流（见 pyproject `[tool.uv.sources]`）：macOS → PyPI 轮子（CPU/MPS）；Linux → pytorch-cu124 index（CUDA 12.4）。训练只在 Linux GPU 机执行。
 - **数据集下载只在远程 GPU 机器进行**：本地开发环境不下载数据集，也无需本地验证下载流程。
-- 密钥走 `.env`（复制 `.env.example`）：`HF_TOKEN`、`VOXCPM_BASE_PATH`、`HF_ENDPOINT`（国内默认 `https://hf-mirror.com`，导入 voxft 即自动加载）。监控可选 `SWANLAB_API_KEY` 或 `WANDB_API_KEY`/`WANDB_PROJECT`，SwanLab 项目名沿用 `WANDB_PROJECT`，两个后端独立增量桥接；不要设置 `SWANLAB_PROJECT`（0.10.3 将其保留为嵌套配置）。
+- 密钥走 `.env`（复制 `.env.example`）：`HF_TOKEN`、`VOXCPM_BASE_PATH`、`HF_ENDPOINT`（国内默认 `https://hf-mirror.com`，导入 voxft 即自动加载）。监控只使用 `SWANLAB_API_KEY`，项目名默认 `voxcpm-finetune`、可由 `SWANLAB_PROJ_NAME` 覆盖；不再读取 `WANDB_*`，不要设置 `SWANLAB_PROJECT`（0.10.3 将其保留为嵌套配置）。桥接另传加权 train loss、梯度裁剪、数据语种/ref/短句覆盖及已完成阶段门的内容/声学/分语种/逐 seed 数值，不上传台词或 ref 路径；SwanLab ≥0.10.3 自动分八组，旧图表与命名多视图布局只在 WebUI 调整。阶段小门不冒充最终验收，未评语种不记 0。
 
 ## 远程 GPU 机调试约定（本轮实测沉淀，照这个方式来）
 
@@ -242,11 +242,11 @@ GPU 已 0 MiB）。三个处置，按可靠性排序：
 - 测试用的合成音频**绝不能留在真实数据源目录**里。本轮为测 `ingest` 用 FLEURS 音频拼了个 mp4，产物落进了 `raw/drama_vi/`——那是真实的越南语训练源，必须整目录删掉。`--max-items` 试跑不回写清单，所以污染只限该目录，但仍要清。
 - 切换 `HF_ENDPOINT` 或 xet 模式后，旧的 `blobs/*.incomplete` 会变孤儿（后缀不同、不续传），重跑前手动清。
 - 冒烟 run 的 `step_*` checkpoint 每份约 430MB，测完删掉；`merged_*` 每份 4.6GB，验证完立刻删。
-- **不要 `cat .env`**：里面有 `HF_TOKEN`/`WANDB_API_KEY`/`SWANLAB_API_KEY`，会原样进对话记录。要看配置就 `grep -v TOKEN` 或只看键名。
+- **不要 `cat .env`**：里面有 `HF_TOKEN`/`SWANLAB_API_KEY` 等密钥，会原样进对话记录。要看配置就只看键名或布尔存在性，不打印值。
 
 ## 目录结构
 - `src/voxft/data/` — 数据源清单（registry）、下载（download）、加工管线（pipeline）、成片导入（ingest）
-- `src/voxft/train/` — yaml_builder（生成官方训练配置）、launcher（子进程启动训练）、tb_wandb_bridge（TensorBoard→wandb/SwanLab 桥接）
+- `src/voxft/train/` — yaml_builder（生成官方训练配置）、launcher（子进程启动训练）、tb_wandb_bridge（兼容文件名，TensorBoard→SwanLab 桥接）
 - `src/voxft/lora/merge.py` — LoRA 合并导出完整模型
 - `src/voxft/hub/sync.py` — HuggingFace 上传
 - `src/voxft/qc/utmos.py` — UTMOS 音质打分（移植自 OmniVoice，注明来源）
@@ -365,10 +365,10 @@ OmniVoice 是 GPU 侧合成服务；配音编排在另一个仓库 `dubbing_inte
 - **FLEURS 一个 config 就是约 1.9GB 整片 parquet**，`--max-samples 60` 也要下完整片；**别指望流式省流量**（`load_dataset(streaming=True)` 对 fleurs 取首行时永久挂起，已加 120s socket 超时变成可诊断报错）。磁盘按「每语种 2GB」预算。
 - **上传 HF**：`hf-mirror` **只读不写**，上传必须 `source /etc/network_turbo` + `HF_ENDPOINT=https://huggingface.co`。**xet 必须开（2026-10-21 实测反转）**：经典 LFS/S3 分片路径经代理会被中间盒在**每文件 96MB 处截断**（普通客户端与 hf_transfer 均同点失败、重试无用），而 xet 走 CAS 分块协议直接绕过、4.9G 三分钟传完——**不要再显式设 `HF_HUB_DISABLE_XET=1`**（该变量只在上传走不通 xet 的旧场景适用；下载走镜像时仍需自动关 xet，不受影响）。⚠️ **`merge_lora` 会把基座的 `README.md` 一起拷过来**，而 `upload_folder` 只在 README 不存在时才生成卡片 ⇒ merge 后必须**显式覆盖** `README.md`（用 `docs/model_card.md`）。
 - **训练默认**：`batch_size=2 + 梯度累积=8`（等效 batch 还需乘 GPU 数）；页面按 1 epoch 自动算步数，**换清单/卡数要重建配置**（`.plan.json` 留审计）；启动带 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`；`save/valid_interval=250`；结束只保留最新 5 次 LoRA 运行。官方脚本"最后一步必存"会让短 run 多出冗余 `step_*`（submodule 只读改不了，磁盘紧就手动删）。
-- **手动 nohup 启训练时必须另起 wandb/SwanLab 桥接**：`launcher.start_local()` 会调 `start_bridge`，但那是**进程内 daemon 线程**，而远程按约定是 `nohup python <train脚本>` 裸启、根本不走 `start_local` ⇒ 桥接会被静默绕过（r24/r25 两轮都因此漏掉）。启训练的同批命令里加一条
+- **手动 nohup 启训练时必须另起 SwanLab 桥接**：`launcher.start_local()` 会调 `start_bridge`，但那是**进程内 daemon 线程**，而远程按约定是 `nohup python <train脚本>` 裸启、根本不走 `start_local` ⇒ 桥接会被静默绕过（r24/r25 两轮都因此漏掉）。启训练的同批命令里加一条
   `setsid nohup python -X utf8 -u -m voxft.train.tb_wandb_bridge <ckpt>/logs <run_name> > <日志> 2>&1 &`；
-  **漏了可以事后回补**：`scripts/wandb_backfill.py <ckpt>/logs <run_name>` 从头读事件目录、追平即退（`sync_once` 按 `_max_step` 增量， wandb 要求 step 单调，回放天然满足）。桥接不影响训练进程，崩了也不会带走训练。
-  只配置 `SWANLAB_API_KEY` 也会启动；上传失败不标记已同步，下轮重试，后端错误写入 `_backend_errors` 并出现在回补/桥接日志，单后端失败不阻塞另一后端。
+  **漏了可以事后回补**：`scripts/wandb_backfill.py <ckpt>/logs <run_name>` 从头读取、追平即退（`sync_once` 按 `_max_step` 增量，标量/阶段门/音频按 step 对齐）。文件名保留只为兼容历史 run 命令，内部是 SwanLab-only。桥接不影响训练进程，崩了也不会带走训练。
+  只需配置 `SWANLAB_API_KEY`；上传失败不标记已同步，下轮重试，错误写入 `_backend_errors` 并出现在回补/桥接日志。
 - **`max_grad_norm=1.0`、`num_workers=8`**：官方 v2 就是这两个值（早先写的"默认 0 = 不裁剪"是错的）。情感语料动态大，不裁剪更容易出梯度尖峰。
 - **推理**：`load_denoiser=False`（去噪器依赖 modelscope，试听不需要）。
 - **Whisper 权重用两个尺寸**：转写（会变成训练文本）用 `large-v3`（约 3GB），`ingest` 的整轨 VAD 与 `qc="whisper"` 用 `medium`（约 1.5GB）。`prefetch` 只预取 large-v3，**首次跑 ingest 或 whisper 质检会临时多下 medium**。可用 `VOXFT_WHISPER_MODEL`/`_LARGE` 指向本地目录。⚠️ 权重下载期间**没有任何进度输出**，与卡死无法区分，别急着重启（用 `du -sh $HF_HOME/hub/models--Systran--*` 判断）。

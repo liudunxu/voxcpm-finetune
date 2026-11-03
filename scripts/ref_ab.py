@@ -73,9 +73,7 @@ def checked_pairs(rows, excluded_texts=frozenset()):
 
 def runtime_environment(work):
     for key, directory in {
-        "WANDB_DIR": "wandb", "WANDB_CACHE_DIR": "wandb_cache",
-        "WANDB_CONFIG_DIR": "wandb_config", "TMPDIR": "tmp",
-        "MPLCONFIGDIR": "matplotlib", "NUMBA_CACHE_DIR": "numba",
+        "TMPDIR": "tmp", "MPLCONFIGDIR": "matplotlib", "NUMBA_CACHE_DIR": "numba",
         "TRITON_CACHE_DIR": "triton", "CUDA_CACHE_PATH": "cuda_cache",
     }.items():
         path = work / directory

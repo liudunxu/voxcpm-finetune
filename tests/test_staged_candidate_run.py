@@ -14,14 +14,12 @@ def module(monkeypatch):
     return importlib.import_module('staged_candidate_run')
 
 
-def test_monitoring_bridge_accepts_swanlab_only(module, monkeypatch):
-    monkeypatch.delenv('WANDB_API_KEY', raising=False)
+def test_monitoring_bridge_requires_swanlab(module, monkeypatch):
     monkeypatch.delenv('SWANLAB_API_KEY', raising=False)
     assert not module._monitoring_configured()
+    monkeypatch.setenv('WANDB_API_KEY', 'legacy-value-must-not-enable-monitoring')
+    assert not module._monitoring_configured()
     monkeypatch.setenv('SWANLAB_API_KEY', 'test')
-    assert module._monitoring_configured()
-    monkeypatch.delenv('SWANLAB_API_KEY')
-    monkeypatch.setenv('WANDB_API_KEY', 'test')
     assert module._monitoring_configured()
 
 

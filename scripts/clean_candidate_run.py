@@ -298,14 +298,14 @@ def run(work):
             raise RuntimeError("Insufficient disk before training")
         for line in Path("/root/voxcpm-finetune/.env").read_text(encoding="utf-8").splitlines():
             key, separator, value = line.partition("=")
-            if separator and key.strip() in {"WANDB_API_KEY", "WANDB_PROJECT"}:
+            if separator and key.strip() in {"SWANLAB_API_KEY", "SWANLAB_PROJ_NAME"}:
                 os.environ.setdefault(key.strip(), value.strip())
         with (work / "train.log").open("x", encoding="utf-8") as log, \
-                (work / "wandb.log").open("x", encoding="utf-8") as bridge_log:
+                (work / "swanlab.log").open("x", encoding="utf-8") as bridge_log:
             trainer = subprocess.Popen([sys.executable, "-X", "utf8", "-u",
                 str(frozen.VOXCPM_REPO / "scripts/train_voxcpm_finetune.py"),
                 "--config_path", plan["config"]], cwd=frozen.VOXCPM_REPO, stdout=log, stderr=subprocess.STDOUT)
-            if os.environ.get("WANDB_API_KEY"):
+            if os.environ.get("SWANLAB_API_KEY"):
                 bridge = subprocess.Popen([sys.executable, "-X", "utf8", "-u", "-m",
                     "voxft.train.tb_wandb_bridge", config["tensorboard"], plan["run_name"]],
                     cwd=frozen.ROOT, stdout=bridge_log, stderr=subprocess.STDOUT)
