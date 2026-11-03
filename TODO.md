@@ -1,5 +1,33 @@
 # TODO：配音质量改进（drama 非硬依赖）
 
+## Next Todo（2026-11-03 UAT 三集生产观察后）
+
+来源：DIS `docs/reviews/2026-11-03-uat-systemic-quality-review.md`（tl/id/th 同剧第11集，线上实例 `/api/status` 实际权重
+`FrankLiuDundun/voxcpm2-r46-u10`）。结论：**下一轮暂不调 LoRA 超参**。r35–r48 已逐一试过 lr、rank/alpha、dropout、
+weight_decay、warmup、microbatch、enable_lm/enable_proj、stop 权重、训练种子与早期快照，均未消除 seed 级多读；
+UAT 暴露的主要问题（同人碎片 cue、参考音被覆盖、失控 take 放行、群声用 1.6s 切片）已在 DIS/OmniVoice 链路修复。
+是否继续微调，先由生产口径复核决定。拿不准处按行业通行做法：评测条件与线上一致、留出集只做最终一次验收、先修数据再调超参。
+
+- [ ] **P0 生产口径复核 r46-u10 vs base**：r46 只在「固定4候选QC择优」下通过；生产长句为单次生成。
+  按 UAT 实测请求复现：cfg 1.8、请求 steps 10 + `voxcpm_steps_auto`（服务端实际 22/24，短句重试 28）、
+  denoise 按 DIS 规则（UAT 几乎全开 ZipEnhancer）、zh 分离人声参考含 1.6–3s 短参考、best_of=1。
+  只用开发集，不动 `reserved_next_20261102.jsonl`。判据先钉死：分语种严重 case 不增、均值 CER 不升、
+  `termination.reason=max_length` 截停率不升。不通过则建议用户生产回退 base（或上一已核实权重），本仓不自动切换。
+- [ ] **P0 短句专项**：UAT 失控/错读集中在 1–3 词台词（tl「Sige!」3.04s/0.7s 撞 19/19 patch 上限、「Pa.」→「PAM!」；
+  id「Baik!」空转写；th「ได้เลย!」内容不全、「พ่อ」→「อ๋อ」）。把 `scripts/short_cue_eval.py` 扩到 th/id/tl，
+  记录 max_length 截停率、时长比、文本错误，base/r46 同口径。TL 训练中位 9.45s、3–8s 合格仅 61 条：
+  若 base 与 r46 都在短句失败，下一轮唯一训练变量改为「补短句数据」，不是超参。
+- [ ] **P1 评测与生产判据对齐**：评测报告记录 `effective_generation.termination`（reason/generated_patches/max_patches）
+  与时长比，口径与 DIS 统一失控判定一致（max_length 且 ≥1.3x 窗口，或 ≥1.8x + 多读/头尾发声）；
+  当前固定 steps 20 与生产实际 22/24 不同，复核时两档都跑。
+- [ ] **P1 参考音预处理臂**：UAT 参考的 `reverb_suspected` 几乎全真（尾斜率约 −354 dB/s，阈值 −450）导致全量降噪；
+  评测加 denoise on/off 臂，与 DIS 的降噪盲听 A/B 共用样本，确认训练/评测/生产三处参考处理一致后再解读收益。
+- [ ] **P1 读音类问题先走文本侧**：泰语中文人名音译（หลินซือวั่ง）、ยัย→ใหญ่、วางใจ→บังใจ，Tagalog「CEO」→「Siyo」。
+  先由 DIS 读音表处理并母语试听；只有母语评审证实为模型普遍问题时才进训练数据（中文人名音译/缩写句）。
+- [ ] **P2 是否继续微调**：仅当 P0 显示生产口径下模型侧短句失控/多读显著且可被数据修复时，开下一轮；
+  单变量=数据（短句 + 中文人名音译），其余沿 r46，不再扫上述已证伪超参。否则冻结微调线，GPU 预算让给 DIS 链路 A/B。
+- 保持：`reserved_next_20261102.jsonl` 不用于以上调参；ID/TH/TL 母语评审包仍待回传；不自动部署或切生产。
+
 ## 2026-11-02 无 GPU 模式的 CPU 优化接续
 
 用户要求完成监控、无 QC 单模型分析及可先行数据/评测准备；远端实测`nvidia-smi`权限拒绝，不能生成新音频或训练。
