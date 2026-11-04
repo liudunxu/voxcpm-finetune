@@ -20,8 +20,10 @@ cand = importlib.util.module_from_spec(spec2)
 spec2.loader.exec_module(cand)
 
 
-def main(followups):
+def main(followups, reserved='reserved', out_name='final.json'):
     root = pr.ROOT
+    if (root / out_name).exists():
+        raise FileExistsError(root / out_name)
     deferred = json.loads((root / 'phase3_deferred.json').read_text(encoding='utf-8'))
     winner = deferred['winner']
     pool = [c for c in [winner] + followups if (root / f'done_dev_{c}.json').exists() or c == winner]
@@ -54,22 +56,29 @@ def main(followups):
     if chosen:
         rl = ['base', 'r46u10', chosen]
         for l in rl:
-            pr.gen_stage('reserved', l)
-            pr.asr_stage_async('reserved', l)
+            pr.gen_stage(reserved, l)
+            pr.asr_stage_async(reserved, l)
         for l in rl:
-            pr.finalize('reserved', l)
-        p3 = pr.analyze_phase('reserved', rl)
+            pr.finalize(reserved, l)
+        p3 = pr.analyze_phase(reserved, rl)
         final['phase3'] = p3
         final['phase3_verdict'] = {'non_regression_vs_base': not any(x['worse'] for x in p3[chosen].values()),
                                    'any_better_vs_base': any(x['better'] for x in p3[chosen].values()),
                                    'no_worse_vs_r46u10': not any(x['worse'] for x in p3[f'{chosen}_vs_r46u10'].values())}
-        final['note'] = 'reserved_next_20261102 used once for the single finalist; never use it for further tuning'
+        final['note'] = f'{reserved} holdout used once for the single finalist; never use it for further tuning'
         pr.log(f"reserved {chosen}: {json.dumps(final['phase3_verdict'])}")
     else:
         final['note'] = 'no candidate eligible to replace r46u10; reserved set NOT used'
-    (root / 'final.json').write_text(json.dumps(final, ensure_ascii=False, indent=2), encoding='utf-8')
+    final['reserved_set'] = reserved
+    (root / out_name).write_text(json.dumps(final, ensure_ascii=False, indent=2), encoding='utf-8')
     pr.log('final done')
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('followups', nargs='+')
+    ap.add_argument('--reserved', default='reserved')
+    ap.add_argument('--out', default='final.json')
+    a = ap.parse_args()
+    main(a.followups, a.reserved, a.out)

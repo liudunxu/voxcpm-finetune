@@ -17,6 +17,12 @@ TSVS = {
     'th': ('th_th', '8db09d12ac384654f6677e141f6e55bf5bc42028160cbc0d2d9f7fac4fe25271'),
     'tl': ('fil_ph', '3e23f5be5ebf6ae133fb2f2c3a9f4ef21498fc2de0ce9161b02b94b3f2bb553b'),
 }
+# FLEURS dev split (never used for training here); added 2026-11-04 when TH test texts ran out (20 < 30 left).
+DEV_TSV_SHA256 = {
+    'id': '8377bf6d8738491b7b0672de47e42123ce07b069a0db920ab6300e3ecce02c18',
+    'th': '214f74aa346dd643390e1a629e647d662697c542bff1a318c78d3274e2662be2',
+    'tl': 'c91a86fbc6b62fb914787afb017a827efdea66931e2bc40489bca9257c1f5846',
+}
 
 
 def input_issue(row):
@@ -77,7 +83,7 @@ def supplement_cases(selected, old_cases):
     return cases
 
 
-def prepare(work, *, id_supplement=False, namespace='final_20261030'):
+def prepare(work, *, id_supplement=False, namespace='final_20261030', split='test'):
     if work.exists():
         raise FileExistsError(work)
     frozen, norm = prior.frozen, prior.frozen.evaluation._norm
@@ -123,7 +129,9 @@ def prepare(work, *, id_supplement=False, namespace='final_20261030'):
             prior.review.checked(path, inputs[path])
     selected, counts = {}, {}
     for lang, (config, digest) in ({'id':TSVS['id']} if id_supplement else TSVS).items():
-        path = DATA/'hf_home/hub/datasets--google--fleurs/snapshots'/REVISION/'data'/config/'test.tsv'
+        if split == 'dev':
+            digest = DEV_TSV_SHA256[lang]
+        path = DATA/'hf_home/hub/datasets--google--fleurs/snapshots'/REVISION/'data'/config/f'{split}.tsv'
         prior.review.checked(path, digest)
         inputs[str(path)] = digest
         pool = parse_tsv(path.read_text(encoding='utf-8'))
@@ -149,7 +157,7 @@ def prepare(work, *, id_supplement=False, namespace='final_20261030'):
         if row['condition'] != condition:
             continue
         sentence = row['sentence_id'].replace('fresh_', namespace + '_', 1)
-        cases.append({**row, 'sentence_id':sentence, 'case_id':sentence+'_'+condition,
+        cases.append({**row, 'source_split':split, 'sentence_id':sentence, 'case_id':sentence+'_'+condition,
             'cohort':namespace, 'evaluation_use':'once_after_candidate_selection',
             'note':'Clean nonnumeric read-speech text reservation; no generated outcomes inspected. '
                    'No correction of source wording. Exact and >=40-char edit-distance<=2 local exclusion; '
