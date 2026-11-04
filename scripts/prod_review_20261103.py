@@ -42,6 +42,7 @@ MODELS = {
     'r50': '/root/autodl-tmp/r50_3ep_20261103/checkpoint/latest',
     'r51': '/root/autodl-tmp/r51_th_restore_20261104/checkpoint/latest',
     'soup': '/root/autodl-tmp/soup_r50_r51_20261104',
+    'r52': '/root/autodl-tmp/r52_th_codeswitch_20261104/checkpoint/latest',
 }
 PHASE1 = ['base', 'r46u10', 'r28', 'r29', 'r30']
 WINNER_POOL = ['r28', 'r29', 'r30']
