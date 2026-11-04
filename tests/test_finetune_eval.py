@@ -527,3 +527,23 @@ def test_is_numeric_catches_thai_number_words():
     assert evaluation._is_numeric({"text": "Terkima kasih banyak"}) is False
     assert evaluation._is_numeric({"text": "อากาศดี", "numeric": True}) is True
     assert evaluation._is_numeric({"text": "ห้าคน", "numeric": False}) is False
+
+
+def test_eval_per_case_cfg_and_steps_override(tmp_path, monkeypatch):
+    """生产按参考时长自适应 steps：case 级 cfg_value/inference_timesteps 覆盖全局并记录有效值。"""
+    from voxft.data import pipeline
+    monkeypatch.setattr(evaluation, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "_whisper_model", lambda lang, size: object())
+    monkeypatch.setattr(infer, "get_model", lambda *args: object())
+    kwargs = []
+    monkeypatch.setattr(infer, "_run", lambda model, kw: kwargs.append(kw) or ("fake.wav", 0.1))
+    monkeypatch.setattr(evaluation, "_transcribe", lambda *a: "Sige")
+    monkeypatch.setattr(evaluation, "_acoustics", lambda *a: {"f0_std_st": 1.0, "audio_sec": 1.0, "chars_per_sec": 5.0, "metallic": False, "low_snr": False, "speaker_sim": 0.9})
+    cases = [{"text": "Sige!", "lang": "tl", "inference_timesteps": 28},
+             {"text": "Sige!", "lang": "tl"}]
+    report = evaluation.evaluate("base", "tl", cases, seeds=[42], cfg_value=1.8,
+                                 inference_timesteps=24)
+    assert [kw["inference_timesteps"] for kw in kwargs] == [28, 24]
+    assert all(kw["cfg_value"] == 1.8 for kw in kwargs)
+    assert [i["effective_inference_timesteps"] for i in report["items"]] == [28, 24]

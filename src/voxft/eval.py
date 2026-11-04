@@ -312,8 +312,11 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
     total = sum(len(seed_list) if seed_list else 1 for _ in cases)
     for case in cases:
         for requested_seed in seeds if seeds is not None else [int(case.get("seed", seed))]:
+            # 逐 case 可覆盖 cfg/steps：复现生产按参考时长自适应的有效参数（如短参考 28 步）
+            case_cfg = float(case.get("cfg_value", cfg_value))
+            case_steps = int(case.get("inference_timesteps", inference_timesteps))
             kw = infer._gen_kwargs(case["text"], case.get("ref_audio"), None,
-                                   cfg_value, inference_timesteps, requested_seed, case["control"])
+                                   case_cfg, case_steps, requested_seed, case["control"])
             kw["retry_badcase"] = False  # 离线禁用换种子重试，避免 A/B 条件不一致
             if lora and lora_strength != 1:
                 wav_path, gen_sec = infer._run(model, kw, lora_strength=lora_strength)
@@ -323,6 +326,7 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
             h, r = _norm(hyp), _norm(case["text"])
             items.append({
                 **case, "seed": requested_seed, "hyp": hyp,
+                "effective_cfg_value": case_cfg, "effective_inference_timesteps": case_steps,
                 "similarity": round(SequenceMatcher(None, h, r).ratio(), 4),
                 "cer": round(_error_rate(h, r), 4),
                 "wer": round(_error_rate(_norm(hyp, True).split(),
