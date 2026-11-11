@@ -1,9 +1,9 @@
 """Staged r52 pipeline (user 2026-11-04: speed up iteration, get the best version fast).
 
 1. build + train r52 (after the soup evaluation releases the GPU)
-2. screen: short cues (675) for r52 + TH code-switch diagnostic for base / r50 / r52
-3. if r52 is significantly worse than r50 in any language on short cues -> stop r52 (no dev run)
-   else run the dev set (two halves) for r52
+2. screen: short cues (675) for r52 before any further diagnostics
+3. stop if any language is worse than r50 or no language is significantly better;
+   otherwise run TH code-switch diagnostics and the dev set (two halves)
 4. lean final over {r51, soup, r52 if it has dev}: only a candidate that beats r50 gets the unused holdout.
 """
 import importlib.util
@@ -34,16 +34,23 @@ def main():
             run('scripts/r52_th_codeswitch_run.py', 'build')
         run('scripts/r52_th_codeswitch_run.py', 'train')
         pr.log('r52 trained')
-    for l in ('r52', 'base', 'r50'):
-        for cases in (('short', 'th_codeswitch') if l == 'r52' else ('th_codeswitch',)):
-            pr.gen_stage(cases, l)
-            pr.asr_stage_async(cases, l)
+    # fastest decision first (user: tell me ASAP when the GPU can be shut down): short screen before anything else
+    pr.gen_stage('short', 'r52')
+    pr.asr_stage_async('short', 'r52')
     pr.finalize('short', 'r52')
     labels = ['base', 'r50', 'r52']
     screen = pr.compare(*cand.ctx('short', ['base', 'r46u10', 'r50', 'r51', 'r52']), 'r52', 'short', ref='r50')
     worse = [l for l, v in screen.items() if v['worse']]
     pr.log(f'r52 short screen vs r50: worse {worse} ' + json.dumps({l: (v['base_severe'], v['cand_severe'])
                                                                    for l, v in screen.items()}))
+    if worse or not any(v['better'] for v in screen.values()):
+        (root / 'r52_stage.json').write_text(json.dumps({'short_screen_vs_r50': screen, 'screen_worse': worse,
+                                                         'stopped': 'not better than r50 on short cues'}, indent=2), encoding='utf-8')
+        pr.log('r52 STOP: not better than r50 on short cues -> GPU can be shut down')
+        return
+    for l in labels:
+        pr.gen_stage('th_codeswitch', l)
+        pr.asr_stage_async('th_codeswitch', l)
     for l in labels:
         pr.finalize('th_codeswitch', l)
     cs = pr.analyze_phase('th_codeswitch', labels)

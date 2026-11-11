@@ -221,7 +221,7 @@ SOURCES: list[Source] = [
         "2026-10-20 联网核实（HF 卡片+元数据 parquet）：真人录音，speaker_id（M1-M12/F1-F8）"
         "真实说话人标签；均长 ~4.6s 贴近线上 cue；按句型分 11 类。⚠️ 上游混入 132 条 "
         "Edge-TTS 合成修复行，抓取时必须按 is_synthetic 过滤；209 个模板句文本多样性低，"
-        "当口音/发音锚点，不当泛化主力。下载走 scripts/fetch_atika88.py（tar 分类包）。",
+        "当口音/发音锚点，不当泛化主力。作为本地数据源导入已审核的真人语料 JSONL。",
         has_speaker=True, qc="none", role="anchor", quality=85,
     ),
     Source(
