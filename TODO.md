@@ -15,7 +15,8 @@ r26–r53 从未测过音色，先建 `timbre_v1` 评测臂（生产角色参考
 ## 下一轮微调作战手册（2026-11-04 复盘 r26–r53 全过程后写定，下次直接照做）
 
 **现状**：最佳 = **r50**（r30 清洗池 12h + MMS-FA TL/ID 3–6s 片段，14.5h × 3 epoch，r64 LM+DiT，lr 1e-4），已发布
-`FrankLiuDundun/voxcpm-finetune-lora` rev `b6533d6c`；生产仍指 `voxcpm2-r46-u10`（≈base），**切换由用户执行**。
+`FrankLiuDundun/voxcpm-finetune-lora` rev `b6533d6c`；**生产已于 2026-11-11 切到 r50（用户确认）**。
+OmniVoice 默认模型即本仓库（`model_config.py`，无 `VOXCPM_MODEL_ID` 覆盖）；旧生产权重 `voxcpm2-r46-u10` ≈base。
 r51（TH 加量）/soup/r52（TH 夹外文）与 r50 平手；r53（25h 伪标注加量）显著更差。GPU 已关；r49–r52、soup 权重与全部报告在本机。
 
 ### A. 评测与决策（最大的浪费来源，先固定）
@@ -64,10 +65,11 @@ r51（TH 加量）/soup/r52（TH 夹外文）与 r50 平手；r53（25h 伪标�
 - [ ] 本机 ssh-agent 无身份导致 push 失败：`ssh-add ~/.ssh/id_ed25519` 后再 push。
 
 ### E. 生产落地
-- [ ] 用户切生产到 r50 后，按 UAT 口径观察短句失控/多读，把真实失败句写成新评测 case（闭环），优先于再训。
+- [x] 生产已切 r50（用户 2026-11-11 确认；默认模型即本仓库，无代码配置改动）。
+- [ ] 按 UAT 口径观察短句失控/多读，把真实失败句写成新评测 case（闭环），优先于再训。
 - [ ] UAT 新失败形态入评测：**句末专名重复**——tl「…Ikaw ba talaga ’yung dating aroganteng Zoe Sullivan?」念完后续写
   「Sullivan, Sullivan, Sullivan, Sullivan」（UAT 128/239，2026-11-06）。DIS 侧已改为不放行（发音核对只证明念了期望文本，
-  不再抵消尾部多读证据），但根因在生成 EOS：评测集加「句末为人名/专名」的短句子集，统计尾部多读率，作为 r50 切换与下一轮的必看指标。
+  不再抵消尾部多读证据），但根因在生成 EOS：评测集加「句末为人名/专名」的短句子集，统计尾部多读率，作为 r50 切换后观察与下一轮的必看指标。
 
 ## 2026-11-03 流程审查：判退门不合理、生产口径复评进行中
 
@@ -120,7 +122,7 @@ r51（TH 加量）/soup/r52（TH 夹外文）与 r50 平手；r53（25h 伪标�
 - [x] **r50 已发布替换 `FrankLiuDundun/voxcpm-finetune-lora`（用户 2026-11-04 指示）**：revision `b6533d6cb1d0bc35147050436e87d9ce34340244`；
   根目录为合并完整模型（192 层全部合并、scale 1.0），`lora/` 为 r50 增量（SHA `f08bcb27…`），附 `evaluation.json` 与新模型卡；
   远端 LFS SHA 与本地一致（model.safetensors `c57d52a0…`、audiovae 不变）。合并后三语种冒烟通过。旧 r18/r23 内容仅在提交历史。
-  **未改 DIS/OmniVoice 配置**：生产当前仍指向 `voxcpm2-r46-u10`，切换由用户执行（指向本仓库即用 r50）。
+  **无需改 DIS/OmniVoice 代码配置**（默认模型即本仓库）：发布时生产仍指 `voxcpm2-r46-u10`，**2026-11-11 已切 r50（用户确认）**。
   本机备份 `checkpoints/r50_3ep_20261103/`、`checkpoints/r49_segments_20261103/`、`work/prod_review_20261103/`（报告/分析/清单）。
 - [x] **r50 对历史最强 r26（历史冻结口径：fresh_text_holdout 900 条、steps20、tl auto，冻结报告对比）**：严重 ID/TH/TL
   base 14/14/1、**r26 1/6/0（共7）**、r28 5/10/1、r29 5/13/0、r30 9/9/0、**r50 0/14/0（共14）**；CER r26 .0079/.0443/.0166、
