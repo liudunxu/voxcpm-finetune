@@ -162,7 +162,7 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/印尼语高质量语�
 - **工程检查与语言验收分开。** 用户只做声学异常盲听（爆音、金属感、异常娃娃音、明显音色跳变、沙哑粗糙音），**不能要求其填三语种自然度/可懂度**；不确定可留空。口音、语言自然度、情绪一律标「未验证」——没有合格母语评审时，工程检查通过不等于语言验收通过，但这**不阻塞离线候选实验**。高频刺耳检测false不排除沙哑，人工时间点未定位时不把自动候选冒充已确认坏例。细则见 `docs/qc_gates.md`。
 - **口音门禁不能靠 ASR 标签，也不能拿近亲语种听感代替**（原 ms 条目的通用教训，ms 退出后仍适用于任何近亲语种对）：CER 或 Whisper 的语种标签**不是**口音门禁；互通语种之间（历史上是 id/ms）非母语者听不出差别，要判口音必须找该语种母语者。
 - **联合模型是目标，分语种验收是前提**：任一语种相对基座退化即整轮不通过，不许用「平均变好」掩盖。
-- **本项目离线评测仍是 Whisper large-v3**，不因线上 ASR 选型覆盖旧评分。生产不是全程固定 Qwen3（OmniVoice 合成文本 QC 默认 Qwen3，DIS 对可疑最终片段显式切另一后端复核，词时间戳按 aligner 支持回退）。`model=large-v3` 不等于切后端，对照要显式传 `asr_backend`；合成内置 Whisper 路径带期望文本 `initial_prompt`，不能和无提示分数直接比。**Whisper GPU 故障不等于需要微调或切 CPU**，也不默认重置设备或降级依赖。
+- **本项目离线评测仍是 Whisper large-v3**，不因线上 ASR 选型覆盖旧评分。生产 OmniVoice 合成文本 QC 现仅 Whisper（Qwen3-ASR 已移除，`api.py:_validate_asr_backend` 拒绝非 whisper 后端，传 `asr_backend=qwen3` 会报错），词时间戳按 MMS_FA aligner 支持回退。合成内置 Whisper 路径带期望文本 `initial_prompt`，不能和无提示分数直接比。**Whisper GPU 故障不等于需要微调或切 CPU**，也不默认重置设备或降级依赖。
 - 分语种 ASR 首选需要同 WAV、同语言提示模式、无期望台词提示的对照，衡量误拒/漏检与 QC 总耗时，不凭 CER 最低或模型支持列表指定赢家。泰语已有「额外尾音被 Qwen 记录、Whisper 漏转」的反例 ⇒ 当前**没有**新的分语种 ASR A/B 结论。
 - **当前优先级见 `TODO.md`**：明确坏例定位 → 验收口径/稳定性 → r8 LoRA 强度 → CFG/步数/ref 单变量对照 → 现有单人录音切片配 ref 小实验。
 
@@ -324,7 +324,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 - Common Voice 22 官方已从 HF 撤架：数据源已切换到社区镜像 `fsicoli/common_voice_22_0`（非 gated，脚本式数据集，流式下载带 `trust_remote_code`）
 
 ## 来自 OmniVoice 生产实践的结论（/Users/dunxu.liu/workspace/others/OmniVoice）
-其配音生产链路：基座模型 + 参考音频零样本克隆（不用 LoRA），强依赖 `reference_wav_path` 克隆与逐语言文本归一化。据此：
+其配音生产链路：基座模型 + 参考音频零样本克隆，强依赖 `reference_wav_path` 克隆与逐语言文本归一化；生产自 2026-11-11 起叠本仓库 r50 LoRA（早期为纯基座零样本）。据此：
 - **微调方式首选 LoRA**：全量微调更易损害参考音频克隆泛化（生产核心能力）；r=32 说话人适配 / r=64 语言风格适配（本项目默认 64/64/dropout 0.05），`enable_dit: true` 必开
 - **数据必须保留克隆能力**：30–50% 样本带已验证同说话人 `ref_audio`（默认目标 0.5，其中 ref+control 目标 0.3）；缺少可靠身份不强凑。跨语言同人 ref 以 `reference_only=true` 行导入，与目标共用真实身份；中英文回放不是跨语言同人 ref 的替代品
 - **试听/推理默认参数**：`cfg_value=2.0`、`inference_timesteps=20`（生产基线 10，本项目默认 20 换更高音质）、`retry_badcase=True`（max_times=3、ratio_threshold=6.0）；音频坏例重试时降 CFG 至 1.2–1.6 并加步数
@@ -332,7 +332,7 @@ cd third_party/VoxCPM && torchrun --nproc_per_node=N scripts/train_voxcpm_finetu
 
 ### 线上真实调用口径（本轮从 OmniVoice 源码与归档 payload 逐条核实，微调要对齐这个）
 OmniVoice 是 GPU 侧合成服务；配音编排在另一个仓库 `dubbing_intelligence_service`。`voxcpm/` 是**推理包的 vendored 副本**，与本项目 submodule 的 `load_lora_weights` 实现完全一致。
-- **推理参数**：唯一实例化点 `api.py:3004-3021`，`VOXCPM_MODEL_ID` 默认 `openbmb/VoxCPM2`，`load_denoiser` 默认关、`optimize` 默认开。归档生产 payload（`results/voxcpm_quality_cases.json`）实测：`cfg_value=1.8`（**不是本项目默认的 2.0**）、`voxcpm_cfg_auto=True`、`inference_timesteps` 走服务端默认 20、`retry_badcase=False`、`retry_badcase_max_times=1`、`best_of=1`、`max_generation_attempts=1`、`trim_silence_vad=True`、seed 固定。**验收一律 `--cfg-value 1.8`**，用 2.0 测出来的数字不代表线上
+- **推理参数**：实例化点 `api.py:_load_voxcpm_model_sync`（约 3479），`VOXCPM_MODEL_ID` 默认集中在 `model_config.py` = `FrankLiuDundun/voxcpm-finetune-lora`（r50），`load_denoiser` 默认关、`optimize` 默认开。归档生产 payload（`results/voxcpm_quality_cases.json`）实测：`cfg_value=1.8`（**不是本项目默认的 2.0**）、`voxcpm_cfg_auto=True`、`inference_timesteps` 走服务端默认 20、`retry_badcase=False`、`retry_badcase_max_times=1`、`best_of=1`、`max_generation_attempts=1`、`trim_silence_vad=True`、seed 固定。**验收一律 `--cfg-value 1.8`**，用 2.0 测出来的数字不代表线上
 - **seed 的精确语义（2026-09-15 读两个仓库源码核实）**：主调方每请求必传 seed（`dubbing_intelligence_service` `backends/voxcpm.py:812-822`）。默认 `VOXCPM_SPEAKER_STABLE_SEED=true` 时是 **per-speaker stable seed**——`sha256(speaker + model_id + cfg + steps + …)` 派生、**不含文本**（`backends/voxcpm.py:438-463`），**同一说话人的所有 cue 共享同一个 seed**；每个 speaker 首 take 只生活在一个 seed 上，跨 seed 方差在首 take 不可感知。**但重试路径大多换 seed**：模型内 retry_badcase **+1**（`voxcpm2.py:734`）、prompt-leak +1、speaker-mismatch +1、text-regen **+7**、best_of 候选 **+1009**、主调方整轮重试 crc32 重派生；**例外：metallic 质量重试不换 seed**，只降 cfg 加 steps（`api.py:9184-9196`，`api.py:7895` 那句"use a fresh seed"注释与代码不符，以代码为准）。实际生效 seed 经 `effective_seed` 回传、主调方记 `seed_drifted`。⇒ 跨 seed 方差的真实含义是「重试把好 take 换成坏 take」的风险，离线量它要用**相邻偏移 seed**（base/+1/+7）而不是无关大跨度 seed；首 take 稳定性该量的是**跨 cue 一致性**（同 speaker 同 seed 不同文本）
 - **控制前缀线上根本不用**：60/60 份归档响应都是 `control_instruction: ""`、`control_instruction_applied: false`。只有独立的 voice-design 端点会用，且是**英文散文式**描述（`"a calm natural supporting-character voice"`），不是中文情绪标签。所以本轮训练 `with_control=0` 与线上一致，不是缺陷；`Options.control_zh_ratio=0.5` 与线上不符，等有可信标签时再改
 - **参考音频**：按请求传 base64 或用 `voice_id` 命中缓存（`api.py:3054-3073`）。实测捕获到的 ref 是 **24kHz 单声道 4.47s**，来自主调方音色库 `group_f_fleurs.wav`（菲律宾语），**跨语言复用**——归档里那条泰语台词用的是同一条菲律宾语 ref。这正是 `pair_references` 三级优先里「跨语言 ref」那一档要复现的形态。cfg/steps 会按 ref 时长自适应（`api.py:7780-7799`）：<2s→28/1.9、2-4s→24/2.0、**4-5s→20/2.1**、>5s→22/2.2；ref 落盘前做 WPE 去混响 + 对齐到 −18dB active + 裁边，**不重采样**
