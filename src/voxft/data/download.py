@@ -514,7 +514,8 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
     audio_dir = dest / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
     manifest = dest / "manifest.jsonl"
-    n = 0
+    n = bad = 0
+    log = progress or print
     prev_timeout = socket.setdefaulttimeout(_STREAM_SOCKET_TIMEOUT)
     try:
         with manifest.open("w", encoding="utf-8") as f:
@@ -529,7 +530,15 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
                 text = _clean_text(row[t_col]) if t_col else ""
                 if t_col and not text and not source.needs_transcribe:
                     continue
-                array, sr = _load_audio(row[a_col], source, token)
+                # 与 parquet 路径同口径：单条解码失败计数跳过，不打死整批流式下载
+                try:
+                    array, sr = _load_audio(row[a_col], source, token)
+                except (sf.LibsndfileError, ValueError, TypeError) as exc:
+                    bad += 1
+                    if bad <= 3:
+                        log(f"{source.id}: 流式第 {n + bad} 条附近音频读取失败："
+                            f"{type(exc).__name__}: {exc}")
+                    continue
                 _write_record(f, audio_dir, n, array, sr, text,
                               str(row[s_col]) if s_col else None,
                               _emotion(source, row.get(source.emotion_col))
@@ -546,6 +555,9 @@ def _download_stream(source: Source, dest: Path, max_samples: int | None,
             "或换 HF_ENDPOINT 后重试") from exc
     finally:
         socket.setdefaulttimeout(prev_timeout)
+    if bad and n == 0:
+        raise RuntimeError(f"{source.id}: 流式候选音频全部读取失败（{bad} 条）；"
+                           "请看上方首批具体错误，不是网络问题")
     return n
 
 
@@ -753,9 +765,11 @@ def _download_aishell3(source: Source, dest: Path, max_samples: int | None,
     tgz = dest / "data_aishell3.tgz"
     if not tgz.exists():
         tgz.parent.mkdir(parents=True, exist_ok=True)
+        # 下到 .part 再改名：中断留下的半截包不能被下次运行当成完整包直接解压。
+        part = dest / "data_aishell3.tgz.part"
         if progress:
             progress(f"{source.id}: 开始下载 {source.repo}（约 20GB，请耐心等待）")
-        with urllib.request.urlopen(source.repo) as resp, tgz.open("wb") as f:
+        with urllib.request.urlopen(source.repo) as resp, part.open("wb") as f:
             total = int(resp.headers.get("Content-Length") or 0)
             done, last = 0, 0.0
             while True:
@@ -772,6 +786,10 @@ def _download_aishell3(source: Source, dest: Path, max_samples: int | None,
                                  f"/{_fmt_size(total)} ({100 * done / total:.1f}%)")
                     else:
                         progress(f"{source.id}: 已下载 {_fmt_size(done)}")
+        if total and done != total:
+            raise RuntimeError(f"{source.id}: 下载不完整（{done}/{total} 字节），"
+                               f"保留 {part.name} 供排查，重跑会重新下载")
+        part.replace(tgz)
         if progress:
             progress(f"{source.id}: 下载完成（{_fmt_size(done)}）")
     wav_root = dest / "data_aishell3"
@@ -779,7 +797,7 @@ def _download_aishell3(source: Source, dest: Path, max_samples: int | None,
         if progress:
             progress(f"{source.id}: 解压 data_aishell3.tgz（约 20GB，耗时较长）...")
         with tarfile.open(tgz) as tf:
-            tf.extractall(dest)
+            tf.extractall(dest, filter="data")
         if progress:
             progress(f"{source.id}: 解压完成")
     content = wav_root / "train" / "content.txt"

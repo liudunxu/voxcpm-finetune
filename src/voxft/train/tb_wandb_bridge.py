@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 import math
 import statistics
+import sys
 import threading
-import time
 from pathlib import Path
 
 from ..paths import CONFIG_DIR, env
@@ -326,16 +326,30 @@ def start_bridge(tb_dir: str | Path, run_name: str, interval: float = 30.0,
     return t
 
 
+def serve(tb_dir: str | Path, run_name: str, interval: float = 30.0,
+          stop_event: threading.Event | None = None) -> None:
+    """独立进程入口的循环：后端瞬时失败只记录并重试，不让桥接进程死掉。
+
+    远程按约定 nohup 独立跑本模块；sync_once 失败会 raise，若不捕获，
+    一次 SwanLab 网络抖动就带走整个桥接，指标静默断流。
+    """
+    stop_event = stop_event or threading.Event()
+    state: dict = {}
+    while not stop_event.is_set():
+        try:
+            n = sync_once(tb_dir, run_name, state)
+            if n:
+                print(f"已转发 {n} 条指标", flush=True)
+        except Exception as exc:
+            print(f"桥接异常（{interval:g}s 后重试）: {exc}", file=sys.stderr, flush=True)
+        if state.get('_backend_errors'):
+            print(f"后端异常: {state['_backend_errors']}", file=sys.stderr, flush=True)
+        stop_event.wait(interval)
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
         print("用法: python -m voxft.train.tb_wandb_bridge <tb_dir> <run_name>")
         raise SystemExit(1)
-    state: dict = {}
-    while True:
-        n = sync_once(sys.argv[1], sys.argv[2], state)
-        if state.get('_backend_errors'):
-            print(f"后端异常: {state['_backend_errors']}", file=sys.stderr, flush=True)
-        if n:
-            print(f"已转发 {n} 条指标")
-        time.sleep(30)
+    serve(sys.argv[1], sys.argv[2])

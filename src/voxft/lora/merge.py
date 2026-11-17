@@ -66,12 +66,14 @@ def merge_lora(base_path: str, lora_dir: str | Path, out_dir: str | Path,
                 tensors[base_key] = tensors[base_key].float().add_(b @ a * scale).to(tensors[base_key].dtype)
                 merged_n += 1
         save_file(tensors, str(out / f.name))
-    if merged_n != len(pairs) and progress:
-        progress(f"[merge] 警告: {len(pairs)} 个 LoRA 层中 {merged_n} 个在基座中找到匹配；"
-                 f"请核对基座与训练版本一致")
     for f in base.iterdir():
         if f.suffix != ".safetensors" and f.is_file():
             shutil.copy2(f, out / f.name)
+    if merged_n != len(pairs):
+        # 部分/零匹配时产出的"merged 模型"其实是缺层或纯基座拷贝，
+        # 与推理侧 load_lora 的失败即停对齐，禁止带着警告导出坏权重。
+        raise ValueError(f"LoRA 合并不完整：{len(pairs)} 层中只有 {merged_n} 层在基座中找到匹配；"
+                         "请核对基座与训练版本一致，不导出不完整权重")
     if progress:
         progress(f"[merge] 完成：{merged_n} 层合并，缩放 {scale:.3f} → {out}")
     return out

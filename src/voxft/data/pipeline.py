@@ -215,7 +215,14 @@ def apply_speaker_gain(records: list[dict], target_dbfs: float,
         for rec in recs:
             wav, sr = load_wav_mono(rec["audio"])
             out = wav * gain
-            sf.write(rec["audio"], out, sr)
+            # 原子替换：中途崩溃不能留下半截 WAV 而 manifest 仍引用它
+            # （后缀必须带 .wav，soundfile 按扩展名定格式）
+            tmp = Path(str(rec["audio"]) + ".gain.tmp.wav")
+            try:
+                sf.write(tmp, out, sr)
+                os.replace(tmp, rec["audio"])
+            finally:
+                tmp.unlink(missing_ok=True)
             rec["_rms_dbfs"] = rms_dbfs(out)
             changed += 1
             if progress and changed % 500 == 0:
@@ -454,9 +461,12 @@ def apply_control_prefixes(records: list[dict], opts: Options,
 _WHISPER_ENV = {"medium": "VOXFT_WHISPER_MODEL",
                 "large-v3": "VOXFT_WHISPER_MODEL_LARGE"}
 
+# 进程内缓存：同一批评测跑 base+ckpt 多个 target 时 large-v3 只加载一次（约 3GB）。
+_WHISPER_CACHE: dict[tuple[str, str], object] = {}
+
 
 def _whisper_model(lang: str, size: str = "medium", progress=None):
-    """加载 faster-whisper 权重，带重试。
+    """加载 faster-whisper 权重，带重试与进程内缓存。
 
     large-v3 约 3GB，国内直连 huggingface.co 经常在 SSL 握手就超时；
     voxft 默认把 HF_ENDPOINT 指到 hf-mirror.com（`paths.load_dotenv`），
@@ -467,6 +477,9 @@ def _whisper_model(lang: str, size: str = "medium", progress=None):
     from faster_whisper import WhisperModel  # 可选依赖：uv sync --group qc
 
     name = os.environ.get(_WHISPER_ENV.get(size, ""), "") or size
+    key = (name, size)
+    if key in _WHISPER_CACHE:
+        return _WHISPER_CACHE[key]
     endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
     last: Exception | None = None
     for attempt in range(3):
@@ -474,7 +487,9 @@ def _whisper_model(lang: str, size: str = "medium", progress=None):
             if progress:
                 progress(f"加载 Whisper {name}（endpoint={endpoint}，"
                          f"第 {attempt + 1}/3 次）...")
-            return WhisperModel(name, device="auto", compute_type="auto")
+            model = WhisperModel(name, device="auto", compute_type="auto")
+            _WHISPER_CACHE[key] = model
+            return model
         except Exception as exc:
             last = exc
             if progress:

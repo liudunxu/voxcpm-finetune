@@ -114,6 +114,7 @@ def test_offline_review_verifies_downloads_and_keeps_blind_codes(monkeypatch, tm
 
 def test_diagnostic_export_preserves_sources_and_independent_controls(monkeypatch, tmp_path):
     from voxft import eval as evaluation
+    from voxft.data.registry import TARGET_LANGS
 
     scripts = Path(__file__).resolve().parents[1] / "scripts"
     monkeypatch.syspath_prepend(str(scripts))
@@ -123,7 +124,7 @@ def test_diagnostic_export_preserves_sources_and_independent_controls(monkeypatc
     monkeypatch.setattr(evaluation, "EVAL_DIR", tmp_path / "reports")
     cases = [{"case_id": f"{lang}_{reference}", "text": "Test sentence.", "lang": lang,
               "ref_lang": reference, "ref_audio": f"/{reference}.wav", "numeric": False}
-             for lang in ("th", "tl", "vi", "id", "ms") for reference in ("zh", "en", "tl")]
+             for lang in (*TARGET_LANGS, "ms") for reference in ("zh", "en", "tl")]
     seeds = [42, 43, 44, 45, 49]
     cases_path = tmp_path / "cases.jsonl"
     cases_path.write_text("".join(json.dumps(case) + "\n" for case in cases))
@@ -174,7 +175,7 @@ def test_diagnostic_export_preserves_sources_and_independent_controls(monkeypatc
     module.collect(tmp_path)
     saved = json.loads((tmp_path / "diagnostic_sample/reports.json").read_text())
     metadata = json.loads((tmp_path / "diagnostic_sample/plan.json").read_text())
-    # 报告刻意保留 vi/ms 行（它们是已退出目标语种的历史产物）：诊断排序要能读旧报告，
+    # 报告刻意保留 ms 行（它是已退出目标语种的历史产物）：诊断排序要能读旧报告，
     # 而随机对照只从当前 TARGET_LANGS 的分层里抽。
     assert len(metadata["overlap_case_ids"]) == 7
     for group, paths in saved.items():

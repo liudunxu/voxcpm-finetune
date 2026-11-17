@@ -1,5 +1,52 @@
 # 语料来源：地区短剧候选与历史获取调研
 
+## 2026-11-17：VN/英语扩充备料（用户决定）与 GigaSpeech 系许可冲突
+
+用户 2026-11-17 决定：在现有微调（r50 配方）基础上添加 VN（vi）与英语微调语料，并提前备料。
+vi 四源已按 `vi_id_support.md` 存档恢复注册（`TARGET_LANGS` 加 vi，ms 仍退出）；混合配比未重新设计。
+远端 GPU 实例当时停机（connect.bjb1.seetacloud.com:51348 refused），下载未执行；命令清单见 `TODO.md`。
+
+### ⚠️ GigaSpeech / GigaSpeech2 的 gated 条款与 Apache-2.0 标签冲突（2026-11-17 核到原文）
+
+用 HF_TOKEN 读 `speechcolab/gigaspeech` 与 `speechcolab/gigaspeech2` 的 `extra_gated_prompt` 原文：
+两者都是「**only for non-commercial research and educational purposes**」（清华 SpeechColab 访问条款，
+另需 Google Form 申请）。cardData 的 `license: apache-2.0` 标签**不覆盖这份点击同意的访问条款**。
+⇒ 按本项目「许可核到原文」纪律，GigaSpeech 系本不得用于商用配音模型的训练。
+**这波及现行配方**：`gigaspeech2_th` / `gigaspeech2_id` 是 r30 清洗池与 r50 的组成部分。
+**用户 2026-11-17 决定：接受风险暂继续用**（含备料 `gigaspeech2_vi`）；本条作为风险记录保留，
+不改旧报告；将来若要合规化，替代路线是 CV/FLEURS/双 ASR 过滤后的 yodas。
+英语候选不注册 GigaSpeech（新源没必要再背同一风险）。
+
+### 英语候选核实表（2026-11-17，HF API / README / tree API 原文）
+
+| 源 | 许可（核实方式） | gated | 形态与用途 | 状态 |
+|---|---|---|---|---|
+| `fsicoli/common_voice_22_0` en | CC0（与 th/id 同仓库） | 否 | `transcript/en/{dev,test}.tsv` 已按 mirror tree API 核实存在；`client_id` 账号级身份；现有 `kind=cv22` 下载器直接可用。众包朗读，量大 | ✅ 已注册 `cv22_en`，远端恢复后先试跑 |
+| `facebook/multilingual_librispeech`（config en） | cc-by-4.0（API cardData） | 否 | LibriVox 有声书朗读，speaker ID；小时数本轮未核。发音锚点，不是口语 | ~ 待试跑核字段/时长分布 |
+| `mythicinfinity/libritts_r`（原 blabble-io 已重定向） | cc-by-4.0（API cardData） | 否 | LibriTTS-R 朗读，speaker ID，24kHz；小时数未核 | ~ 待试跑 |
+| `CSTR-Edinburgh/vctk` | cc-by-4.0（API cardData） | 否 | 110 说话人带口音朗读，48kHz；可充实 `replay_en` 自备池 | ~ 待试跑 |
+| `edinburghcstr/ami` | cc-by-4.0（API cardData） | 否 | 会议对话（少数许可干净的**自然口语**英语源），有说话人标注；长音频分段形态未核，`_load_audio` 是否支持要先试跑 | ~ 待试核形态 |
+| `facebook/voxpopuli`（config en） | README 原文「distributet under CC0」（cardData 含 other，以 README 为准） | 否 | 欧洲议会发言，正式语体非口语；有说话人 ID | ~ 低优先 |
+| `MLCommons/peoples_speech` | 混合 cc-by-2.0/2.5/3.0/4.0 + cc-by-sa-3.0/4.0（API） | 否 | 逐子集许可不同，须按子集过滤后才可用；规模未核 | ~ 低优先 |
+| `facebook/expresso` | **未核实**（gated，无 token 访问被拒） | 是 | Meta 表演/对话语料，是英语侧最对口的表演候选；许可传闻 CC-BY-NC 未证实 | ~ 需申请访问后核许可原文 |
+| `amphion/Emilia-Dataset` | cardData 标 cc-by-4.0，**README 需授权不可读，未证实** | auto | in-the-wild 伪标注，即使用也须双 ASR 过滤 | ~ 待授权核原文 |
+| EARS（`facebookresearch/ears_dataset`，HF 镜像 `philgzl/ears`） | **CC-BY-NC-4.0**（GitHub README + HF 卡片双确认） | — | 100h/107 人表演朗读，质量高但 NC | ❌ 排除（NC 禁商用） |
+| `speechcolab/gigaspeech` | 标签 apache-2.0，**访问条款非商业**（见上） | auto | 自然口语短段，本来最对口 | ❌ 商用排除 |
+
+**结论**：英语侧许可干净、无需申请即可下的全是朗读/会议/议会语体（CV en、MLS、LibriTTS-R、VCTK、AMI、VoxPopuli）；
+**表演/情绪英语开源现货基本是 NC（EARS 已证实，Expresso 待核）**——与 vi/tl 的表演语料缺口同构，
+表演档最终仍靠自备 `replay_en`/授权素材。**用户 2026-11-17 已决定英语升为目标语种**，
+五目标语种的新配比待设计（见 TODO.md）。
+
+### vi 备料现状
+
+- 可下源：`fleurs_vi`（CC-BY-4.0 朗读）、`cv22_vi`（CC0，validated 6.34h/354 人，2026-09-15 已核）。
+- `gigaspeech2_vi`：形态已核（dev 1018MB≈8.8h 短句）；许可冲突用户已决定接受风险暂继续用，可下载。
+- `yodas2_sidon` vi000（CC-BY-3.0，2026-09-15 已核可下）：伪标注，按作战手册须双 ASR 过滤，低优先。
+- 表演语料：仍只有自备 `drama_vi`；VN 短剧链接仅档案（见下节），授权未核验不下载。
+- 本机 `data/raw` 无 vi/en 音频；`work/for_train/candidate_sources.jsonl` 的 vi 行是旧五语种时期登记，
+  其中「reuse existing processed pool」指向远端旧产物，实例重建后是否还在盘上需远端恢复后核实。
+
 ## 2026-10-30：Granary已进入有界选择试验，清洗逻辑已核源码
 
 按用户要求实际试验并借鉴清洗：固定HF revision不变，核对Curator公开commit

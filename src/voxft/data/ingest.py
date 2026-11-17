@@ -1,4 +1,4 @@
-"""成片音轨 → 切分 → 转写 → 追加到自备语料（drama_tl / drama_th / drama_id / replay_en）。
+"""成片音轨 → 切分 → 转写 → 追加到自备语料（drama_tl / drama_th / drama_id / drama_vi / replay_en）。
 
 Tagalog 没有可商用的开源真人表演语料：Common Voice tl 官方 0 小时、YODAS/YODAS2 的
 224 个语种子集里没有 tl、OpenSLR 无菲律宾语资源、HF 上带 audio 的只有厂商 sample。

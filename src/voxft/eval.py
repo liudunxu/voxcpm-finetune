@@ -5,6 +5,7 @@ ASR 误差不等于发音错误，疑似漏尾不等于真实截断，F0 不是�
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -26,8 +27,9 @@ EVAL_DIR = CHECKPOINT_DIR / "eval"
 # 强制解码让 CER 在不同 checkpoint 之间可比。
 AUTO_DETECT_LANGS = frozenset({"tl"})
 
-# 按空格切词有意义的语种才算 WER。th 词间根本没有空格，只有 CER。
-WER_LANGS = frozenset({"tl", "en", "id"})
+# 按空格切词有意义的语种才算 WER。vi 正字法以音节为单位空格分隔，它的 WER 是音节级
+# 错误率，与 tl/en/id 的词级不同量纲，别横向比；th 词间根本没有空格，只有 CER。
+WER_LANGS = frozenset({"tl", "en", "id", "vi"})
 
 
 def _transcribe(model, wav_path: str, lang: str) -> str:
@@ -154,7 +156,7 @@ _REPORT_NOTE = (
     "ASR/漏尾均为诊断；F0 不作通过门限，也不能直接判娃娃音。"
     "声学异常可单独盲听；没有合格母语评分时，口音/语言自然度/情绪保持未验证。"
     "工程检查通过不等于完整语言验收通过。"
-    "rate 的量纲随语种不同（th 字符/秒、tl/en/id 词级），不横向比。"
+    "rate 的量纲随语种不同（th 字符/秒、vi 音节/秒、tl/en/id 词级），不横向比。"
     "suspected_truncation=少读/漏尾，over_read=多读/跑飞（>1.4× 参考长度）。"
     "mean_cer_non_numeric 剔除了含数字的 case（阿拉伯数字与泰文数字词都算——"
     "两者都会被 Whisper 归一成数字符号而污染 CER），只能靠盲听。metallic 与 low_snr 阈值移植自 OmniVoice "
@@ -267,7 +269,9 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
     文件里声明的原样，可能是 "th_nat_01" 这类字符串），用于多进程并行跑同一份
     case 集，事后用 merge_reports 合并。progress 每条出结果时回调一次
     （CLI 传 print，方便远程 nohup 场景从日志数进度——全程只有 tqdm 条的话
-    只能靠数产物文件估进度）。
+    只能靠数产物文件估进度）。中途崩溃后重跑同一命令会断点续跑：已完成的
+    (case_id, seed) 从 <label>.partial.jsonl 复用，不重复生成；case 集或口径
+    变化则指纹不符、自动从头开始。
     """
     from .data.pipeline import _whisper_model
 
@@ -306,12 +310,41 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
         label += f"_strength{lora_strength:g}"
     if shard is not None:
         label += f"_shard{shard[0]}of{shard[1]}"
+    # 断点续跑：生成+ASR 是评测里最贵的部分，shard 中途崩溃不该全部重来。
+    # 逐条追加到 <label>.partial.jsonl；条件指纹（target/base/参数/case 集）一致才复用，
+    # case 或口径变了就从头开始。同一 label+shard 不要并行跑两份，会互相写坏 partial。
+    fingerprint = hashlib.sha256(json.dumps({
+        "target": target, "base": infer._resolve_base(base), "cfg": cfg_value,
+        "steps": inference_timesteps, "strength": lora_strength, "shard": shard,
+        "cases": cases}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    EVAL_DIR.mkdir(parents=True, exist_ok=True)
+    partial_path = EVAL_DIR / f"{label}.partial.jsonl"
+    done: dict[tuple[str, int], dict] = {}
+    if partial_path.exists():
+        lines = partial_path.read_text(encoding="utf-8").splitlines()
+        head = json.loads(lines[0]) if lines else {}
+        if head.get("_fingerprint") == fingerprint:
+            for line in lines[1:]:
+                if line.strip():
+                    item = json.loads(line)
+                    done[(str(item["case_id"]), int(item["seed"]))] = item
+        else:
+            partial_path.unlink()
+    partial_fh = partial_path.open("a" if done else "w", encoding="utf-8")
+    if not done:
+        partial_fh.write(json.dumps({"_fingerprint": fingerprint}) + "\n")
+    if done and progress:
+        progress(f"断点续跑：{label} 复用已完成 {len(done)} 条，跳过重复生成")
     items = []
     ref_cache: dict = {}
     seed_list = seeds if seeds is not None else None
     total = sum(len(seed_list) if seed_list else 1 for _ in cases)
     for case in cases:
         for requested_seed in seeds if seeds is not None else [int(case.get("seed", seed))]:
+            prev = done.get((str(case["case_id"]), int(requested_seed)))
+            if prev is not None:
+                items.append(prev)
+                continue
             # 逐 case 可覆盖 cfg/steps：复现生产按参考时长自适应的有效参数（如短参考 28 步）
             case_cfg = float(case.get("cfg_value", cfg_value))
             case_steps = int(case.get("inference_timesteps", inference_timesteps))
@@ -324,7 +357,7 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                 wav_path, gen_sec = infer._run(model, kw)
             hyp = _transcribe(whisper, wav_path, case["lang"])
             h, r = _norm(hyp), _norm(case["text"])
-            items.append({
+            item = {
                 **case, "seed": requested_seed, "hyp": hyp,
                 "effective_cfg_value": case_cfg, "effective_inference_timesteps": case_steps,
                 "similarity": round(SequenceMatcher(None, h, r).ratio(), 4),
@@ -346,10 +379,14 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
                                  "speaker_similarity_1_5": None, "intelligibility_1_5": None,
                                  "cutoff": None, "noise": None, "notes": "",
                                  "acoustic_status": None, "acoustic_types": []},
-            })
+            }
+            items.append(item)
+            partial_fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+            partial_fh.flush()
             if progress:
                 progress(f"[{len(items)}/{total}] {case['case_id']} seed={requested_seed} "
-                         f"cer={items[-1]['cer']:.3f} gen={gen_sec}s")
+                         f"cer={item['cer']:.3f} gen={gen_sec}s")
+    partial_fh.close()
 
     report = {
         "target": target, "base": infer._resolve_base(base), "label": label,
@@ -362,7 +399,9 @@ def evaluate(target: str, lang: str, texts: list[str | dict],
         "note": _REPORT_NOTE,
         "items": items,
     }
-    return _save_report(report)
+    saved = _save_report(report)
+    partial_path.unlink(missing_ok=True)
+    return saved
 
 
 def _case_sort_key(item: dict) -> tuple:

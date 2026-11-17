@@ -6,11 +6,12 @@ from dataclasses import dataclass
 
 PREFERRED_TAG = "【首选】"
 
-# 微调目标语种。zh / en 是防遗忘回放语种，不是目标，别加进来。
+# 微调目标语种。zh 是防遗忘回放语种，不是目标，别加进来。
 # UI 文案与 eval 白名单一律引用这里，不要再手写一遍语种列表。
-# vi / ms 已于 2026-10-19 退出目标语种（源与白名单一并删除，接入依据存档在
-# docs/vi_id_support.md 与 docs/ms_support.md）。
-TARGET_LANGS = ("th", "tl", "id")
+# ms 已于 2026-10-19 退出目标语种（接入依据存档在 docs/ms_support.md）。
+# vi 于 2026-10-19 退出后，用户 2026-11-17 决定重新加入；同日决定 en 升为目标语种
+#（原为防遗忘回放）。五目标语种的混合配比尚未重新设计，见 TODO.md。
+TARGET_LANGS = ("th", "tl", "id", "vi", "en")
 
 # Whisper 会把句内英文多的 code-switch 样本判成 en，只认目标语种会误杀最该保留的样本。
 # id 的日常口语与短剧台词混英文程度接近 Taglish。
@@ -88,6 +89,11 @@ SOURCES: list[Source] = [
            has_speaker=True, role="expressive", preferred=True, expressive=True, quality=100),
     Source("drama_th", "th", "已审核真人泰语短剧对白（自备 JSONL）", "local",
            license="按自有授权", has_speaker=True, role="expressive", expressive=True, quality=100),
+    Source("drama_vi", "vi", "已审核真人越南语短剧对白（自备 JSONL）", "local",
+           license="按自有授权",
+           note="越南语唯一的可信表现力来源：没有已核实的开源真人情感/表演语料。"
+                "填写 speaker_verified=true；英文/中文同人参考可标 reference_only=true",
+           has_speaker=True, role="expressive", preferred=True, expressive=True, quality=100),
     Source("drama_id", "id", "已审核真人印尼语短剧对白（自备 JSONL）", "local",
            license="按自有授权",
            note="印尼语唯一的可信表现力来源：没有已核实的开源真人情感/表演语料。"
@@ -213,6 +219,42 @@ SOURCES: list[Source] = [
         "未知", "仅 audio 列，加工自动转写；商用前先核实许可",
         has_speaker=False, qc="none", needs_transcribe=True, quality=30,
     ),
+    # ---- 越南语（2026-11-17 按 docs/vi_id_support.md 存档恢复） ----
+    Source(
+        "gigaspeech2_vi", "vi", "Gigaspeech 2 越南语（YouTube/播客自然口语）",
+        "hf_tar", "speechcolab/gigaspeech2", "vi", "dev",
+        "Apache-2.0",
+        "许可最干净（Apache-2.0，无 SA/NC 红线），是 vi 的自然口语首选锚点。"
+        "**已核实形态**（早先「未核实、可能是长音频+时间戳」的担心不成立）："
+        "`data/vi/<split>.tar.gz` 里每条一个 wav（实测 3.7-13.8s），`dev.tsv` 是 `id\\t全大写文本`，"
+        "不是 path+start+end 的长音频切片，所以可按条直接取用。"
+        "`refs/convert/parquet` 分支不存在（parquet 索引 API 却返回 200），走 `kind=hf_tar`。"
+        "dev 分片 1018MB≈8.8h，train 单片 3.4GB×240 片——用 dev 就够。"
+        "tsv 全大写，`sentence_case` 转句首大写对齐线上文本形态。"
+        "gated:auto，需 HF_TOKEN 并在数据集页面同意条款。无 speaker ID，不配 ref",
+        has_speaker=False, qc="none", role="anchor", preferred=True,
+        sentence_case=True, quality=80,
+    ),
+    Source(
+        "fleurs_vi", "vi", "FLEURS 越南语（干净朗读，发音锚点）",
+        "hf_dataset", "google/fleurs", "vi_vn", "train",
+        "CC-BY-4.0",
+        "config 名按 FLEURS 的 {lang}_{country} 模式推得，首次先 --max-samples 50 确认；"
+        "小时数未核实。朗读发音补充；无可靠说话人身份，不配 ref",
+        has_speaker=False, qc="none", accept_langs=("vi",), quality=60,
+    ),
+    Source(
+        "cv22_vi", "vi", "Common Voice 22 越南语（众包朗读，发音锚点）",
+        "cv22", "fsicoli/common_voice_22_0", "vi", "train",
+        "CC0",
+        "官方已撤架，此为社区镜像（无需同意条款）；脚本式数据集的数据 URL 硬编码到 "
+        "huggingface.co，已改为按真实布局直拉 tsv+tar（只取 train/dev/test）。"
+        "validated 6.34h/354 人（2026-09-15 核实）。client_id 是账号级持久身份（非聚类猜测），"
+        "与 cv22_th/cv22_id 同口径（r9 起重评可信）：标 speaker_verified、参与 ref 配对；"
+        "仍只做匿名分组，不识别真人（CV 条款红线）。众包噪音大，自动 Whisper 校验；"
+        "朗读语料有权威文本，语种不符就是错行，因此不吃 code-switch 放行",
+        has_speaker=True, qc="whisper", accept_langs=("vi",), quality=30,
+    ),
     # ---- 印尼语 ----
     Source(
         "atika88_id", "id", "Atika88 印尼语 ASR-11 类（134h/20 人，11 种句型，16k 棚录）",
@@ -277,6 +319,16 @@ SOURCES: list[Source] = [
         "英文回放占联合配比 5 分。除了防遗忘，它直接服务 Taglish 与印尼语混英：tl / id 的"
         "台词句内混英文词，线上有「英文词被念错」类反馈，英文朗读是唯一许可干净的补法",
         has_speaker=False, qc="none", role="antiforget", quality=80,
+    ),
+    Source(
+        "cv22_en", "en", "Common Voice 22 英语（众包朗读，量最大的 CV locale）",
+        "cv22", "fsicoli/common_voice_22_0", "en", "train",
+        "CC0",
+        "2026-11-17 用户决定扩充英语语料后注册；transcript/en 布局已按 mirror tree API 核实。"
+        "下载通路与 cv22_th/cv22_id 完全一致（直拉 tsv+tar）。client_id 是账号级持久身份，"
+        "同 r9 口径标 speaker_verified、参与 ref 配对；只做匿名分组，不识别真人（CV 条款红线）。"
+        "众包噪音大，自动 Whisper 校验；英语 2026-11-17 起升为目标语种，配比待定，见 TODO.md",
+        has_speaker=True, qc="whisper", accept_langs=("en",), role="antiforget", quality=40,
     ),
 ]
 

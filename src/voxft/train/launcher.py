@@ -233,11 +233,12 @@ def preflight(config_path: str | Path, gpus: int | None = None) -> list[str]:
 
 
 _PROC: subprocess.Popen | None = None
+_LOG_FH = None
 
 
 def start_local(config_path: str | Path, gpus: int = 1, progress=None) -> Path:
     """在本机（需有 GPU）以后台子进程启动训练，日志写入 run 目录下 train.log。"""
-    global _PROC
+    global _PROC, _LOG_FH
     if _PROC is not None and _PROC.poll() is None:
         raise RuntimeError("已有训练任务在运行；先停止或等待其结束")
     issues = preflight(config_path, gpus)
@@ -250,9 +251,10 @@ def start_local(config_path: str | Path, gpus: int = 1, progress=None) -> Path:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = gpu_command(config_path, gpus)
     # ponytail: 单实例全局锁（_PROC），多任务并行时改为按 run 字典管理
+    _LOG_FH = log_path.open("a")
     _PROC = subprocess.Popen(
         cmd, shell=True, cwd=VOXCPM_REPO,
-        stdout=log_path.open("a"), stderr=subprocess.STDOUT,
+        stdout=_LOG_FH, stderr=subprocess.STDOUT,
         start_new_session=True,
         env={**os.environ, "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},
     )
@@ -261,16 +263,30 @@ def start_local(config_path: str | Path, gpus: int = 1, progress=None) -> Path:
     return log_path
 
 
+def _signal_group(sig: int) -> None:
+    # shell=True 时 terminate() 只杀 /bin/sh，训练 python 是它的子进程收不到信号；
+    # start_new_session 让 shell 成为进程组组长，按组发信号才能带走整棵进程树。
+    try:
+        os.killpg(os.getpgid(_PROC.pid), sig)
+    except (ProcessLookupError, PermissionError):
+        _PROC.send_signal(sig)
+
+
 def stop_local() -> bool:
-    global _PROC
+    global _PROC, _LOG_FH
     if _PROC is None or _PROC.poll() is not None:
         return False
-    _PROC.terminate()
+    import signal
+    _signal_group(signal.SIGTERM)
     try:
         _PROC.wait(timeout=30)
     except subprocess.TimeoutExpired:
-        _PROC.kill()
+        _signal_group(signal.SIGKILL)
+        _PROC.wait(timeout=10)
     _PROC = None
+    if _LOG_FH is not None:
+        _LOG_FH.close()
+        _LOG_FH = None
     return True
 
 

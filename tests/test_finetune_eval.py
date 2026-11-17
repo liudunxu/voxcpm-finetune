@@ -230,8 +230,8 @@ def test_every_registry_lang_has_eval_channel():
     assert not missing, f"registry 里有语种没有验收通道: {missing}"
     assert set(TARGET_LANGS) <= set(evaluation.SAMPLE_BY_LANG)
     assert evaluation.AUTO_DETECT_LANGS == {"tl"}
-    # id/tl/en 词间有空格 → 词级 WER；th 词间无空格只有 CER
-    assert set(evaluation.WER_LANGS) == {"tl", "en", "id"}
+    # id/tl/en 词间有空格 → 词级 WER；vi 音节空格 → 音节级 WER；th 词间无空格只有 CER
+    assert set(evaluation.WER_LANGS) == {"tl", "en", "id", "vi"}
 
 
 def test_eval_computes_cer_and_wer_for_id_and_tl(tmp_path, monkeypatch):

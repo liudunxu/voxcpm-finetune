@@ -55,11 +55,13 @@ tags: [voxcpm, tts, fine-tune, lora]
 lora_weights.safetensors + lora_config.json；merged 目录为完整模型）。
 
 > **上传前必须核对训练数据许可**（公开仓库不可逆）：
-> - 含 **CC-BY-SA** 源（`thai_ser` / `porjai_th`）训练的权重**一律禁止对外分发**，
->   只能走 API 交付合成音频——见 AGENTS.md「泰语源有 CC-BY-SA 红线」。
+> - 含 **CC-BY-SA** 源（`thai_ser` / `porjai_th`）训练的权重：用户 2026-10-20 决定
+>   允许对外分发，但模型卡必须如实标注上游许可与 share-alike 义务。
 > - 含 **CC-BY** 源（FLEURS = CC-BY-4.0、YODAS2 = CC-BY-3.0）必须在下方补署名。
 > - `license: apache-2.0` 只描述基座权重（VoxCPM2 本身是 Apache-2.0），
 >   不代表训练数据许可；NC/ND 源同样禁止分发（微调即演绎）。
+> - GigaSpeech/GigaSpeech2 的 gated 访问条款限非商业（与 apache-2.0 标签冲突），
+>   用户 2026-11-17 决定接受风险暂继续用；发布前在下方如实记录该风险。
 
 ## 训练数据来源与署名
 

@@ -456,6 +456,7 @@ def test_preferred_source_per_lang_and_role():
     assert set(pref) == {("th", "expressive"), ("th", "anchor"),
                          ("tl", "expressive"), ("tl", "anchor"),
                          ("id", "expressive"), ("id", "anchor"),
+                         ("vi", "expressive"), ("vi", "anchor"),
                          ("zh", "antiforget")}
     slots = [(s.lang, s.role) for s in SOURCES if s.preferred]
     assert len(slots) == len(set(slots)), "同一槽位出现多个首选"

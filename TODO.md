@@ -1,5 +1,20 @@
 # TODO：配音质量改进（drama 非硬依赖）
 
+## 2026-11-17 微调/评估流程审计修复（已完成，632 项测试通过）
+
+整体 review 后修掉 9 个会实际造成事故的点（测试在 `tests/test_flow_audit_fixes.py`）：
+- `stop_local` 原只杀 shell、训练子进程继续占 GPU → 改按进程组杀（`launcher.py`）。
+- 独立 SwanLab 桥接 CLI 遇一次网络抖动就死 → 新增 `serve()` 捕获重试（`tb_wandb_bridge.py`）。
+- LoRA merge 零/部分匹配只警告 → 不完整即 raise，禁止导出坏权重（`lora/merge.py`）。
+- AISHELL-3 半截 tgz 被当完整包 → 下到 `.part`、校验 Content-Length、解压 `filter="data"`。
+- 流式下载一条坏音频打死整批 → 与 parquet 同口径计数跳过、全坏才中止。
+- 模型卡模板的 SA 禁令已废止 → 更新为 2026-10-20 现行口径 + GigaSpeech 风险记录。
+- 响度对齐非原子覆盖 WAV → 临时文件 + `os.replace`。
+- Whisper 每个评测 target 重复加载 → 进程内按 (模型名,尺寸) 缓存。
+- **`evaluate()` 断点续跑**：逐条写 `<label>.partial.jsonl`，崩溃重跑同命令自动复用已完成
+  (case_id, seed)；case 集/口径变化指纹不符则从头跑；完成后清理。同一 label+shard 勿并行两份。
+- 刻意不改：`mix_manifests` 配额满后的空转（提前 break 会挪动共享 RNG 流，破坏冻结配方可复现性）。
+
 ## 音色一致性专项（2026-11-05，先测量后训练）
 
 计划与闸门见 OmniVoice `docs/timbre_consistency_finetune_plan_20261105.md`。要点：UAT 音色不一致主因是 DIS 管线（已修，待部署重跑）；
@@ -11,6 +26,51 @@ r26–r53 从未测过音色，先建 `timbre_v1` 评测臂（生产角色参考
 - [ ] 零训练杠杆已有现成试听包（2026-11-06）：配角跨集「共用一条降噪参考」vs 现行「每集各自锚点」，DIS 仓
   `work/listening/minor_char_ab_20261106/`（4 角色 17 句，答案在 `_key/`）。自动跨集声纹均值 0.33–0.47 → 0.54–0.68（Kasama 疑似多人
   同名除外），**不能替代人耳**；盲听回填后再决定是否作为 timbre_v1 的一个臂，优先于训练。
+
+## VN / 英语语料扩充（用户 2026-11-17 决定，下一轮数据方向）
+
+用户要求：**在现有微调（r50 配方、生产已切 r50）的基础上，继续添加 VN（vi）与英语的微调语料，并提前备好料**。
+此决定覆盖 2026-10-19「vi 退出目标语种」（ms 仍退出）；配方仍按作战手册 C 节固定 r50、只改数据。
+
+**已完成的本地准备（2026-11-17）**：
+- vi 四源已按 `docs/vi_id_support.md` 存档恢复注册；`TARGET_LANGS=(th,tl,id,vi)`；eval 白名单
+  （`SAMPLE_TEXTS`/`WER_LANGS`，vi 音节级）与 UI 文案同步；623 项测试通过。
+- 英语候选已逐个核许可原文，结论表在 `docs/corpus_sourcing.md` 顶部新节；`cv22_en`（CC0，通路已核）已注册。
+  许可干净可下的英语源全是朗读/会议/议会语体；表演英语现货基本 NC（EARS 已证实排除，Expresso gated 待核）。
+- ⚠️ **GigaSpeech/GigaSpeech2 许可冲突（用户已决定暂继续用）**：gated 访问条款原文是「仅非商业研究/教育」，
+  与 apache-2.0 标签冲突。用户 2026-11-17 决定接受风险继续用（含现行 r50 配方的 gigaspeech2_th/id
+  与备料 gigaspeech2_vi），风险记录在 `docs/corpus_sourcing.md` 顶部；未改旧报告。
+- **远端实例停机**（connect.bjb1.seetacloud.com:51348 refused）⇒ 下载未执行；需用户重启实例（端口可能变）。
+  本机无 vi/en 现成音频；`work/for_train` 的 vi 登记行指向远端旧产物，恢复后先核是否还在盘上。
+
+**远端恢复后的备料命令（先试跑再全量，一律 nohup 落日志；下载不开代理）**：
+```bash
+# vi：朗读锚点（FLEURS 整片 parquet 约 2GB，CV vi 约 6.34h）+ 自然口语（用户已接受许可风险）
+uv run python -m voxft.data.download --source fleurs_vi --max-samples 50
+uv run python -m voxft.data.download --source cv22_vi --max-samples 50
+uv run python -m voxft.data.download --source gigaspeech2_vi --max-samples 50
+# en：CV en 通路验证（量最大，全量前先看时长分布与噪音）
+uv run python -m voxft.data.download --source cv22_en --max-samples 50
+# 试跑通过后全量下载 + 加工（16k/裁静音/3-30s/质检/身份隔离），再按新配比混合
+# yodas2_sidon vi000 / MLS en / LibriTTS-R / VCTK / AMI：形态有前置条件，见 corpus_sourcing 表
+```
+
+**用户已决定（2026-11-17）**：① GigaSpeech 系**暂继续用**——接受非商业条款风险，记录在案
+（`docs/corpus_sourcing.md` 顶部），备料与训练不受阻，`gigaspeech2_vi` 可下载；
+② **英语升为目标语种**——`TARGET_LANGS=(th,tl,id,vi,en)`，en 进入分语种验收，zh 仍为回放。
+
+- [ ] **配比重新设计**：现行 th/tl/id 各 28.3 + zh 10 + en 5 已不适用（五目标语种）；
+  新配比（th/tl/id/vi/en 目标份额 + zh 回放）定方案后冻结进 mix。缺口不重分配、按有效时长采样的纪律不变。
+  en 现有源（fleurs_en/replay_en/cv22_en）role 仍是 antiforget，配比定稿时一并改。
+- [ ] **远端恢复后核实旧产物**：旧五语种时期的 vi processed 池是否还在数据盘；在则按现行排除清单重新审计后才可复用，
+  不在则按上面命令重新下载。继承远端 `exclusions_20261104/` 全部排除与旧 val 保护。
+- [ ] **质量优先于数量（r53/r17 教训）**：只加准确转写的小增量；伪标注源（yodas vi000 等）必须双 ASR
+  一致性过滤（CER≤0.05）；MMS-FA 停顿切分推广到 vi/en 的准确转写源，拉高 1–4s 占比。
+- [ ] **表演语料缺口**：vi 只有自备 `drama_vi`；英语表演候选 Expresso 需申请访问并核许可原文；
+  VN 短剧链接仅档案、授权未核验，不下载不入库。
+- [ ] **验收**：vi/en 是新验收语种 ⇒ 先跑 `eval base` 拿分语种基线（新基线，不与旧三语种数字混比）；
+  分语种验收含 vi/en，任一语种（含 th/tl/id）相对基座退化即整轮不通过；≥5 seed、按句聚类统计；
+  开发集已反复择优，需新开发集；`reserved_r51_20261104` 仍留作一次性留出。母语自然度/口音未验证如实标注。
 
 ## 下一轮微调作战手册（2026-11-04 复盘 r26–r53 全过程后写定，下次直接照做）
 
