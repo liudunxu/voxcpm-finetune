@@ -10,6 +10,21 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/印尼语高质量语�
 > 旧文档里过时的门槛与「下一步」不覆盖本节。
 
 ### 生产与训练状态
+- **2026-11-19 TTS 引擎平替调研与 VoxCPM2 版本/参数核实（联网核到原文）**：结论**没有可平替 VoxCPM2 的开源模型**，
+  瓶颈是 th/tl/id/vi 覆盖而非模型新旧。Qwen3-TTS（2026-01 开源，Apache-2.0，0.6B/1.7B）开源版仅
+  中英日韩德法俄葡西意 10 语，**无东南亚目标语种**（th/id/vi 只在闭源云 API）；Fun-CosyVoice3-0.5B（含 RL 版，
+  Apache-2.0）9 语同样无东南亚；IndexTTS-2 系中英日西阿。**唯一值得将来实测的候选是 MOSS-TTS v1.5**
+  （复旦 OpenMOSS，2026-05，Apache-2.0，8B，原生 48kHz 立体声 tokenizer，可能突破 VAE 8kHz 带宽砖墙）：
+  31 语含 tl/th/vi/ms 但**语种表无 id**，东南亚语种为续训新增、质量无第三方验证；只作零样本对照候选，不训练不切换。
+  Fish Audio S2/Drama-3 社区许可（2026-10-13 版）：商用限年营收 <50 万美元（交付成片音频的配音制作形态豁免、
+  托管 TTS 服务不豁免），且**禁止用其材料/输出训练、蒸馏或改进任何语音生成模型**（封死拿其输出补语料的路）；
+  S2-Pro 权重仍纯研究许可。反向证据：CosyVoice3 官方评测表里 VoxCPM test-zh CER 0.93 全表最低、SS 77.2 第二，
+  表中「VoxCPM 0.5B」指 **VoxCPM1**；**VoxCPM2 主干实测 2,290,004,544 参数（约 2.29B，BF16，HF safetensors 元数据）**，
+  AudioVAE 单独 `audiovae.pth` 约 360MB；LoRA 可训参数 DiT-only rank32 约 334 万 / r48 enable_lm 约 1809 万（<1% 基座）。
+  本仓库 submodule 钉 `f772e49`（2026-09-02）= **2.0.3-33-gf772e49**，官方最新 tag 仍 2.0.3，上游 main 已领先 13 提交
+  （`300e426`），bump 须单独评估不改旧冻结产物。生产仍 VoxCPM2+r50 LoRA，不切换；任何「更好」宣称须过本项目
+  分语种验收门（≥3 seed + 母语评审）才算数。语料侧同日核实 BreezeBlue 两基准与 FunCineForge/CineDub 不可用，
+  见 `docs/corpus_sourcing.md` 顶部。
 - **2026-11-17 VN/英语语料扩充（用户决定）**：在现有微调（r50 配方）基础上继续添加 VN（vi）与英语微调语料，
   并提前备好料。此决定覆盖 2026-10-19「vi 退出目标语种」（ms 仍退出）；vi 四源已按 `docs/vi_id_support.md`
   存档恢复注册，**英语同日升为目标语种**：`TARGET_LANGS=(th,tl,id,vi,en)`，zh 仍为回放；

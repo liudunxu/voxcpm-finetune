@@ -1,5 +1,18 @@
 # 语料来源：地区短剧候选与历史获取调研
 
+## 2026-11-19：三个外部候选核实为不可用（BreezeBlue 两基准 / FunCineForge CineDub）
+
+均核到 HF API / README / GitHub 原文，登记后不再重复调研。
+
+| 候选 | 核实结论 | 处置 |
+|---|---|---|
+| `BreezeBlue/TTS-Voice-Direction-Benchmark` | 700 条英语**生成任务基准**：只有 ref 音频+指令+目标文本，**无目标音频**，构不成 (audio,text) 训练对；README 明确 25 条 ref 全部**合成**（BreezeBlue Voice Library），撞合成语料红线；HF API `license: None` 无许可声明 | ❌ 不可用于微调 |
+| `BreezeBlue/TTS-Voice-Design-Benchmark` | 1000 条英语**纯文本**（812kB，modality 仅 Text），角色描述 prompt+预览台词，无任何音频；无许可声明；源自 CharacterCodex 改写 | ❌ 不可用于微调 |
+| `QwenAudio/FunCineForge` + `FunAudioLLM/CineDub-Example` | 仓库是视频配音**管线工具**（Apache-2.0）+ Qwen2-0.5B/CosyVoice3-token 架构的 0.5B 配音模型，与 VoxCPM2 架构不同，不能当基座/merge。数据只有样例集 CineDub-Example：**CC-BY-NC-4.0** + gated（《唐顿庄园》《红楼梦》切片），NC 禁商用（NC≠SA，不在 2026-10-20 豁免内），底层版权影视音轨授权存疑；论文宣称的全量 CineDub-CN/EN **未发布**（HF 搜索仅 Example 与第三方 benchmark）；语种 zh/en | ❌ 数据不可用；管线的 MLLM CoT 校正思路（宣称 CER 4.53→0.94%）仅作将来自建 drama_* 的流程参考 |
+
+两个 BreezeBlue 基准的配套评测套件（LLM-judge VDS + WavLM SIM）理论上可测指令跟随，
+但线上配音不用控制前缀（60/60 归档 `control_instruction: ""`）、voice-design 不在配音链路，对本项目验收价值低，不占轮次。
+
 ## 2026-11-17：VN/英语扩充备料（用户决定）与 GigaSpeech 系许可冲突
 
 用户 2026-11-17 决定：在现有微调（r50 配方）基础上添加 VN（vi）与英语微调语料，并提前备料。
