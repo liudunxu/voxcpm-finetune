@@ -1,0 +1,281 @@
+{
+  "tag": "timbre_v1_20261119",
+  "source_plan": "OmniVoice docs/timbre_consistency_finetune_plan_20261105.md 阶段 0",
+  "arms": {
+    "base": {
+      "target": "base"
+    },
+    "r50": {
+      "target": "checkpoints/r50_3ep_20261103/latest",
+      "production": true,
+      "lora_weights_sha256": "f08bcb27b294488a9a4082f1ef1db10b7e72f9a44e60d2d3f39d3f9bf7276d41"
+    }
+  },
+  "generation": {
+    "cfg_value": 1.8,
+    "inference_timesteps": "按参考时长 <2s 28 / 2–5s 24 / ≥5s 22（TODO.md 冻结口径）",
+    "retry_badcase": false,
+    "seeds_per_ref": 5,
+    "seed_rule": "stable_seed(tag, ref_sha256, k)，同参考固定，模拟生产按角色稳定 seed"
+  },
+  "cases": {
+    "main": {
+      "path": "eval_cases/timbre_v1_20261119.jsonl",
+      "rows": 600,
+      "sha256": "a9be031cc0d740316102f3cffc46df306944b3fe2f419653c325d4dfacfa6995",
+      "arms": [
+        "base",
+        "r50"
+      ]
+    },
+    "levers": {
+      "path": "eval_cases/timbre_v1_20261119_levers.jsonl",
+      "rows": 1035,
+      "sha256": "a0b7a5fb1142237e7fdbe8860901445281419e47535d469d8f6b82ceb489830c",
+      "arms": [
+        "r50"
+      ]
+    }
+  },
+  "refs": {
+    "tl123_c_3b9447": {
+      "source": "uat_replay/r20/refs/c_3b9447.wav",
+      "sha256": "fabc881e9d68be4ee95b02f2fa040fe5decb5d88534e73bd1b10653b09d9437c",
+      "provenance": "records",
+      "sr": 32000,
+      "duration": 3.56,
+      "seeds": [
+        596743161,
+        447249175,
+        1452267789,
+        324111795,
+        90260959
+      ],
+      "crops": {
+        "3s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_c_3b9447_crop3s.wav",
+          "sha256": "6283a1ff05526ac0f3333138406052c4198a624af467a7362cb6eebb04220b14",
+          "steps": 24
+        }
+      }
+    },
+    "tl123_c_5c08e5": {
+      "source": "uat_replay/r20/refs/c_5c08e5.wav",
+      "sha256": "7fadf1709e81fa33798ce4f375c115bc958a760abb3a6fa084fbcc6fad6fb702",
+      "provenance": "records",
+      "sr": 32000,
+      "duration": 8.2,
+      "seeds": [
+        1235755005,
+        297352807,
+        786801962,
+        1122137609,
+        358072964
+      ],
+      "crops": {
+        "3s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_c_5c08e5_crop3s.wav",
+          "sha256": "4b389b579d02a1a176e515b85feddd02c4a741922c75214494731cf3774b7964",
+          "steps": 24
+        },
+        "5s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_c_5c08e5_crop5s.wav",
+          "sha256": "796a1142b731bcf7667db74fba00da8100019121e5596adfc6b213cc48370231",
+          "steps": 22
+        }
+      }
+    },
+    "tl123_c_d4ae78": {
+      "source": "uat_replay/r20/refs/c_d4ae78.wav",
+      "sha256": "d13dfef8f05a85d41daca7bbc551302f2aeb75ca642212afd56e0e1977efc49d",
+      "provenance": "records",
+      "sr": 32000,
+      "duration": 8.13,
+      "seeds": [
+        1167846283,
+        1868003050,
+        257784803,
+        1947773385,
+        2114819472
+      ],
+      "crops": {
+        "3s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_c_d4ae78_crop3s.wav",
+          "sha256": "ade2ccd01979feeb356e87aa7b8785e5cb033794b8d815c38cb7badb44138844",
+          "steps": 24
+        },
+        "5s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_c_d4ae78_crop5s.wav",
+          "sha256": "ea8f2c021c5599b705aef0f9b08262c6d87b7261f07c582d7b802ed67cd9cf52",
+          "steps": 22
+        }
+      }
+    },
+    "tl129_c_0ebc41": {
+      "source": "uat_replay/r22/refs/c_0ebc41.wav",
+      "sha256": "23a48fb176fdb58dad2fc19766688061d4c64cdd73d419b4110a37d4978f50f9",
+      "provenance": "records",
+      "sr": 32000,
+      "duration": 6.81,
+      "seeds": [
+        1209924830,
+        505198323,
+        1408886075,
+        1217574101,
+        618427597
+      ],
+      "crops": {
+        "3s": {
+          "path": "../work/timbre_v1_20261119/refs/tl129_c_0ebc41_crop3s.wav",
+          "sha256": "5eae82b36c8f24083b407ac02ebb66211321ea9d7f9ecf87757ade4951c2d1ed",
+          "steps": 24
+        },
+        "5s": {
+          "path": "../work/timbre_v1_20261119/refs/tl129_c_0ebc41_crop5s.wav",
+          "sha256": "c7b91b0b21887d66a9437456a6a9b0caa1f0b88a996130689501a2330dc04e10",
+          "steps": 22
+        }
+      }
+    },
+    "tl129_c_e9961f": {
+      "source": "uat_replay/r22/refs/c_e9961f.wav",
+      "sha256": "041e0c7fed2fd45ac904a8bca55ab8fd36644c53ff060e64436fc8edac3184c7",
+      "provenance": "records",
+      "sr": 32000,
+      "duration": 8.2,
+      "seeds": [
+        1913589379,
+        1571027032,
+        1160025136,
+        83959102,
+        1366079837
+      ],
+      "crops": {
+        "3s": {
+          "path": "../work/timbre_v1_20261119/refs/tl129_c_e9961f_crop3s.wav",
+          "sha256": "03ccfa5546d246599fbad646d6c96bc72448a0fa327e342a6e05ccb9b05a8524",
+          "steps": 24
+        },
+        "5s": {
+          "path": "../work/timbre_v1_20261119/refs/tl129_c_e9961f_crop5s.wav",
+          "sha256": "18a5a2979a025f0dd79ae51a16907906f3f348cc921a6750491184225d05e3db",
+          "steps": 22
+        }
+      }
+    },
+    "tl123_batang": {
+      "source": "listening/minor_char_ab_20261106_key/batang_shared_ref.wav",
+      "sha256": "22ef4e137b9c18373477546dc194935a03a7455fe5971b5d268e3a9708bdc9ff",
+      "provenance": "key",
+      "sr": 16000,
+      "duration": 7.125,
+      "seeds": [
+        653556015,
+        2033814962,
+        259004841,
+        792859074,
+        1615015431
+      ],
+      "crops": {
+        "3s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_batang_crop3s.wav",
+          "sha256": "3b257cf789f06bf551ef14a27757dc42a9cf881c4c9314055e91120f602c69c5",
+          "steps": 24
+        },
+        "5s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_batang_crop5s.wav",
+          "sha256": "6117a7f82c607ee88b7b7418cf3b42a71d1d4385e60ace7631f097f9bd51300f",
+          "steps": 22
+        }
+      }
+    },
+    "tl123_inay": {
+      "source": "listening/minor_char_ab_20261106_key/inay_shared_ref.wav",
+      "sha256": "ef72fa24cb069024cd610336b98a038f3fd6a721875eb71de8b1a72eca6c97d7",
+      "provenance": "key",
+      "sr": 16000,
+      "duration": 5.42,
+      "seeds": [
+        1938194539,
+        1310681286,
+        843275220,
+        1094896962,
+        826143323
+      ],
+      "crops": {
+        "3s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_inay_crop3s.wav",
+          "sha256": "0d3dbef9fd065f57c1e8327ff083315603d0ca98dc718e3013241eb2a0757981",
+          "steps": 24
+        },
+        "5s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_inay_crop5s.wav",
+          "sha256": "f083cc61a3c23989599dd031e1e8dd3398c32bf8bdbbb8858c9328cb16a2ddbe",
+          "steps": 22
+        }
+      }
+    },
+    "tl123_kaibigan": {
+      "source": "listening/minor_char_ab_20261106_key/kaibigan_shared_ref.wav",
+      "sha256": "b66c29ef0fa170e4356761ab5d39b02c5882bcce0011a796581e1aa32e6eee70",
+      "provenance": "key",
+      "sr": 16000,
+      "duration": 6.571,
+      "seeds": [
+        1942350366,
+        43665875,
+        1364611121,
+        521492777,
+        123985267
+      ],
+      "crops": {
+        "3s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_kaibigan_crop3s.wav",
+          "sha256": "0ff322eb7b0e144bad37b83e55fe721d4b429ef53b4fe2c56ba198abf7d14bfe",
+          "steps": 24
+        },
+        "5s": {
+          "path": "../work/timbre_v1_20261119/refs/tl123_kaibigan_crop5s.wav",
+          "sha256": "0a72a73c0b247fe1c1a3857c73e1110cfd5a6274dda1c5ff4b57c76a2839a345",
+          "steps": 22
+        }
+      }
+    }
+  },
+  "controls": {
+    "angry-medium": "angry and emotionally tense, with clear, natural exclamatory emphasis",
+    "angry-high": "openly angry, as a full-voiced outburst",
+    "fearful-medium": "fearful and tense, with urgent, brisk delivery",
+    "fearful-high": "fearful and tense, with hard-driving urgency",
+    "sad-medium": "sad and emotionally weighted, with controlled, restrained delivery",
+    "sad-high": "deeply grieved, with a natural, controlled tremble"
+  },
+  "metrics": {
+    "sim_eres": "输出↔参考 ERes2NetV2（DIS 本地 ONNX，生产刻度）",
+    "sim_wavlm": "输出↔参考 WavLM-SV（报告 speaker_sim）；与 sim_eres 分开报告，不混比",
+    "consistency": "同臂同参考同 seed、plain 九句两两余弦均值（两种刻度各一）",
+    "register": "输出/参考 F0 p25、p50、p75 之比（pyin 70–450Hz）",
+    "gender_flip": "双方性别置信度均 ≥0.6 且相反（OmniVoice _segment_profile 移植）",
+    "intelligibility": "CER 均值、严重=over_read 或 suspected_truncation"
+  },
+  "statistics": {
+    "bootstrap": 2000,
+    "ci": 0.95,
+    "clusters": "差值先按簇取均值再等权平均；参考簇、台词簇各做一次，两者 CI 上界都 <0 才算显著"
+  },
+  "gate": {
+    "min_drop": 0.02,
+    "1_regression": "r50−base 在 sim 或 consistency 上：两种声纹刻度均 Δ≤−min_drop 且显著",
+    "2_slice_gap": "r50 切片缺口（high 情绪 vs 同句 plain；short vs 同参考同语种 medium）两种刻度均 ≤−min_drop 且显著，且零训练杠杆（high→medium 强度上限；cfg1.6）都没能把缺口收回一半",
+    "decision": "任一条成立才进入阶段 1；否则结案，剩余问题回 DIS 管线"
+  },
+  "deviations": [
+    "参考只有 8 条（计划约 12）：UAT 101/103 只有 2 个角色有参考，签名 URL 已过期；改用本地来源可核验的 UAT 123/129 角色参考与任务 123 配角共用参考。Kasama 疑似多人同名剔除；泰语反馈参考源语言为 en 剔除。",
+    "去掉 r46u10 对照（用户 2026-11-19 决定，权重本机无副本）：闸门 2 只看 r50 自身缺口与零训练杠杆，不再用模型间差异作方差代理。",
+    "FLEURS 对照参考未纳入：文件只在旧 GPU 机上，本机无法冻结 SHA。",
+    "台词每语种 24 句（每档 8 句 = 参考数），不是 30 句；全部取自 UAT 目标语台词，过滤数字/括号。",
+    "best_of=2 用已生成 seed 两两配对事后择优（按 ERes2NetV2 选、用 WavLM 评，避免拿选择指标自证），不额外生成。",
+    "参考音时长杠杆用中心裁剪 3s/5s，与原长参考对比；相似度仍对原长参考计算。",
+    "性别失衡：8 条里 7 条女声、1 条男声（c_3b9447，约 150Hz），男声那条在生产估计器下判 unknown，所以性别翻转实际只测得到女→男。"
+  ]
+}
