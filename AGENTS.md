@@ -23,7 +23,19 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/印尼语高质量语�
   AudioVAE 单独 `audiovae.pth` 约 360MB；LoRA 可训参数 DiT-only rank32 约 334 万 / r48 enable_lm 约 1809 万（<1% 基座）。
   本仓库 submodule 钉 `f772e49`（2026-09-02）= **2.0.3-33-gf772e49**，官方最新 tag 仍 2.0.3，上游 main 已领先 13 提交
   （`300e426`），bump 须单独评估不改旧冻结产物。生产仍 VoxCPM2+r50 LoRA，不切换；任何「更好」宣称须过本项目
-  分语种验收门（≥3 seed + 母语评审）才算数。语料侧同日核实 BreezeBlue 两基准与 FunCineForge/CineDub 不可用，
+  分语种验收门（≥3 seed + 母语评审）才算数。**同日补充近 3 个月（2026-08~11）新模型复查**：
+  Higgs TTS 3（bosonai/higgs-tts-3-4b，4B，HF 卡 2026-09-04 更新）102 语且 th/tl/id/vi 全在自报 WER/CER<5
+  精调档，是唯一全覆盖候选，但**研究/非商业许可**，嵌入产品/服务需 Boson AI 单独商业授权
+  （Creator Use Grant 只豁免内容创作者，配音生产服务不能自行认定豁免）；ZONOS3-Mini（Zyphra，2026-11-11，
+  Apache-2.0，800M MoE/100M 激活）无官方语种列表、参考音频克隆模式显著弱于说话人嵌入模式（自报），暂不列候选；
+  Ming-3.0-tts（蚂蚁百灵，2026-10-19，MIT）仅中英德西法日韩+粤语/川语，无东南亚；Confucius4-TTS（网易有道，
+  论文 2026-08/arXiv 2608.11650）14 语含 th/id/vi/ms **缺 tl**，代码 Apache-2.0 但权重许可存疑
+  （HF 卡标 apache-2.0，README 只 badge code_license，姊妹仓库 R2T2 权重走网易自定义许可），用前须核原文。
+  ⚠️ **k2-fsa/OmniVoice 与生产配音服务 OmniVoice 同名但是另一个模型**（Povey 团队 600+ 语零样本 TTS，
+  权重 CC-BY-NC，训练数据含 Emilia），商用出局，引用时不得混淆。HF 官方 Open TTS Leaderboard（2026-09-30）
+  显示 VoxCPM2 带参考克隆时 WER 反而改善，但榜单语种只有 CV3-Eval 9 语、不含目标语种。
+  结论不变：「近期发布 + 全目标语种 + 可商用 + 零样本克隆」四条件同时满足的开源模型不存在。
+  语料侧同日核实 BreezeBlue 两基准与 FunCineForge/CineDub 不可用，
   见 `docs/corpus_sourcing.md` 顶部。
 - **2026-11-17 VN/英语语料扩充（用户决定）**：在现有微调（r50 配方）基础上继续添加 VN（vi）与英语微调语料，
   并提前备好料。此决定覆盖 2026-10-19「vi 退出目标语种」（ms 仍退出）；vi 四源已按 `docs/vi_id_support.md`
