@@ -4,6 +4,8 @@
 
 **可以借鉴训练目标和分阶段方法，不能直接搬训练脚本或超参。** 当前最佳仍是 r50，生产配置不变；
 本次只完成官方论文、源码及本项目的静态对照，未运行 GPU、未训练、未生成音频，也未修改实验计划。
+VoiceStudio 相关其他引擎的训练方法补充见
+[voicestudio_training_transfer_20261120.md](voicestudio_training_transfer_20261120.md)。
 
 对当前项目的候选优先级：
 
