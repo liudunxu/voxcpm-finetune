@@ -84,6 +84,12 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
 - [ ] ⚠️ **生产风险（跨仓库，需用户决定）：en 目标的 wetext TN 把专名当星期缩写**——本机 wetext 0.2.1 复现 `Sun Li`→`Sunday Li`、`Wed`→`Wednesday`、
   `Sat Nam`→`Saturday Nam`（Confucius4 #19 同问题）。读代码：DIS `VOXCPM_NORMALIZE` 默认 true、仅 tl/fil 跳过服务端 TN ⇒ en 经 OmniVoice wetext。
   修在 DIS/OmniVoice，本仓库不改；修前先用线上请求实测一条「Sun Li」确认。en 评测集加星期缩写同形专名 case。
+- [ ] **情绪一致性（用户 2026-11-23 要求纳入下一阶段，方案见深挖文档 §7）**：生产情绪来自参考音（不用控制前缀），
+  需测「输出情绪跟随参考」与「同角色跨 cue 情绪稳定」。风险假设：r50 训练几乎全是朗读，可能压平情绪（从未测过）。
+  - [ ] 阶段 0 测量：emotion2vec+ large 情绪表征（参考↔输出余弦、top-1 一致、同参考跨句离散度），参考用 UAT 生产参考 + thai_ser 分情绪参考，
+    中性/情绪一致两组文本，base vs r50（vs r54/r55），≥5 seed，按参考聚类 bootstrap；先用 thai_ser 人工情绪标签校准 emotion2vec 在 th 上的可信度。
+  - [ ] 闸门：r50 情绪跟随显著低于 base ⇒ 情绪一致性列为下一轮验收门并启动阶段 1；否则只加入常规验收指标。
+  - [ ] 阶段 1（触发才做）：thai_ser 同人同情绪 ref→target 配对（单变量）；表演语料小比例回注；Basis（id/th/fil）申请。
 - [ ] **配比再平衡（不加总量，见深挖文档 §6）**：r50 实测 id 45.7% / tl 32.9% / th 14.7% / zh+en 6.6%（设计 28.3×3 + 15）。
   基座每语种约 1K–50K h（官方未公开分语种），微调数据只是分布适配。TH 欠配由 r54 检验；ID 超配（gigaspeech2_id 伪标注 1779 行）待 TH/vi 补齐后做「降到等权」单变量；
   vi/en 轮给 vi、en 各自完整目标份额，回放另计。
