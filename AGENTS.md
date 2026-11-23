@@ -13,9 +13,11 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/印尼语高质量语�
 - **2026-11-19 TTS 引擎平替调研与 VoxCPM2 版本/参数核实（联网核到原文）**：结论**没有可平替 VoxCPM2 的开源模型**，
   瓶颈是 th/tl/id/vi 覆盖而非模型新旧。Qwen3-TTS（2026-01 开源，Apache-2.0，0.6B/1.7B）开源版仅
   中英日韩德法俄葡西意 10 语，**无东南亚目标语种**（th/id/vi 只在闭源云 API）；Fun-CosyVoice3-0.5B（含 RL 版，
-  Apache-2.0）9 语同样无东南亚；IndexTTS-2 系中英日西阿。**唯一值得将来实测的候选是 MOSS-TTS v1.5**
-  （复旦 OpenMOSS，2026-05，Apache-2.0，8B，原生 48kHz 立体声 tokenizer，可能突破 VAE 8kHz 带宽砖墙）：
-  31 语含 tl/th/vi/ms 但**语种表无 id**，东南亚语种为续训新增、质量无第三方验证；只作零样本对照候选，不训练不切换。
+  Apache-2.0）9 语同样无东南亚；IndexTTS-2 系中英日西阿。**当时列为局部对照的 MOSS-TTS v1.5，2026-11-23 复核后保留候选但纠正规格**：
+  8B Delay 与 4B Local-Transformer 两个 v1.5 均为 Apache-2.0、31 语含 tl/th/vi/ms、**无 id**；
+  **仅 Local 4B 使用原生 48kHz 双声道 Audio Tokenizer v2，8B v1.5 仍是 24kHz 单声道**，不得混写。
+  th/tl/vi 是带显式语言标签的续训新增，官方未公开其分语种训练量、CER/WER 或母语听评，不能视为质量已验证；
+  普通克隆可不传参考文本，优先以 Local 4B 做 en/th/tl/vi reference-only 局部零样本对照，不自动训练或切换。
   Fish Audio S2/Drama-3 社区许可（2026-10-13 版）：商用限年营收 <50 万美元（交付成片音频的配音制作形态豁免、
   托管 TTS 服务不豁免），且**禁止用其材料/输出训练、蒸馏或改进任何语音生成模型**（封死拿其输出补语料的路）；
   S2-Pro 权重仍纯研究许可。反向证据：CosyVoice3 官方评测表里 VoxCPM test-zh CER 0.93 全表最低、SS 77.2 第二，

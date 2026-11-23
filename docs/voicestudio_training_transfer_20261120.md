@@ -1,4 +1,4 @@
-# VoiceStudio 相关 TTS 训练方法对 VoxCPM2 的可迁移性（2026-11-20）
+# VoiceStudio 相关及后续定向 TTS 训练方法对 VoxCPM2 的可迁移性（2026-11-20，2026-11-23 补充）
 
 ## 结论与本次边界
 
@@ -8,6 +8,7 @@
 dots.tts 的 SOAR、MeanFlow 和 EOS 详细分析已在
 [dots_tts_training_review_20261120.md](dots_tts_training_review_20261120.md)，本文不重复推导，重点补齐
 MOSS、IndexTTS、CosyVoice、Qwen3-TTS、Ming、Confucius4 与 k2-fsa/OmniVoice 等 VoiceStudio 相关引擎。
+2026-11-23 另补不在原 VoiceStudio 清单内的 LongCat-AudioDiT，以及 MOSS v1.5 的语言标签和版本边界。
 
 对当前项目最值得保留的新增结论：
 
@@ -21,6 +22,9 @@ MOSS、IndexTTS、CosyVoice、Qwen3-TTS、Ming、Confucius4 与 k2-fsa/OmniVoice
    其停止权重、标签屏蔽位置和模型模板不能直接复制。
 5. **IndexTTS / CosyVoice / Qwen 的 RL、DPO、GSPO 只适合作为后期研究储备**。
    CosyVoice 已公开报告声纹、情绪和内容指标之间的奖励投机，不能用单一 ASR 奖励替代当前分语种验收。
+6. **LongCat 的新增价值是训练/推理预处理一致性审计和采样器研究假设**。
+   prompt 噪声轨迹修正与 APG 都发生在其整段非自回归 CFM 上；VoxCPM2 是 LM 逐 patch 生成加局部 DiT，
+   且已有 CFG-zero-star，不能直接套公式、宣称存在同一缺陷或并入普通 LoRA 实验。
 
 ## 一览：哪些能借，哪些不能
 
@@ -35,6 +39,9 @@ MOSS、IndexTTS、CosyVoice、Qwen3-TTS、Ming、Confucius4 与 k2-fsa/OmniVoice
 | IndexTTS2.5 / CosyVoice：GRPO / DiffRO | 有后训练思路，但模型表示、奖励和成本均不同 | 暂缓；先解决数据与可校准验收 |
 | Qwen3-TTS：高质量 CPT、人类偏好 DPO、GSPO | 强化“干净核心优先”和偏好数据价值 | 不在当前连续 latent 架构上直接套用 |
 | MOSS/Index：token 数时长控制 | VoxCPM2 没有对应条件通道和推理契约 | 不属于当前 LoRA；不能靠改 YAML 获得 |
+| LongCat：训练/推理音量预处理一致性 | 可审计本项目训练与服务的实际编码器输入是否一致 | 不照搬逐条 −6dBFS 峰值归一，保留按已验证说话人整体增益 |
+| LongCat：prompt 噪声轨迹逐步重写 | 是其整段 NAR CFM 的特定失配修复；VoxCPM2 条件路径不同 | 只作审计假设，不无证据声称 VoxCPM 存在同一 bug |
+| LongCat：APG | 可作为高 CFG 伪影的独立采样器研究 | 不与 CFG-zero-star 直接叠加，不占普通 LoRA 数据臂 |
 | Index：语种边界/token embedding | 需要新语种条件或逐 token 标音前端 | 不改当前无 language token 的 VoxCPM2 架构 |
 | MOSS：RVQ channel loss；CosyVoice/Qwen：codec 训练 | VoxCPM2 使用连续 AudioVAE latent，监督形式不同 | 不移植，不借其数值调当前 loss |
 | dots：SOAR / MeanFlow / EOS detach | 原理可研究，已有专篇 | 按专篇顺序，不因本文提前或扩预算 |
@@ -104,6 +111,12 @@ MOSS 的[公开 SFT 文档](https://github.com/OpenMOSS/MOSS-TTS/blob/main/moss_
   本项目应继续把 reference-only 的 `[103 ref 104][text][101 target 102]`、loss mask、stop 标签和实际推理路径一起验收。
 - 它支持预编码 target/ref audio codes、checkpoint 携带推理配置和代码。
   本项目已有严格 LoRA 配置与 merge 检查；编码缓存只属于提速工程，当前训练远短于评测，不应优先改写数据链。
+
+MOSS v1.5 的[语言标签](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5)还提供了一个数据打包警示：
+31 语仅属于 8B Delay v1.5 和 4B Local-Transformer v1.5，th/tl/vi 是续训新增，id 不在表中；
+官方要求已知语言显式填写完整名称，省略标签可能让部分语种退化。它提示训练、缓存和推理必须保留同一语言元数据，
+**不是给当前 VoxCPM2 临时增加 language token 的理由**。这些新增语种没有公开分语种质量数据，也不能据此批准引擎切换。
+版本上仅 Local 4B v1.5 是 48kHz 双声道，8B v1.5 配置仍为 24kHz 单声道，不能混写 tokenizer 或输出规格。
 
 MOSS 的 RVQ channel loss、8B 优化器设置、四阶段大规模预训练和显式 `tokens` 时长通道都不直接适用于当前 LoRA。
 尤其其 P2 强化克隆、P3 恢复平衡、P4 扩长上下文是**百万小时级预训练课程**，不是对 r50 重排 epoch 的依据。
@@ -244,7 +257,62 @@ Ming 的 `speaker_dropout=0.5` 是其全局说话人向量条件 dropout；VoxCP
 SOAR、MeanFlow 和 dots 的 detach 证据边界继续以专篇为准：SOAR 先测 off-trajectory 误差，
 MeanFlow 只做质量稳定后的独立加速项目；三者不能合并成一轮“全面修复”。
 
-## 6. 没有新增可复现训练方法的条目
+## 6. LongCat-AudioDiT：可借预处理审计与采样器假设，不是新 LoRA 配方
+
+[LongCat-AudioDiT](https://github.com/meituan-longcat/LongCat-AudioDiT)是 Wav-VAE + 整段非自回归 DiT 的中英双语模型，
+公开树只有模型定义、权重转换和推理；[论文](https://arxiv.org/html/2603.29339v1)的最终训练规模为 100 万小时中英文。
+官方在 [issue #23](https://github.com/meituan-longcat/LongCat-AudioDiT/issues/23)只建议自行用 Flow Matching 单 loss 微调，
+没有发布可直接复现其预训练的完整训练工程。因此本节保留方法边界，不搬其数据规模、学习率或模型结构。
+
+### 6.1 先审计训练/推理预处理是否一致，不复制其归一化数值
+
+官方 2026-10-15 更新承认：训练数据全部做过 `load_audio` 的音量归一化，早期公开推理却漏掉该步骤，
+由此产生训练/推理失配。对本项目可操作的不是照抄 −6dBFS，而是核对同一模型输入在训练与服务两端的：
+
+- 重采样、单声道转换、裁边、VAD、padding 与归一化顺序；
+- 训练打包缓存和实际服务编码器输入的采样率、PCM/增益指纹；
+- 参考音与目标音分别经历了哪些处理，旧缓存是否仍对应同一有效预处理。
+
+当前项目按**已验证说话人整体增益**保留条间强弱，禁止逐条峰值归一化抹掉表演动态；
+LongCat 的 `normalize_volume(-6)` 还会 clip 到 [-1, 1]，不能直接替换现有数据链。
+只有发现实际不一致才立项修复，不为“对齐别家配方”改变合格语料。
+
+### 6.2 prompt 噪声轨迹修正：有官方消融，但不能直接判定 VoxCPM 有同一问题
+
+LongCat 训练只对 masked target 区计算 CFM 速度损失。推理时若让 prompt 区也随模型预测更新，
+其速度没有训练约束，prompt 噪声轨迹会漂移；官方每步用理论值重写 prompt 区，
+并在无条件分支同时去掉 clean/noisy prompt 条件，避免参考声学信息泄漏。
+
+其 1B Seed-ZH 消融中，完整方案相对保留失配的版本为 CER 1.18 vs 1.21、SIM 0.812 vs 0.769、
+UTMOS 3.16 vs 2.83、DNSMOS 3.40 vs 3.34。这支持“检查 prompt 区状态和无条件分支”的研究方向，
+但数值仅属于 LongCat。
+
+VoxCPM2 是 LM 逐 patch 生成后调用局部 DiT，`UnifiedCFM` 的 `mu`/`cond` 含义、时间方向和条件屏蔽均不同，
+并已有 CFG-zero-star 的 `optimized_scale`。不能将 LongCat 的 prompt 区公式贴到现有求解器，
+也不能仅凭两篇模型都使用 CFM 就宣称当前参考链存在漂移 bug。若未来有固定输入的可复现异常，
+先做条件张量与求解轨迹审计，再决定是否需要独立采样实验。
+
+### 6.3 APG 只做独立推理研究，不与现有 CFG 机制混成一轮
+
+LongCat 的 APG 将 guidance residual 分成平行/正交分量并压低平行项。
+其官方消融里，相对普通 CFG 的 CER/SIM 均保持 1.18/0.812，UTMOS 3.06→3.16、DNSMOS 3.38→3.40；
+这是自动声学指标的有限改善，不是本服务听感或金属音修复证据。
+
+对 VoxCPM2 只能形成后续**无训练、固定输入、多 seed 的独立采样器假设**：
+
+- 不与 CFG-zero-star 默认叠加，不同时改变 CFG、步数、LoRA 或参考预处理；
+- 若进入服务实验，必须有请求级开关、有效参数回显和缓存键覆盖，默认生产不变；
+- 验收保留正文完整、身份、声学异常、时长和完整请求延迟，不能只看 UTMOS/DNSMOS；
+- 当前 EOS、SOAR、MeanFlow 和普通 LoRA 数据臂不因此提前、合并或扩预算。
+
+### 6.4 其余结构不直接迁移
+
+UMT5 last hidden + raw word embedding、ConvNeXt 文本细化、mHuBERT REPA、Wav-VAE 维度/帧率联合重训，
+都属于 LongCat 的新底座设计。论文明确 REPA 主要加速收敛而未提升生成质量；
+Wav-VAE 重建更好也不保证 TTS 更好。这些结论可避免“只优化重建指标”的误判，
+但不要求修改 VoxCPM2 的 MiniCPM 文本条件、连续 AudioVAE 或冻结 codec 策略。
+
+## 7. 没有新增可复现训练方法的条目
 
 | 模型/引擎 | 本次核到的边界 | 对 voxcpm_finetune 的处置 |
 |---|---|---|
@@ -255,7 +323,7 @@ MeanFlow 只做质量稳定后的独立加速项目；三者不能合并成一�
 | MOSS-TTS-Nano | 有完整 SFT 入口，但基本沿用 MOSS 的编码、teacher forcing 与字段打包，没有新的目标语种证据 | 只作同族工程参考，不重复建文档或实验 |
 | Breeze / 其他预设音或运行时封装 | 没有可改变 VoxCPM 训练的新公开方法；原许可和语种限制不变 | 不进入训练计划 |
 
-## 7. 建议顺序：新增方法不得打断已确认主线
+## 8. 建议顺序：新增方法不得打断已确认主线
 
 1. **当前不变**：vi/en 备料、五语种新配比、准确转写、MMS-FA 短片段、Basis 申请与母语评审优先。
 2. **数据候选仍须逐个单变量**：
@@ -266,7 +334,8 @@ MeanFlow 只做质量稳定后的独立加速项目；三者不能合并成一�
    每项都不得同时改变 r50 普通超参或其他数据维度。
 3. **ref 鲁棒性沿用既有阶段门**：先证明降质参考造成可测退化，再决定是否训练；不因 k2-fsa 论文直接扩展 profile。
 4. **结构研究保持独立**：EOS 停止头优先围绕已冻结的句末专名/短 cue 风险；SOAR 先做无训练诊断；
-   MeanFlow 仅用于质量稳定后的降步数。
+   MeanFlow 仅用于质量稳定后的降步数。LongCat 的 prompt 轨迹与 APG 只在独立采样问题有证据后排期，
+   不与上述训练臂合并，也不默认修改生产采样器。
 5. **RL/DPO/GSPO 暂缓**：只有可靠偏好/奖励、足够独立开发集和完整成本预算均具备时再立项。
 6. 所有训练臂均沿用现行生产口径、分语种、≥5 seed、按句聚类和一次性留出要求；
    已反复使用的开发集不能继续冒充最终独立验证，母语未评项仍保持未知。
@@ -275,7 +344,8 @@ MeanFlow 只做质量稳定后的独立加速项目；三者不能合并成一�
 
 ## 主要官方来源
 
-- [MOSS-TTS 技术报告](https://arxiv.org/abs/2603.18090)；[MossTTSDelay SFT](https://github.com/OpenMOSS/MOSS-TTS/blob/main/moss_tts_delay/finetuning/README.md)；[训练打包实现](https://github.com/OpenMOSS/MOSS-TTS/blob/main/moss_tts_delay/finetuning/dataset.py)
+- [MOSS-TTS 技术报告](https://arxiv.org/abs/2603.18090)；[MOSS-TTS-v1.5 模型卡](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5)；[Local-Transformer-v1.5 模型卡](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5)；[MossTTSDelay SFT](https://github.com/OpenMOSS/MOSS-TTS/blob/main/moss_tts_delay/finetuning/README.md)；[训练打包实现](https://github.com/OpenMOSS/MOSS-TTS/blob/main/moss_tts_delay/finetuning/dataset.py)
+- [LongCat-AudioDiT 技术报告](https://arxiv.org/html/2603.29339v1)；[官方推理实现](https://github.com/meituan-longcat/LongCat-AudioDiT)；[预处理更新说明](https://github.com/meituan-longcat/LongCat-AudioDiT#updates)；[微调边界](https://github.com/meituan-longcat/LongCat-AudioDiT/issues/23)
 - [IndexTTS2 报告](https://arxiv.org/html/2506.21619)；[IndexTTS2.5 报告](https://arxiv.org/html/2601.03888v5)
 - [CosyVoice3 报告](https://arxiv.org/html/2505.17589)；[CosyVoice2 GRPO 配方](https://github.com/FunAudioLLM/CosyVoice/tree/main/examples/grpo/cosyvoice2)
 - [Qwen3-TTS 报告](https://arxiv.org/html/2601.15621v1)
