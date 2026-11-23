@@ -194,6 +194,41 @@ bump 风险一条：新版 `_manifest_features` **按首行推断清单 schema**
 - **I. 按 MMS-FA 停顿重写训练文本标点**（音频不变）：可能改善句内停顿与句末收尾；须先确认泰文对齐（见 r54 泰语切分）可用，排在 H 之后。
 - 新开发集按 CV3-Eval 矩阵设计（流程改动，非训练臂）。
 
+### 4.6 Confucius4-TTS 复查（2026-11-23，用户点名；补 11-20 文档 §2.1）
+
+来源：[repo](https://github.com/netease-youdao/Confucius4-TTS)、[train_t2s.yaml](https://raw.githubusercontent.com/netease-youdao/Confucius4-TTS/main/config/train_t2s.yaml)、
+[论文](https://arxiv.org/html/2608.11650)、issues（`gh api` 全量列出 22 条）。
+
+**微调方式**：两阶段**全量**——T2S（离散语义 token AR，AdamW lr 2e-4、wd .01、betas (.9,.95)、cosine、warmup 2000/100k 步、batch 2）
+与 S2A（flow-matching，训练时冻结 T2S、speaker encoder w2v-bert、style encoder CAMPPlus）。无 LoRA 入口。数据 TSV：
+`lang / wav / norm_text / semantic_ids / ref_audio_paths（可多条）`。**配方不借**（全量、离散 token、超参量级不同）。
+
+**最有用的是第三方基线（论文 Table 5，MiniMax-MLS-Test，已核原文）**——首次拿到 VoxCPM2 在目标语种上的独立评测：
+
+| 语种 | VoxCPM2 WER | VoxCPM2 SIM | Confucius4 WER | Confucius4 SIM |
+|---|---|---|---|---|
+| id | 1.17 | 0.795 | 1.12 | 0.765 |
+| th | 2.19 | 0.841 | 1.56 | 0.773 |
+| vi | **4.19** | 0.793 | 1.61 | 0.751 |
+
+⇒ **vi 是 VoxCPM2 基座最弱的目标语种**（WER 约为 id 的 3.6 倍），与上游 [#352](https://github.com/OpenBMB/VoxCPM/issues/352)（越南语停不下来）一致，
+说明 vi 数据轮的提升空间最大、也最该先建 base 基线。VoxCPM2 的 SIM 三语均更高——与本项目「内容改善伴随音色代价」需兼顾一致。
+（跨语言 th→zh / vi→zh 方向与生产 zh/en→目标相反，不引用。）
+
+**数据**：多 ASR 交叉错误率 **<2.5%** 才收（比 CosyVoice3 的两两 WER<15% 严得多，比本项目伪标注计划 CER≤0.05 更严）；
+每说话人至少 2 条、ref/target 取同人不同录音（本项目已是此规则）；按语种重采样（无公式）；每语种约 1000h **合成语音**补极短句（不借）。
+⇒ 双 ASR 一致性门槛的业界取值从 2.5% 到 15% 不等，本项目 0.05 处于中间偏严，**不改**；首跑记录各门槛下的产出率再定。
+
+**issues 的两条教训**（非模型、属文本前端）：
+- [#1](https://github.com/netease-youdao/Confucius4-TTS/issues/1)「固定位置吞字、换参考仍在同处」——维护者确认是**分句**导致，修复后字数正确。
+  与本项目「先排上下游再怪模型」一致：同一文本、跨参考/seed 稳定复现的漏字，先查 DIS 分句/TN。
+- [#19](https://github.com/netease-youdao/Confucius4-TTS/issues/19)：`wetext` 英文 TN 把 "Sun" 扩成 "Sunday"。**本机复现（wetext 0.2.1）**：
+  `Sun Li is here.`→`Sunday Li is here.`、`Wed the bride now.`→`Wednesday the bride now.`、`Sat Nam`→`Saturday Nam`。
+  **VoxCPM 的英文 TN 用的正是 wetext**（`text_normalize.py:167`，生产 OmniVoice vendored 副本 `:369`、`:420`）。
+  读代码推断的生产链路：DIS `VOXCPM_NORMALIZE` 默认 true（`backends/voxcpm.py:106`），仅 tl/fil 设 `spoken_text_normalized=True` 跳过服务端 TN
+  （`:1110`）⇒ **en 目标会经 wetext，中文姓「孙」(Sun) 等专名会被念成 Sunday**。en 已于 11-17 升为目标语种，属生产风险；
+  修复在 DIS/OmniVoice（如 en 也走客户端 TN 或关闭 wetext 星期缩写展开），本仓库不改生产，仅登记。未在线上实际调用验证。
+
 ## 5. 建议顺序（不打断现行主线）
 
 1. 现行不变：r54 → vi/en 数据轮；新开发集、按句聚类、2 训练 seed。**更正**：ID 的 MMS-FA 片段已在 r49/r50 中（629 行），

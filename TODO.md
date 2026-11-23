@@ -49,6 +49,11 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
   直对多读/跑飞；与 B 同类，先做 H（不砍短句）。th 按字符、其余按词。
 - [ ] 候选 I：按 MMS-FA 停顿重写训练文本标点（≥300ms 补逗号、≤50ms 删），音频不变；排 H 之后。
 - [ ] 新开发集按 CV3-Eval 矩阵设计：zh/en/fil ref × th/tl/id/vi 目标，hard（句末专名、外文借词、缩写）单列。
+- [ ] ⚠️ **生产风险（跨仓库，需用户决定）：en 目标的 wetext TN 把专名当星期缩写**——本机 wetext 0.2.1 复现 `Sun Li`→`Sunday Li`、`Wed`→`Wednesday`、
+  `Sat Nam`→`Saturday Nam`（Confucius4 #19 同问题）。读代码：DIS `VOXCPM_NORMALIZE` 默认 true、仅 tl/fil 跳过服务端 TN ⇒ en 经 OmniVoice wetext。
+  修在 DIS/OmniVoice，本仓库不改；修前先用线上请求实测一条「Sun Li」确认。en 评测集加星期缩写同形专名 case。
+- [ ] **vi 基座最弱（第三方 Confucius4 论文 Table 5，MiniMax-MLS-Test）**：VoxCPM2 WER id 1.17 / th 2.19 / **vi 4.19**；vi 数据轮收益空间最大，
+  先跑 vi base 基线并把停不下来（上游 #352）形态入回归集。
 - [ ] p_stop 诊断补看「提前停」：VoxCPM2 最小长度固定 2 patch（CosyVoice3 为文本 token×2 前屏蔽 EOS），若少读样本 p_stop 早升，加按文本比例的最小长度推理单变量。
 - [ ] 低优先候选：C LM-only LoRA（UtterTune）、D 带 ref 比例剂量（仅可信身份）、E `training_cfg_rate` .1→.2（需复制基座 config）。
 - [ ] **RL 预研（不开训）**：LoCA（arXiv 2610.28035）已在 VoxCPM2 上做 RL，全文已核：冻结 stop 头、lr 2e-6、单 seed、无代码、无 th/id/tl/vi 结果；
