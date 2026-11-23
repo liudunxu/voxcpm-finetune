@@ -27,7 +27,13 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
 - [ ] **r54 先行**：r50 配方 + **TH** MMS-FA 准确短片段（单变量；ID 片段已在 r49/r50 中），新开发集 + 按句聚类 + 2 训练 seed。
   切分脚本已支持泰语（pythainlp + uroman，`uv sync --group qc`）：
   `python scripts/fleurs_segment_20261103.py align 0/1 --sources fleurs_th --out /root/autodl-tmp/seg_th_<日期>`，再 `qc` → `finalize`（同参数）。
-  先小样本看对齐分与 CER≤0.10 产出率；泰语对齐质量未实测。
+  **2026-11-23 进行中**：输入 `scripts/r54_th_segment_input.py`（r53 排除规则 vs r50）fleurs_th 合格 1855 行/5.19h（flagged 69）；
+  1/10 小样本：186 条→250 段（对齐分中位 .815、p10 .75；时长中位 4.0s），Whisper QC CER≤.10 保留 197（79%，CER 中位 .039）。
+  已知偏差：Whisper 把泰文外来词写成拉丁字母（New South Wales/Hurricane/Atlanta），code-switch 段被 CER 门多拒；
+  段边界偶尔落在引号/括号内留下不成对标点（TL 段同样存在）。全量预计约 1970 段/2.3h。
+  远端全流程 `/root/autodl-tmp/r54_driver.sh`（对齐→QC→finalize→AST 音乐旁路→build→train→短句筛 vs r50→无退化才跑开发集），
+  脚本 `scripts/r54_th_segments_run.py`、`scripts/r54_stage_20261123.py`；日志 `/root/autodl-tmp/r54_driver.log`。
+  局限：单训练 seed、开发集已反复择优、compare 为输出级符号检验（按句聚类待补）。
 - [x] **零训练 p_stop 诊断（2026-11-23 完成，结论：不是停止时机问题，阈值/长度先验 A/B 不做）**：
   r50 冻结短句全部 56 条严重输出重放 56/56 时长复现（与原评测 ±15% 内），**55 条 clean_stop、1 条 never_rises（TL，撞上限）**；
   严重与 44 条同句干净对照的停止行为几乎相同（步数中位均 6；停前最大 p_stop p90 .427 vs .438、最大 .459 vs .491），只 1 条撞上限 ⇒
@@ -43,6 +49,10 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
 - [ ] ⚠️ 数字 TN 陷阱：`num2words(lang='fil')` 输出芬兰语、`tl` 未实现；Tagalog 数字不得用 num2words（th/id/vi 输出正确）。
 - [ ] **单变量候选 H（CosyVoice3 §3）：按「有声时长/文本长度」分语种剔除最小 1%、最大 5%**，其余同 r50——自动去短文长音/短音长文错配，
   直对多读/跑飞；与 B 同类，先做 H（不砍短句）。th 按字符、其余按词。
+  **r50 训练集实测（2026-11-23，只读）**：按语种剔最小 1%/最大 5% 共约 470 行（id 37+189、tl 23+118、th 13+66、zh 2+13、en 1+7）。
+  高比例尾部样本明显可疑：`gigaspeech2_id`「Tunggu ojak」3.0s 两词、「Sampai bibu」4.6s 两词（伪标注漏词）、`gigaspeech2_th`
+  「หากสยามยังอยู่ยั้งยืนยง」7.4s（比例约中位 4 倍，疑似唱/朗诵）、`fleurs_tl_seg`「Yayamang tapos」3.3s 两词。
+  机制假设：音频比文本「说得多」的样本会教模型多读——与 p_stop 诊断「短句严重坏例是内容错而非停止失准」一致。
 - [ ] 候选 I：按 MMS-FA 停顿重写训练文本标点（≥300ms 补逗号、≤50ms 删），音频不变；排 H 之后。
 - [ ] 新开发集按 CV3-Eval 矩阵设计：zh/en/fil ref × th/tl/id/vi 目标，hard（句末专名、外文借词、缩写）单列。
 - [ ] ⚠️ **生产风险（跨仓库，需用户决定）：en 目标的 wetext TN 把专名当星期缩写**——本机 wetext 0.2.1 复现 `Sun Li`→`Sunday Li`、`Wed`→`Wednesday`、
