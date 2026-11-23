@@ -21,6 +21,29 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
 
 明确不做：超参重扫、加量、同配方 soup、Granary 加比重、换引擎（无四条件全满足的开源平替）。
 
+## ⏸ 2026-11-23 19:25 关机现场（下次开机先读这里）
+
+**结论快照**：r50 仍是最佳（生产仍 r50，未改）。今日 r54（+TH 准确短段）短句/开发集均与 r50 平手；r55（剔时长/文本比极端行）
+短句平手、开发集**未跑完**；p_stop 诊断否定停止失准；TH 短句约 13–19 条/模型是 ASR 拼写噪声（音形归一后各模型与 base 持平）。
+本机备份：LoRA `checkpoints/r54_th_segments_20261123/`（`d7cdc92a…`）、`checkpoints/r55_ratio_trim_20261123/`（`f3de2f1f…`）；
+远端结果/日志快照 `work/remote_snapshot_20261123/`（报告、plan、stage、TH 段清单、vi stats、driver 日志）。
+
+**中断的远端任务与接续命令**（`/tmp/rsh` 封装见 AGENTS；代码同步用 AGENTS 的锚定排除 rsync）：
+1. r55 开发集：dev_a 生成 448/450、dev_b 0/450。接续（生成按已有分片续跑，短句已完成会跳过）：
+   `python -X utf8 -u scripts/candidate_stage_20261123.py r55 /root/autodl-tmp/r55_ratio_trim_20261123`
+2. TL 句末专名/Taglish 集（`/root/autodl-tmp/prod_review_20261103/tl_tail_cases.jsonl`，60 case×5 seed）未跑：
+   `/root/autodl-tmp/tl_tail_run.sh` 会等 driver_v2 的 ALL_DONE——重启后改为直接执行其中 python 段（base、r50 的 gen/asr/finalize）。
+   分析：统计 name_final 子集尾部多读（over_read、末词重复）与 taglish 子集 CER。
+3. cv22_en 加工中断（4350/6000 扫描、保留 2647）：先删 `processed/cv22_en_20261123` 再重跑
+   `python -m voxft.data.pipeline --source cv22_en --out cv22_en_20261123`（在线模式，Whisper medium 已缓存）。
+4. 情绪阶段 0（§7）：`scripts/emotion_eval.py` **已写、未运行未测试**；依赖新组 `uv sync --group qc --group emo`（funasr）。
+   顺序：上传 UAT 参考 `work/timbre_v1_20261119/refs/` → `calibrate`（thai_ser 600 条子集已在远端 `raw/thai_ser/`，
+   旧 manifest 移至 `raw/thai_ser_manifest_only_20261104/`）→ `build` 生成 `emo0_cases.jsonl`（放 prod_review ROOT）→
+   `pr.gen_stage('emo0', base|r50)` + asr + finalize → `score`。
+5. vi 轮准备：fleurs_vi 7.21h 做 MMS-FA 切分（需在 `fleurs_segment_20261103.py` 的 SOURCE_LANG 加 `fleurs_vi`）、
+   gigaspeech2_vi 8.02h 双 ASR 过滤（CER≤0.05）、cv22_vi 隔离 CV test 切分与评测文本；en 待 cv22_en 完成。
+6. 远端磁盘 8.7G 可用（83%）；可回收：`voxft_ckpt/auditions` 中今日前评测 WAV 8.3G（分数已在报告，删前确认不再听）。
+
 ## 2026-11-23 开源 TTS 微调方法深挖（结论见 `docs/tts_finetune_deepdive_20261123.md`）
 
 静态调研 + 源码核对，未训练。不改上面的推进排序，以下按优先级插在数据主线之后：
