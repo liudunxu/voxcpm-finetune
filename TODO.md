@@ -25,14 +25,23 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
 
 静态调研 + 源码核对，未训练。不改上面的推进排序，以下按优先级插在数据主线之后：
 - [ ] **r54 先行**：r50 配方 + TH/ID MMS-FA 准确短片段（单变量），新开发集 + 按句聚类 + 2 训练 seed。
-- [ ] **零训练 p_stop 诊断**（GPU 恢复后约 1h）：停止是 `stop_head.argmax()`（固定 0.5，`voxcpm2.py:1113`），stop 头未随 LoRA 训练。
-  在冻结坏例（短 cue 跑飞、句末专名重复、vi 停不下来）上逐 patch 记 p_stop，base vs r50；证实「峰值被漏」才做阈值/长度先验 A/B，生产默认不变。
-- [ ] **单变量候选 A：r32 vs r64 新口径重测**——arXiv 2606.26618（VoxCPM2 LoRA，Khmer+韩语）摘要称基座已支持语种「高 rank 甚至伤质量」；
-  旧 r32 结论来自已失效判退门。
+- [ ] **零训练 p_stop 诊断**（GPU 恢复后约 1h；脚本与测试已就绪）：停止是 `stop_head.argmax()`（固定 0.5，`voxcpm2.py:1113`），stop 头未随 LoRA 训练。
+  ```bash
+  # 远端：从冻结短句报告选 r50 全部 56 条严重 + 44 条同句干净对照（本机已验证得 100 条）
+  python scripts/stop_prob_probe.py select --reports-dir /root/autodl-tmp/prod_review_20261103/reports \
+      --model r50 --out /root/autodl-tmp/stop_prob_probe_20261123/cases.jsonl
+  # base 与 r50 各跑一遍（nohup 落日志，可断点续跑；HF_HUB_OFFLINE=1）
+  python -X utf8 -u scripts/stop_prob_probe.py run --cases .../cases.jsonl --label base --out .../base_trace.jsonl
+  python -X utf8 -u scripts/stop_prob_probe.py run --cases .../cases.jsonl --label r50 --lora <r50 lora 目录> --out .../r50_trace.jsonl
+  ```
+  判读：严重输出以 missed_peak/late_stop 为主且 r50 多于 base → 做阈值/长度先验 A/B；以 never_rises 为主 → 阈值无用，转数据/RL。生产默认不变。
+  注：若远端报告已清理，用本机 `work/prod_review_20261103/reports/` rsync 上去。
+- [ ] **单变量候选 A：r32 vs r64 新口径重测**——arXiv 2606.26618（VoxCPM2 LoRA，Khmer+韩语）全文：韩语 r64 显著变差（3.65→3.48，p=.02）、
+  r32 3.76 无显著收益；但其 α=2r、约 8 epoch，与过训混杂，先验中等。旧 r32 结论来自已失效判退门。
 - [ ] **单变量候选 B：训练时长上限**（≤12s 或线上 cue 99 分位，按语种配额补总时长）——ZipVoice/Kani 做法，直对短 cue 出分布。
 - [ ] 低优先候选：C LM-only LoRA（UtterTune）、D 带 ref 比例剂量（仅可信身份）、E `training_cfg_rate` .1→.2（需复制基座 config）。
-- [ ] **RL 预研（不开训）**：LoCA（arXiv 2610.28035）已在 VoxCPM2 上做 RL，摘要报告多语内容错误 −20.5%；先读全文核实现/是否 LoRA/是否开源，
-  奖励须含长度比与尾部多读惩罚；顺序 SFT→RL，RL 后不再 SFT（Fish 文档警示）。排在 r54 与新开发集之后。
+- [ ] **RL 预研（不开训）**：LoCA（arXiv 2610.28035）已在 VoxCPM2 上做 RL，全文已核：冻结 stop 头、lr 2e-6、单 seed、无代码、无 th/id/tl/vi 结果；
+  复现需自写 rollout + 帧级 advantage，奖励须含长度比与尾部多读惩罚；顺序 SFT→RL，RL 后不再 SFT（Fish 文档警示）。排在 r54 与新开发集之后。
 - [ ] 数据入库加一步：双 ASR 过滤后**人工抽检约 1000 条估转写错误率**（viVoice 做法）；尾静音裁切不得裁到末词。
 - [ ] vi 加回后把上游 #352（越南语读完停不下来）形态加入短句/句末回归集。
 - [ ] submodule bump（上游领先 13 提交，均为工程项）：新版按清单首行推断 schema，bump 前用 r50 清单做加载冒烟。

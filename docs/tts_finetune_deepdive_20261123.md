@@ -53,7 +53,7 @@ F5 的 speed/总时长参数（NAR 显式时长，VoxCPM2 无对应）；XTTS re
 
 | 方法 | 需要 | 报告效果（来源） | 对 VoxCPM2+LoRA |
 |---|---|---|---|
-| **LoCA** | ASR 奖励 + 对齐 | 摘要：CV3 内容错误 −20.5%（[2610.28035](https://arxiv.org/abs/2610.28035)）；分项数字未核全文 | **已在 VoxCPM2 上做过**；冻结 stop 头，改善内容不直接修停止 |
+| **LoCA** | ASR 奖励 + 对齐 | CV3 内容错误 −20.5%（[2610.28035](https://arxiv.org/abs/2610.28035)，全文已核，见下） | **已在 VoxCPM2 上做过**；冻结 stop 头，改善内容不直接修停止 |
 | **GROW** | ASR/SIM 奖励 | WER 2.016→1.558（[2608.03215](https://arxiv.org/abs/2608.03215)） | 适配连续 latent，可 LoRA 小实验 |
 | FlowTTS-GRPO | ODE→SDE | F5 hard CER 9.00→7.86，LoRA r32（[2606.23190](https://arxiv.org/html/2606.23190v1)，未核） | 成本高；指出只 RL 声学侧可懂度不升 ⇒ 须覆盖 LM |
 | Koel-TTS 偏好对 | 多候选 + CER/SSIM Pareto 选对 | DPO unseen CER 2.56→0.62（[2502.05236](https://arxiv.org/html/2502.05236v1)，未核） | 选对规则可借（**chosen 用真实录音会退化**）；DPO 本身需离散似然 |
@@ -61,6 +61,13 @@ F5 的 speed/总时长参数（NAR 显式时长，VoxCPM2 无对应）；XTTS re
 | VALL-E 2 RAS | 离散分布 | 无单独消融（[2406.05370](https://arxiv.org/html/2406.05370v1)） | 仅借「重复检测」做触发器 |
 | MELLE stop 正样本加权 | — | （[2407.08551](https://arxiv.org/html/2407.08551v2)） | 已试 stop 权重 1→2 无效（r41）；不再试 |
 | Koel 注意力先验 / ELLA-V / RALL-E / F5R / DMOSpeech2 / SALAD | cross-attn、音素交错、时长预测器或语义 token | — | 需改架构，不做 |
+
+**LoCA 全文核对**（Table 6 等）：冻结 AudioVAE、patch encoder 与 **stop head**；未说明 LoRA 还是全量、训练哪些模块；
+数据为 Emilia 5 万条（zh/en/de/fr/ja/ko），组大小 8，lr 2e-6、warmup 50、wd 0、梯度裁剪 0.5，曲线至 2000 步；**单训练 seed**；
+奖励 = exp(−2.5·Qwen3-ASR 错误率) + 0.5×声纹（组内标准化）；严重失败 SFR = 错误率>0.5 / 全静音 / 撞长度上限 / 生成错误 /
+尾静音≥1.2s / 内部静音≥1.5s。分语种错误率 base→LoCA：zh 3.996→3.238、en 5.193→4.507、de 5.551→3.878、es 4.571→3.608、
+fr 10.657→9.027、it 5.023→3.731、ru 6.219→4.723、hard-zh 9.952→7.186、hard-en 7.665→7.143。**无 th/id/tl/vi 结果，不报告时长/多读效应，
+未发布代码**。⇒ 复现需自写 rollout + ASR 对齐 + 帧级 advantage 回归，工程量为「一个小项目」，不是改配置。
 
 ## 3. 上游 VoxCPM 进展（本地 `git fetch` 核对）
 
@@ -83,8 +90,10 @@ bump 风险一条：新版 `_manifest_features` **按首行推断清单 schema**
   [#306](https://github.com/OpenBMB/VoxCPM/issues/306) 加泰罗尼亚语 ref 100% 仍被西语口音覆盖，无结论。
 - **[arXiv 2606.26618](https://arxiv.org/abs/2606.26618)（v2 2026-09-24，已核摘要）**：VoxCPM2 单 LoRA 联合训 Khmer+韩语 25.5h，
   Khmer（基座不支持）MOS 3.85→4.23（r64，p<.001）；**韩语（基座已支持）无显著收益，且摘要称「高 rank 甚至伤害质量」**。
-  子代理读到的「韩语 r64 3.65→3.48、发音分 r32 最高」为全文数字，未逐页核。⇒ 本项目目标语种全是基座已支持语种，
-  默认 r64 的依据（「语言+风格用 64」）值得在**新统计口径下**重测 r32：r32 那轮（2026-10-30）是被已证伪的首例即停门判退的，不构成证据。
+  **全文已核（Table III/IV）**：韩语 MOS base 3.65 / r8 3.73 / r16 3.71 / r32 3.76（p=.49）/ **r64 3.48（p=.02 显著变差）** / r128 3.54；
+  Khmer r32 4.03 / r64 4.23 / r128 4.08；韩语发音分 r32 最高。**但迁移要打折**：其配置为 α=2r（LoRA 缩放是本项目 α=r 的 2 倍）、
+  10k 步 × batch 16 ≈ 8 epoch（本项目 3 epoch）、无 replay、评审一致性低（Krippendorff α .26/.31）——韩语 r64 退化与过训/缩放混杂，
+  且 r32 对韩语也无显著收益。⇒ r32 vs r64 仍值得在新口径下测（旧 r32 那轮被已证伪的首例即停门判退，不构成证据），但先验强度只算中等。
   另：其 val loss 最低 rank 与 MOS 最佳不一致，再次说明不以 val loss 选。
 
 ### 4.2 其他模型
@@ -121,8 +130,13 @@ bump 风险一条：新版 `_manifest_features` **按首行推断清单 schema**
 
 1. 现行不变：r54（TH/ID MMS-FA 准确短片段，单变量）→ vi/en 数据轮；新开发集、按句聚类、2 训练 seed。
    之后按 4.3 依次测 A（r32 vs r64）、B（时长上限），各自单变量。
-2. **零训练 p_stop 诊断**（GPU 恢复后约 1 小时）：冻结坏例输入，r50 vs base 记录逐 patch p_stop；仅当证实「峰值被漏」才做阈值/长度先验 A/B，生产默认不变。
-3. **LoCA/GROW 式 RL 预研**：先读 LoCA 全文核实现与是否 LoRA、开源情况；仅在 r54 后、有新开发集和明确奖励（内容 + 长度比 + 声纹 + 尾部多读惩罚）时立项，单训练 seed 结论不认。
+2. **零训练 p_stop 诊断**（GPU 恢复后约 1 小时）：脚本 `scripts/stop_prob_probe.py`（forward hook 记 p_stop，不改 submodule；
+   测试 `tests/test_stop_prob_probe.py`）。`select` 从冻结短句报告取 r50 全部 56 条严重输出（TH 36 / TL 14 / ID 6，其中 27 条 base 同样严重）
+   + 44 条同句干净对照 = 100 条；`run` 分别跑 base 与 r50。按 `stop_pattern`（never_rises / missed_peak / late_stop / clean_stop）比较：
+   仅当严重输出以 missed_peak/late_stop 为主且 r50 多于 base，才做阈值/长度先验 A/B；以 never_rises 为主则说明停止信号本身没出现，
+   阈值无用，转数据或 RL 路线。生产默认不变。
+3. **LoCA/GROW 式 RL 预研**：全文已核（无代码、单 seed、无目标语种）；仅在 r54 后、有新开发集和明确奖励
+   （内容 + 长度比 + 声纹 + 尾部多读惩罚）时立项，按小项目估算工程量。
 4. 数据入库加「人工抽检估转写错误率」一步。
 
 所有方向仍遵守：分语种、≥5 seed、按句聚类、一次性留出、母语未评如实标注、不自动切生产。
