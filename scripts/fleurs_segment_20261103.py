@@ -13,6 +13,10 @@ Rules (frozen here):
 - Reject if mean word alignment score < 0.6 or any word score < 0.2.
 - QC: Whisper large-v3 (GPU float16, forced language) on each segment; keep CER <= 0.10 vs segment text.
 - Segment text must not equal any eval/reserved case text. Speaker/session/origin copied from the source row; no ref.
+
+2026-11-23 extension (TL/ID defaults unchanged): `--sources fleurs_th --out <dir>` adds Thai. Thai has no word
+spaces and MMS_FA only takes romanized letters, so (per the torchaudio multilingual MMS_FA tutorial) words come
+from pythainlp newmm and are romanized with uroman; segment text is the original Thai substring.
 """
 import argparse
 import json
@@ -25,6 +29,7 @@ SRC = Path('/root/autodl-tmp/music_excluded_20261029/run/candidate/current/train
 OUT = Path('/root/autodl-tmp/seg_short_20261103')
 REPO = Path('/root/voxcpm-finetune')
 LANG_SOURCES = {'fleurs_tl': 'tl', 'fleurs_id': 'id'}
+SOURCE_LANG = {'fleurs_tl': 'tl', 'fleurs_id': 'id', 'fleurs_th': 'th'}
 GAP, LEAD, TAIL = 0.15, 0.10, 0.15
 MIN_D, MAX_D = 3.0, 6.0
 
@@ -32,6 +37,30 @@ MIN_D, MAX_D = 3.0, 6.0
 def norm_word(w):
     w = unicodedata.normalize('NFKD', w.lower())
     return ''.join(c for c in w if 'a' <= c <= 'z' or c == "'")
+
+
+def split_words(text, lang, romanize=None):
+    """Return (surface tokens, alignment words, joiner); ''.join/' '.join of surface gives segment text."""
+    if lang != 'th':
+        tokens = text.split()
+        return tokens, [norm_word(t) for t in tokens], ' '
+    from pythainlp.tokenize import word_tokenize
+    if romanize is None:
+        import uroman
+        romanize = uroman.Uroman().romanize_string
+    surface, words, pending = [], [], ''
+    for tok in word_tokenize(text, engine='newmm', keep_whitespace=True):
+        w = norm_word(romanize(tok)) if tok.strip() else ''
+        if not w:  # whitespace / punctuation: attach to the previous word (or the next one at the start)
+            if surface:
+                surface[-1] += tok
+            else:
+                pending += tok
+            continue
+        surface.append(pending + tok)
+        words.append(w)
+        pending = ''
+    return surface, words, ''
 
 
 def read_jsonl(p):
@@ -53,9 +82,8 @@ def align_part(k, n):
     for r in rows:
         if re.search(r'\d', r['text']):
             continue
-        tokens = r['text'].split()
-        words = [norm_word(t) for t in tokens]
-        if not all(words):
+        tokens, words, joiner = split_words(r['text'], LANG_SOURCES[r['source_id']])
+        if not words or not all(words):
             continue
         wav, sr = sf.read(r['audio'], dtype='float32')
         if wav.ndim > 1:
@@ -107,7 +135,7 @@ def align_part(k, n):
                 out_rows.append({k2: v for k2, v in r.items() if k2 not in ('f0_std_st', 'energy_std_db', 'rate',
                                                                              'energy_range_db', 'duration')}
                                 | {'source_id': r['source_id'] + '_seg', 'audio': str(path),
-                                   'text': ' '.join(tokens[w0:w1 + 1]), 'duration': round(end - start, 3),
+                                   'text': joiner.join(tokens[w0:w1 + 1]).strip(), 'duration': round(end - start, 3),
                                    'segment_of': r['audio'], 'segment_start': round(start, 3),
                                    'segment_end': round(end, 3), 'align_score_mean': round(sum(seg_scores) / len(seg_scores), 3),
                                    'align_score_min': round(min(seg_scores), 3), 'derivation': 'mms_fa_pause_segment_20261103'})
@@ -187,6 +215,10 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('cmd', choices=['align', 'qc', 'finalize'])
     ap.add_argument('shard', nargs='?', default='0/1')
+    ap.add_argument('--sources', default=','.join(LANG_SOURCES), help='comma list, e.g. fleurs_th')
+    ap.add_argument('--out', type=Path, default=OUT, help='new dir per run; never reuse an old run dir')
     a = ap.parse_args()
+    LANG_SOURCES = {s: SOURCE_LANG[s] for s in a.sources.split(',')}
+    OUT = a.out
     k, n = map(int, a.shard.split('/'))
     {'align': lambda: align_part(k, n), 'qc': lambda: qc_part(k, n), 'finalize': finalize}[a.cmd]()

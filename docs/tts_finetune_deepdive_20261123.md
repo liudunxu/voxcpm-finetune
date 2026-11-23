@@ -126,10 +126,39 @@ bump 风险一条：新版 `_manifest_features` **按首行推断清单 schema**
 
 以上每项都是独立单变量，**排在 r54（TH/ID 准确短片段）之后**，A 与 B 优先（成本低、与主失败模式直接相关）。
 
+### 4.4 k2-fsa/OmniVoice 微调方式复查（2026-11-23，用户点名；补 11-20 文档 §3 未覆盖的部分）
+
+> 仍是 k2-fsa 的 600+ 语模型，不是生产同名服务；权重 CC-BY-NC，**只借方法不借权重/输出**。
+
+已核原文：[lora_finetuning.md](https://github.com/k2-fsa/OmniVoice/blob/main/docs/lora_finetuning.md)、
+[training.md](https://github.com/k2-fsa/OmniVoice/blob/master/docs/training.md)、
+[train_config_finetune.json](https://raw.githubusercontent.com/k2-fsa/OmniVoice/master/examples/config/train_config_finetune.json)、
+[data_preparation.md](https://github.com/k2-fsa/OmniVoice/blob/master/docs/data_preparation.md)、
+[data_preparation_advanced.md](https://github.com/k2-fsa/OmniVoice/blob/master/docs/data_preparation_advanced.md)。
+
+| 项 | k2-fsa 做法（原文） | 对本项目 |
+|---|---|---|
+| LoRA 目标层 | `q/k/v/o` **+ `gate/up/down_proj`（MLP）**；r16/α32/dropout .05；lr 1e-4；约 3% 参数可训 | **可借，新单变量 G**：本项目各轮只挂 attention q/k/v/o。VoxCPM2 `LoRAConfig.target_modules_lm/_dit` 可直接配置（`voxcpm2.py:148-149`；MiniCPM4 MLP 名为 `gate_proj/up_proj/down_proj`，`modules/minicpm4/model.py:229-231`），**无需改 submodule**。QLoRA 等「全线性层」实践亦支持；须核对 merge 与 OmniVoice 推理读取 `lora_config.json` 时目标层一致 |
+| 全量训练的 I/O 层 | `modules_to_save: audio_embeddings, audio_heads`（音频 token 进出层全量训） | 对应 VoxCPM2 的投影层/停止头；`enable_proj`（r40）曾被已失效判退门否定。若 p_stop 诊断证实停止失准，可与「只解冻 stop_proj/stop_head」合并设计，不单独重开 |
+| 全量微调配置 | 实际 json：lr **1e-5**、5000 步、warmup 1%、wd .01、grad clip 1.0（README 表写 5e-5，与 json 不一致，以 json 为准） | 与官方 VoxCPM 全量 lr 1e-5 一致，本项目不做全量 |
+| 条件丢弃 | `drop_cond_ratio 0.1`、`language_ratio 0.8`（20% 样本不给语种标签） | VoxCPM2 无语种 token，语种丢弃不适用；cfg 丢弃已是 `training_cfg_rate 0.1` |
+| 训练 prompt | `prompt_ratio_range [0, 0.3]`：prompt 取自**同一条**音频前缀（NAR 掩码预测） | **不借**：同源前缀 = continuation 形态，生产是 reference-only；本项目禁止同 `origin_audio` 配 ref |
+| 参考降质 | Sidon 降噪原音 + 对**少量** prompt 加噪声/RIR（比例、SNR 未公开） | 与 11-20 结论相同，沿用 `ref_robustness` 阶段门，不扩 profile |
+| 语种平衡 | data config 每个数据集 `repeat` 次数 | 本项目按有效时长配额、3× 上限，更严格，不改 |
+| 错误处理 | `--skip_errors` 默认 False，失败写 `errors.jsonl` | 与本项目「失败显式中止/隔离」一致 |
+| 数字 TN | `normalize_text=True`：zh/en 用 WeTextProcessing，其他语种整数用 `num2words` | **陷阱实测**：`num2words(1250, lang='fil')` 输出**芬兰语**「tuhat kaksisataa…」，`lang='tl'` NotImplementedError；th/id/vi 输出正确。生产 fil 走自有 filipino normalizer 不受影响，但**任何 Tagalog 数字处理不得用 num2words**。th/id/vi 的 num2words 可作为数据侧数字 verbalize 候选（基座 TN 对这三语透传数字） |
+| 跨语言克隆 | README：参考音口音会带入输出 | 与本项目 zh/en ref→目标语的口音风险一致，母语评审仍是唯一判据 |
+
+**新增单变量候选 G：LoRA 扩到 MLP 层**（LM 与 DiT 的 `gate/up/down_proj`，其余 r50 配方不变）。
+依据是 k2-fsa 默认与「全线性层 LoRA」通行做法；可训参数约增数倍，需同步看音色代价。排在 A/B 之后、C 之前。
+
 ## 5. 建议顺序（不打断现行主线）
 
-1. 现行不变：r54（TH/ID MMS-FA 准确短片段，单变量）→ vi/en 数据轮；新开发集、按句聚类、2 训练 seed。
-   之后按 4.3 依次测 A（r32 vs r64）、B（时长上限），各自单变量。
+1. 现行不变：r54 → vi/en 数据轮；新开发集、按句聚类、2 训练 seed。**更正**：ID 的 MMS-FA 片段已在 r49/r50 中（629 行），
+   r54 的真实增量只有 **TH**。原切分脚本只认 a–z（`norm_word`），泰文全被跳过；已扩展 `scripts/fleurs_segment_20261103.py`
+   （`--sources fleurs_th --out <新目录>`，pythainlp newmm 分词 + uroman 罗马化喂 MMS_FA，段文本取原泰文子串；TL/ID 默认行为不变，
+   测试 `tests/test_fleurs_segment.py`）。泰语 MMS_FA 对齐质量未实测，首跑先小样本看对齐分与 Whisper CER 产出率。
+   之后按 4.3/4.4 依次测 A（r32 vs r64）、B（时长上限）、G（MLP LoRA），各自单变量。
 2. **零训练 p_stop 诊断**（GPU 恢复后约 1 小时）：脚本 `scripts/stop_prob_probe.py`（forward hook 记 p_stop，不改 submodule；
    测试 `tests/test_stop_prob_probe.py`）。`select` 从冻结短句报告取 r50 全部 56 条严重输出（TH 36 / TL 14 / ID 6，其中 27 条 base 同样严重）
    + 44 条同句干净对照 = 100 条；`run` 分别跑 base 与 r50。按 `stop_pattern`（never_rises / missed_peak / late_stop / clean_stop）比较：

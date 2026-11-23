@@ -1478,6 +1478,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pythainlp"
+version = "5.4.0"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/9f/7f/7fa41bea1a9927eedf831f6ddcd71e104650c4881260984575fe4b84cc55/pythainlp-5.4.0.tar.gz", hash = "sha256:85cd4eed4a5a942c978d751be969a496581d7acc250fc9c8a2d54088cb6d19cd", size = 21481113, upload-time = "2026-10-09T00:59:27.424Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/6d/13/3304199eec02b89573b6042078fd780e627d6637228dd6f69fad45f3262e/pythainlp-5.4.0-py3-none-any.whl", hash = "sha256:9239753df877202da1a50dd2842d9569eff764034f31f20222b3df4def5df193", size = 21936258, upload-time = "2026-10-09T00:59:24.506Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -2118,6 +2130,18 @@ wheels = [
 ]
 
 [[package]]
+name = "uroman"
+version = "1.3.1.1"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "regex" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/73/03/7d23f79d9b259861c31437ed76007eb8dc6f6c419b709f5b2ef37d4fa7da/uroman-1.3.1.1.tar.gz", hash = "sha256:6aaf2d5265f24f15201cbbf92c86720b2b804ac53294ce43a3307fcd242387d5", size = 896697, upload-time = "2024-06-28T06:03:34.868Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/78/e1/43722c41eebab0592c6f83410e5e35edc1d6e333f44feb0a543bd38dba3e/uroman-1.3.1.1-py3-none-any.whl", hash = "sha256:394f965f7011fd56a84aca098a6c3b50082f365324f5d94c992852137918c8f5", size = 930684, upload-time = "2024-06-28T06:03:32.578Z" },
+]
+
+[[package]]
 name = "uvicorn"
 version = "0.52.4"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -2164,6 +2188,8 @@ dev = [
 qc = [
     { name = "av" },
     { name = "faster-whisper" },
+    { name = "pythainlp" },
+    { name = "uroman" },
 ]
 
 [package.metadata]
@@ -2195,6 +2221,8 @@ dev = [{ name = "pytest", specifier = ">=8.0" }]
 qc = [
     { name = "av", specifier = ">=12" },
     { name = "faster-whisper", specifier = ">=1.0" },
+    { name = "pythainlp", specifier = ">=5.0" },
+    { name = "uroman", specifier = ">=1.3" },
 ]
 
 [[package]]

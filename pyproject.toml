@@ -29,7 +29,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
-qc = ["faster-whisper>=1.0", "av>=12"]
+qc = ["faster-whisper>=1.0", "av>=12", "pythainlp>=5.0", "uroman>=1.3"]  # pythainlp/uroman: Thai MMS-FA segmentation (uroman requires attribution)
 
 [project.scripts]
 voxft-ui = "voxft.ui.app:main"

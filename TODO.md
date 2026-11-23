@@ -24,7 +24,10 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
 ## 2026-11-23 开源 TTS 微调方法深挖（结论见 `docs/tts_finetune_deepdive_20261123.md`）
 
 静态调研 + 源码核对，未训练。不改上面的推进排序，以下按优先级插在数据主线之后：
-- [ ] **r54 先行**：r50 配方 + TH/ID MMS-FA 准确短片段（单变量），新开发集 + 按句聚类 + 2 训练 seed。
+- [ ] **r54 先行**：r50 配方 + **TH** MMS-FA 准确短片段（单变量；ID 片段已在 r49/r50 中），新开发集 + 按句聚类 + 2 训练 seed。
+  切分脚本已支持泰语（pythainlp + uroman，`uv sync --group qc`）：
+  `python scripts/fleurs_segment_20261103.py align 0/1 --sources fleurs_th --out /root/autodl-tmp/seg_th_<日期>`，再 `qc` → `finalize`（同参数）。
+  先小样本看对齐分与 CER≤0.10 产出率；泰语对齐质量未实测。
 - [ ] **零训练 p_stop 诊断**（GPU 恢复后约 1h；脚本与测试已就绪）：停止是 `stop_head.argmax()`（固定 0.5，`voxcpm2.py:1113`），stop 头未随 LoRA 训练。
   ```bash
   # 远端：从冻结短句报告选 r50 全部 56 条严重 + 44 条同句干净对照（本机已验证得 100 条）
@@ -39,6 +42,9 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
 - [ ] **单变量候选 A：r32 vs r64 新口径重测**——arXiv 2606.26618（VoxCPM2 LoRA，Khmer+韩语）全文：韩语 r64 显著变差（3.65→3.48，p=.02）、
   r32 3.76 无显著收益；但其 α=2r、约 8 epoch，与过训混杂，先验中等。旧 r32 结论来自已失效判退门。
 - [ ] **单变量候选 B：训练时长上限**（≤12s 或线上 cue 99 分位，按语种配额补总时长）——ZipVoice/Kani 做法，直对短 cue 出分布。
+- [ ] **单变量候选 G：LoRA 扩到 MLP**（LM+DiT 的 gate/up/down_proj，配置即可，不改 submodule）——k2-fsa OmniVoice 默认与全线性层 LoRA 通行做法；
+  排在 A/B 之后；须核 merge 与线上读取 `lora_config.json` 目标层一致。
+- [ ] ⚠️ 数字 TN 陷阱：`num2words(lang='fil')` 输出芬兰语、`tl` 未实现；Tagalog 数字不得用 num2words（th/id/vi 输出正确）。
 - [ ] 低优先候选：C LM-only LoRA（UtterTune）、D 带 ref 比例剂量（仅可信身份）、E `training_cfg_rate` .1→.2（需复制基座 config）。
 - [ ] **RL 预研（不开训）**：LoCA（arXiv 2610.28035）已在 VoxCPM2 上做 RL，全文已核：冻结 stop 头、lr 2e-6、单 seed、无代码、无 th/id/tl/vi 结果；
   复现需自写 rollout + 帧级 advantage，奖励须含长度比与尾部多读惩罚；顺序 SFT→RL，RL 后不再 SFT（Fish 文档警示）。排在 r54 与新开发集之后。
