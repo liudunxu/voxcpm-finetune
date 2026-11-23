@@ -236,11 +236,11 @@ bump 风险一条：新版 `_manifest_features` **按首行推断清单 schema**
    （`--sources fleurs_th --out <新目录>`，pythainlp newmm 分词 + uroman 罗马化喂 MMS_FA，段文本取原泰文子串；TL/ID 默认行为不变，
    测试 `tests/test_fleurs_segment.py`）。泰语 MMS_FA 对齐质量未实测，首跑先小样本看对齐分与 Whisper CER 产出率。
    之后依次测 H（时长/文本比剔两端，4.5）、A（r32 vs r64）、B（时长上限）、G（MLP LoRA），各自单变量。
-2. **零训练 p_stop 诊断**（GPU 恢复后约 1 小时）：脚本 `scripts/stop_prob_probe.py`（forward hook 记 p_stop，不改 submodule；
-   测试 `tests/test_stop_prob_probe.py`）。`select` 从冻结短句报告取 r50 全部 56 条严重输出（TH 36 / TL 14 / ID 6，其中 27 条 base 同样严重）
-   + 44 条同句干净对照 = 100 条；`run` 分别跑 base 与 r50。按 `stop_pattern`（never_rises / missed_peak / late_stop / clean_stop）比较：
-   仅当严重输出以 missed_peak/late_stop 为主且 r50 多于 base，才做阈值/长度先验 A/B；以 never_rises 为主则说明停止信号本身没出现，
-   阈值无用，转数据或 RL 路线。生产默认不变。
+2. **零训练 p_stop 诊断——已完成（2026-11-23），否定「停止失准」假设**：`scripts/stop_prob_probe.py`（forward hook，不改 submodule）
+   重放 r50 冻结短句全部 56 条严重输出（56/56 时长复现）+ 44 条同句干净对照：严重 55 条 clean_stop、1 条 never_rises；
+   严重与对照的停止行为几乎一致（中位 6 步；停前最大 p_stop p90 .427 vs .438），仅 1 条撞长度上限。⇒ 按冻结规则判 `not_stop_timing`，
+   **阈值/长度先验/最小长度 A/B 均不做**。短句严重坏例主要是内容错（错读/错词），停止头本身工作正常，
+   这也解释了 r41（stop 权重 ×2）为何无效。局限：短句约 6 步，模式标签分辨率低，但严重/对照对比不依赖标签。
 3. **LoCA/GROW 式 RL 预研**：全文已核（无代码、单 seed、无目标语种）；仅在 r54 后、有新开发集和明确奖励
    （内容 + 长度比 + 声纹 + 尾部多读惩罚）时立项，按小项目估算工程量。
 4. 数据入库加「人工抽检估转写错误率」一步。

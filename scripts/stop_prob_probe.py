@@ -107,6 +107,44 @@ def run(cases: Path, label: str, lora: str | None, out: Path, base: str | None =
         hook.remove()
 
 
+def summarize(paths: list[Path]) -> dict:
+    """Frozen decision rule (written before any trace was read, 2026-11-23):
+    per model, over role=severe rows whose replay reproduced the original length (|ratio-1| <= 0.15):
+      clean_stop majority            -> failures are not stop timing (content/over-read before a normal stop)
+      missed_peak+late_stop majority -> threshold / length-prior A/B is justified only if r50 has more than base
+      never_rises majority           -> no stop signal to recalibrate; go to data/RL instead
+    """
+    out = {}
+    for path in paths:
+        rows = [json.loads(line) for line in path.open(encoding="utf-8")]
+        label = rows[0]["label"]
+        per_role = {}
+        for role in ("severe", "control"):
+            rr = [r for r in rows if r["role"] == role]
+            rep = [r for r in rr if r.get("source_audio_sec")
+                   and abs(r["audio_sec"] / r["source_audio_sec"] - 1) <= 0.15]
+            counts = {}
+            for r in rep:
+                counts[r["stop_pattern"]] = counts.get(r["stop_pattern"], 0) + 1
+            by_lang = {}
+            for r in rep:
+                d = by_lang.setdefault(r["lang"], {})
+                d[r["stop_pattern"]] = d.get(r["stop_pattern"], 0) + 1
+            per_role[role] = {"rows": len(rr), "reproduced": len(rep), "patterns": counts, "by_lang": by_lang}
+        sev = per_role["severe"]["patterns"]
+        n = sum(sev.values())
+        near = sev.get("missed_peak", 0) + sev.get("late_stop", 0)
+        verdict = ("insufficient" if n == 0 else
+                   "not_stop_timing" if sev.get("clean_stop", 0) * 2 > n else
+                   "near_miss" if near * 2 > n else
+                   "never_rises" if sev.get("never_rises", 0) * 2 > n else "mixed")
+        out[label] = per_role | {"severe_verdict": verdict, "severe_near_miss": near}
+    if {"base", "r50"} <= out.keys():
+        out["threshold_ab_justified"] = (out["r50"]["severe_verdict"] == "near_miss"
+                                         and out["r50"]["severe_near_miss"] > out["base"]["severe_near_miss"])
+    return out
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -120,9 +158,13 @@ def main() -> None:
     r.add_argument("--lora")
     r.add_argument("--base")
     r.add_argument("--out", type=Path, required=True)
+    m = sub.add_parser("summarize")
+    m.add_argument("traces", type=Path, nargs="+")
     a = p.parse_args()
     if a.cmd == "select":
         print(f"{select(a.reports_dir, a.model, a.out)} cases -> {a.out}")
+    elif a.cmd == "summarize":
+        print(json.dumps(summarize(a.traces), ensure_ascii=False, indent=1))
     else:
         run(a.cases, a.label, a.lora, a.out, a.base)
 

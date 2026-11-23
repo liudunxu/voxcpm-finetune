@@ -37,3 +37,20 @@ def test_select_pairs_severe_with_same_sentence_control(tmp_path):
     rows = [json.loads(line) for line in out.read_text().splitlines()]
     assert [r["role"] for r in rows] == ["severe", "control"]
     assert rows[1]["case_id"] == "s1_refb" and rows[1]["base_severe"] is False
+
+
+def test_summarize_frozen_rule(tmp_path):
+    from stop_prob_probe import summarize
+
+    def rows(label, patterns):
+        return [{"label": label, "role": "severe", "lang": "th", "audio_sec": 2.0, "source_audio_sec": 2.0,
+                 "stop_pattern": p} for p in patterns] + [
+            {"label": label, "role": "severe", "lang": "th", "audio_sec": 5.0, "source_audio_sec": 2.0,
+             "stop_pattern": "never_rises"}]  # not reproduced: ignored
+    for label, pats in (("base", ["missed_peak", "clean_stop", "clean_stop"]),
+                        ("r50", ["missed_peak", "late_stop", "clean_stop"])):
+        (tmp_path / f"{label}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows(label, pats)))
+    out = summarize([tmp_path / "base.jsonl", tmp_path / "r50.jsonl"])
+    assert out["base"]["severe_verdict"] == "not_stop_timing"
+    assert out["r50"]["severe"]["reproduced"] == 3 and out["r50"]["severe_verdict"] == "near_miss"
+    assert out["threshold_ab_justified"] is True

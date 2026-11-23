@@ -217,8 +217,9 @@ if __name__ == '__main__':
     ap.add_argument('shard', nargs='?', default='0/1')
     ap.add_argument('--sources', default=','.join(LANG_SOURCES), help='comma list, e.g. fleurs_th')
     ap.add_argument('--out', type=Path, default=OUT, help='new dir per run; never reuse an old run dir')
+    ap.add_argument('--src', type=Path, default=SRC, help='eligible rows jsonl (e.g. from r54_th_segment_input.py)')
     a = ap.parse_args()
     LANG_SOURCES = {s: SOURCE_LANG[s] for s in a.sources.split(',')}
-    OUT = a.out
+    OUT, SRC = a.out, a.src
     k, n = map(int, a.shard.split('/'))
     {'align': lambda: align_part(k, n), 'qc': lambda: qc_part(k, n), 'finalize': finalize}[a.cmd]()

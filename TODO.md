@@ -28,17 +28,13 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
   切分脚本已支持泰语（pythainlp + uroman，`uv sync --group qc`）：
   `python scripts/fleurs_segment_20261103.py align 0/1 --sources fleurs_th --out /root/autodl-tmp/seg_th_<日期>`，再 `qc` → `finalize`（同参数）。
   先小样本看对齐分与 CER≤0.10 产出率；泰语对齐质量未实测。
-- [ ] **零训练 p_stop 诊断**（GPU 恢复后约 1h；脚本与测试已就绪）：停止是 `stop_head.argmax()`（固定 0.5，`voxcpm2.py:1113`），stop 头未随 LoRA 训练。
-  ```bash
-  # 远端：从冻结短句报告选 r50 全部 56 条严重 + 44 条同句干净对照（本机已验证得 100 条）
-  python scripts/stop_prob_probe.py select --reports-dir /root/autodl-tmp/prod_review_20261103/reports \
-      --model r50 --out /root/autodl-tmp/stop_prob_probe_20261123/cases.jsonl
-  # base 与 r50 各跑一遍（nohup 落日志，可断点续跑；HF_HUB_OFFLINE=1）
-  python -X utf8 -u scripts/stop_prob_probe.py run --cases .../cases.jsonl --label base --out .../base_trace.jsonl
-  python -X utf8 -u scripts/stop_prob_probe.py run --cases .../cases.jsonl --label r50 --lora <r50 lora 目录> --out .../r50_trace.jsonl
-  ```
-  判读：严重输出以 missed_peak/late_stop 为主且 r50 多于 base → 做阈值/长度先验 A/B；以 never_rises 为主 → 阈值无用，转数据/RL。生产默认不变。
-  注：若远端报告已清理，用本机 `work/prod_review_20261103/reports/` rsync 上去。
+- [x] **零训练 p_stop 诊断（2026-11-23 完成，结论：不是停止时机问题，阈值/长度先验 A/B 不做）**：
+  r50 冻结短句全部 56 条严重输出重放 56/56 时长复现（与原评测 ±15% 内），**55 条 clean_stop、1 条 never_rises（TL，撞上限）**；
+  严重与 44 条同句干净对照的停止行为几乎相同（步数中位均 6；停前最大 p_stop p90 .427 vs .438、最大 .459 vs .491），只 1 条撞上限 ⇒
+  **r50 短句严重坏例以内容错误（错读/错词，CER>0.5）为主，不是跑飞或停止失准**；停止信号无法区分好坏输出。
+  局限：短句仅约 6 步，「末 3 步内」规则分辨率低；base 列是 r50 的 case 由 base 重放，只作参考（28/56 时长与原评测吻合）。
+  ⇒ 推理侧停止阈值、按文本比例最小长度两项均不做；优先级转向准确短句数据（r54 TH）与内容类（H 时长/文本比剔两端）。
+  证据：远端 `/root/autodl-tmp/stop_prob_probe_20261123/`，本机 `work/stop_prob_probe_20261123/summary.json`。
 - [ ] **单变量候选 A：r32 vs r64 新口径重测**——arXiv 2606.26618（VoxCPM2 LoRA，Khmer+韩语）全文：韩语 r64 显著变差（3.65→3.48，p=.02）、
   r32 3.76 无显著收益；但其 α=2r、约 8 epoch，与过训混杂，先验中等。旧 r32 结论来自已失效判退门。
 - [ ] **单变量候选 B：训练时长上限**（≤12s 或线上 cue 99 分位，按语种配额补总时长）——ZipVoice/Kani 做法，直对短 cue 出分布。
@@ -54,7 +50,6 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
   修在 DIS/OmniVoice，本仓库不改；修前先用线上请求实测一条「Sun Li」确认。en 评测集加星期缩写同形专名 case。
 - [ ] **vi 基座最弱（第三方 Confucius4 论文 Table 5，MiniMax-MLS-Test）**：VoxCPM2 WER id 1.17 / th 2.19 / **vi 4.19**；vi 数据轮收益空间最大，
   先跑 vi base 基线并把停不下来（上游 #352）形态入回归集。
-- [ ] p_stop 诊断补看「提前停」：VoxCPM2 最小长度固定 2 patch（CosyVoice3 为文本 token×2 前屏蔽 EOS），若少读样本 p_stop 早升，加按文本比例的最小长度推理单变量。
 - [ ] 低优先候选：C LM-only LoRA（UtterTune）、D 带 ref 比例剂量（仅可信身份）、E `training_cfg_rate` .1→.2（需复制基座 config）。
 - [ ] **RL 预研（不开训）**：LoCA（arXiv 2610.28035）已在 VoxCPM2 上做 RL，全文已核：冻结 stop 头、lr 2e-6、单 seed、无代码、无 th/id/tl/vi 结果；
   复现需自写 rollout + 帧级 advantage，奖励须含长度比与尾部多读惩罚；顺序 SFT→RL，RL 后不再 SFT（Fish 文档警示）。排在 r54 与新开发集之后。
