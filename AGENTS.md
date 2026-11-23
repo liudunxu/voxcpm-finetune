@@ -226,6 +226,9 @@ VoxCPM 2（OpenBMB TTS）微调工作台：Tagalog/泰语/印尼语高质量语�
   **PATH 必须同时带 `.venv/bin`**：`launcher.gpu_command` 生成的是裸 `python <train脚本>`（UI 走 `start_local` 时继承已激活环境所以没事），非交互 SSH 下只有 `uv` 可用、`python` 不存在，直接 nohup 会静默失败成一行 `python: command not found`。
 - **代理按用途分流，不要无脑 `source /etc/network_turbo`**：它是海外学术加速，只对 github / pypi 官方源 / `huggingface.co` 直连有用。本项目 `.env` 默认走国内镜像 hf-mirror，**套上代理反而慢一倍以上**（实测 4.55 → 2.43 MB/s，劣化时 0.22 MB/s）。所以：下载数据集/模型 → 不开代理；`git pull` submodule、装非镜像源依赖 → 才开。详见「下载通道实测矩阵」。
 - 需要交互式登录的命令（`gh auth login` 之类）让用户在会话里用 `! <命令>` 前缀自己跑，别代跑。
+- **代码同步用锚定排除**（2026-11-23 踩坑）：`--exclude data` 会连 `src/voxft/data/` 一起排除，导致远端数据管线代码停在旧版；
+  另需排除任意层级 `.venv`（本机 `third_party/VoxCPM/.venv` 曾被同步上去 1.3G）。固定写法：
+  `rsync -az --exclude /.venv --exclude .venv --exclude /work --exclude /data --exclude /checkpoints --exclude .git --exclude __pycache__ --exclude /.env ./ <远端>:/root/voxcpm-finetune/`
 - **实例随时会没**：autodl 容器停机后表现为「网关 `ping` 通、SSH 端口 `Connection refused`」（`nc -z <主机> <端口>` 一秒就能确认，别反复重试 ssh）。重启后端口/主机名可能变。因此**代码与文档改动要边做边 `rsync` 上去，不要攒到最后一次性同步**——本轮就是在最后同步 AGENTS.md 时实例停了，远端因此落后一个版本。连不上先找用户确认实例状态。
 
 ### 长任务：一律 nohup 落日志，别占着 SSH
