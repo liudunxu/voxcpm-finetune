@@ -58,6 +58,9 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
 - [ ] ⚠️ **生产风险（跨仓库，需用户决定）：en 目标的 wetext TN 把专名当星期缩写**——本机 wetext 0.2.1 复现 `Sun Li`→`Sunday Li`、`Wed`→`Wednesday`、
   `Sat Nam`→`Saturday Nam`（Confucius4 #19 同问题）。读代码：DIS `VOXCPM_NORMALIZE` 默认 true、仅 tl/fil 跳过服务端 TN ⇒ en 经 OmniVoice wetext。
   修在 DIS/OmniVoice，本仓库不改；修前先用线上请求实测一条「Sun Li」确认。en 评测集加星期缩写同形专名 case。
+- [ ] **配比再平衡（不加总量，见深挖文档 §6）**：r50 实测 id 45.7% / tl 32.9% / th 14.7% / zh+en 6.6%（设计 28.3×3 + 15）。
+  基座每语种约 1K–50K h（官方未公开分语种），微调数据只是分布适配。TH 欠配由 r54 检验；ID 超配（gigaspeech2_id 伪标注 1779 行）待 TH/vi 补齐后做「降到等权」单变量；
+  vi/en 轮给 vi、en 各自完整目标份额，回放另计。
 - [ ] **vi 基座最弱（第三方 Confucius4 论文 Table 5，MiniMax-MLS-Test）**：VoxCPM2 WER id 1.17 / th 2.19 / **vi 4.19**；vi 数据轮收益空间最大，
   先跑 vi base 基线并把停不下来（上游 #352）形态入回归集。
 - [ ] 低优先候选：C LM-only LoRA（UtterTune）、D 带 ref 比例剂量（仅可信身份）、E `training_cfg_rate` .1→.2（需复制基座 config）。
