@@ -44,6 +44,8 @@ MODELS = {
     'soup': '/root/autodl-tmp/soup_r50_r51_20261104',
     'r52': '/root/autodl-tmp/r52_th_codeswitch_20261104/checkpoint/latest',
     'r53': '/root/autodl-tmp/r53_balanced_pool_20261104/checkpoint/latest',
+    'r54': '/root/autodl-tmp/r54_th_segments_20261123/checkpoint/latest',
+    'r55': '/root/autodl-tmp/r55_ratio_trim_20261123/checkpoint/latest',
 }
 PHASE1 = ['base', 'r46u10', 'r28', 'r29', 'r30']
 WINNER_POOL = ['r28', 'r29', 'r30']
