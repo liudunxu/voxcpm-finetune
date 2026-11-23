@@ -152,13 +152,55 @@ bump 风险一条：新版 `_manifest_features` **按首行推断清单 schema**
 **新增单变量候选 G：LoRA 扩到 MLP 层**（LM 与 DiT 的 `gate/up/down_proj`，其余 r50 配方不变）。
 依据是 k2-fsa 默认与「全线性层 LoRA」通行做法；可训参数约增数倍，需同步看音色代价。排在 A/B 之后、C 之前。
 
+### 4.5 CosyVoice3 深挖（2026-11-23，用户点名；不重复 11-20 已写的 DiffRO / 奖励投机 / CosyVoice2 GRPO）
+
+来源：[论文全文](https://arxiv.org/html/2505.17589)、[官方 llm.py](https://raw.githubusercontent.com/FunAudioLLM/CosyVoice/main/cosyvoice/llm/llm.py)、
+[SFT 配置](https://raw.githubusercontent.com/FunAudioLLM/CosyVoice/main/examples/libritts/cosyvoice3/conf/cosyvoice3.yaml)、
+[CV3-Eval](https://github.com/FunAudioLLM/CV3-Eval)、[0.5B-2512 模型卡](https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512)。
+仓库已迁至 QwenAudio 组织（旧链接重定向）。下列加 ✔ 的数字本人已复核原文/源码，其余为子代理读取。
+
+**数据管线（§3）**
+- ✔ 多 ASR 过滤：Faster-Whisper large-v3 / Canary-1B / SeamlessM4T-v2 三家转写，**两两平均 WER <15%** 才收。
+- ✔ **按时长/文本比剔除两端**：语音 token 数 / 文本 token 数，**丢最小 1% 与最大 5%**——专门去掉「短音长文」与「短文长音」错配。
+- ✔ **按强制对齐停顿重写标点**（MFA）：停顿 ≥300ms 补逗号、≤50ms 删表示停顿的标点。
+- ✔ 音量逐条 `raw/max×0.6`（**与本项目禁逐条峰值归一冲突，不借**）。
+- 说话人分离 + VAD + 事件检测切 <30s 单人片段，MossFormer2 降噪，按首尾帧能量剔除首尾词不完整片段。
+- TN 自训练与「rare case」稳定性数据均用 CosyVoice 合成音频（**违反合成语料红线，不借**）。
+
+**停止与长度（✔ 源码 `llm.py:173-216`）**：`min_len = 文本 token × 2`、`max_len = 文本 token × 20`，未到 min_len 前屏蔽 EOS；
+离散 token 另有 RAS 防重复采样。对照 VoxCPM2：上限 `文本 token × 6 + 10` patch **已比它紧**；但**下限固定 2 patch、与文本长度无关**
+（`voxcpm2.py:474`）——若 p_stop 诊断发现「少读/提前停」也存在 p_stop 早升，可加「按文本比例的最小长度」作为推理侧单变量，生产默认不变。
+
+**发音控制（§2.3，✔ 表 13）**：扩词表混入拼音/CMU 音素；只替换**单音字/词**并混排（RepMono+MixPhn）在测试集纠错 zh 15/15、en 9/9，
+优于全替换（69.2%/72.7%）。VoxCPM2 需扩 embedding/lm_head，LoRA 训不到、submodule 只读 ⇒ **不借**；泰语音译人名、Tagalog「CEO」
+仍走 DIS 读音表（推理侧改写），不在训练侧教模型读非规范拼写。
+
+**SFT 配方**：官方 recipe 是**全量**、lr 1e-5、llm/flow/hifigan 分开训，维护者称暂无 LoRA 计划（[#1158](https://github.com/QwenAudio/CosyVoice/issues/1158)）；
+单说话人至少 1 小时、「repeat data is not ok」（[#321](https://github.com/QwenAudio/CosyVoice/issues/321)）。社区报告加说话人名 prompt 后 WER 上升
+（[#1514](https://github.com/QwenAudio/CosyVoice/issues/1514)，非官方）。不借配方；「不靠重复凑量」与本项目 3× 上限一致。
+
+**规模**：0.5B 上数据 3k→170k 小时 test-hard CER 27.60→6.96，继续到百万小时收益趋平；模型 0.5B→1.5B 收益小且 en 反而变差。
+这是预训练量级规律，不推翻本项目 r17/r27/r53「LoRA 加量无收益或变差」的实测。CV3-0.5B 在 to-ko（zh prompt）WER 41.0 差于 CosyVoice2 24.8——
+换代也会在单个跨语言方向退化，佐证「任一语种退化即不通过」。
+
+**CV3-Eval**：9 语（zh/en/ja/ko/de/fr/ru/it/es），**无 th/tl/id/vi**；跨语言子集按「每目标语 × 3 种 prompt 语种」各约 600 条，hard 子集单列。
+数据不可用，但**矩阵设计可借**：新开发集按「zh/en/fil ref × th/tl/id/vi 目标」成矩阵，hard（句末专名、外文借词、缩写）单列。
+许可：代码与 0.5B-2512 权重标 Apache-2.0，但 GitHub 页另有「academic purposes only」字样，商用前须再核（本项目不用其权重，仅记录）。
+
+**新增单变量候选**
+- **H. 训练集按「有声时长 / 文本长度」分语种剔除两端**（最小 1%、最大 5%，其余同 r50）：自动化版本的 `text_duration_review`，
+  直接对准短文长音 ⇒ 多读/跑飞。th 按字符、tl/id/vi/en 按词（`rate` 量纲规则）。成本低，**与 B（时长上限）同属长度分布类，二者先做 H**
+  （H 不减少短句、只去错配；B 会砍长句总时长）。
+- **I. 按 MMS-FA 停顿重写训练文本标点**（音频不变）：可能改善句内停顿与句末收尾；须先确认泰文对齐（见 r54 泰语切分）可用，排在 H 之后。
+- 新开发集按 CV3-Eval 矩阵设计（流程改动，非训练臂）。
+
 ## 5. 建议顺序（不打断现行主线）
 
 1. 现行不变：r54 → vi/en 数据轮；新开发集、按句聚类、2 训练 seed。**更正**：ID 的 MMS-FA 片段已在 r49/r50 中（629 行），
    r54 的真实增量只有 **TH**。原切分脚本只认 a–z（`norm_word`），泰文全被跳过；已扩展 `scripts/fleurs_segment_20261103.py`
    （`--sources fleurs_th --out <新目录>`，pythainlp newmm 分词 + uroman 罗马化喂 MMS_FA，段文本取原泰文子串；TL/ID 默认行为不变，
    测试 `tests/test_fleurs_segment.py`）。泰语 MMS_FA 对齐质量未实测，首跑先小样本看对齐分与 Whisper CER 产出率。
-   之后按 4.3/4.4 依次测 A（r32 vs r64）、B（时长上限）、G（MLP LoRA），各自单变量。
+   之后依次测 H（时长/文本比剔两端，4.5）、A（r32 vs r64）、B（时长上限）、G（MLP LoRA），各自单变量。
 2. **零训练 p_stop 诊断**（GPU 恢复后约 1 小时）：脚本 `scripts/stop_prob_probe.py`（forward hook 记 p_stop，不改 submodule；
    测试 `tests/test_stop_prob_probe.py`）。`select` 从冻结短句报告取 r50 全部 56 条严重输出（TH 36 / TL 14 / ID 6，其中 27 条 base 同样严重）
    + 44 条同句干净对照 = 100 条；`run` 分别跑 base 与 r50。按 `stop_pattern`（never_rises / missed_peak / late_stop / clean_stop）比较：

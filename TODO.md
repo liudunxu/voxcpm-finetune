@@ -45,6 +45,11 @@ AGENTS.md 2026-11-19 平替调研），剩余收益只在三处，按成本排�
 - [ ] **单变量候选 G：LoRA 扩到 MLP**（LM+DiT 的 gate/up/down_proj，配置即可，不改 submodule）——k2-fsa OmniVoice 默认与全线性层 LoRA 通行做法；
   排在 A/B 之后；须核 merge 与线上读取 `lora_config.json` 目标层一致。
 - [ ] ⚠️ 数字 TN 陷阱：`num2words(lang='fil')` 输出芬兰语、`tl` 未实现；Tagalog 数字不得用 num2words（th/id/vi 输出正确）。
+- [ ] **单变量候选 H（CosyVoice3 §3）：按「有声时长/文本长度」分语种剔除最小 1%、最大 5%**，其余同 r50——自动去短文长音/短音长文错配，
+  直对多读/跑飞；与 B 同类，先做 H（不砍短句）。th 按字符、其余按词。
+- [ ] 候选 I：按 MMS-FA 停顿重写训练文本标点（≥300ms 补逗号、≤50ms 删），音频不变；排 H 之后。
+- [ ] 新开发集按 CV3-Eval 矩阵设计：zh/en/fil ref × th/tl/id/vi 目标，hard（句末专名、外文借词、缩写）单列。
+- [ ] p_stop 诊断补看「提前停」：VoxCPM2 最小长度固定 2 patch（CosyVoice3 为文本 token×2 前屏蔽 EOS），若少读样本 p_stop 早升，加按文本比例的最小长度推理单变量。
 - [ ] 低优先候选：C LM-only LoRA（UtterTune）、D 带 ref 比例剂量（仅可信身份）、E `training_cfg_rate` .1→.2（需复制基座 config）。
 - [ ] **RL 预研（不开训）**：LoCA（arXiv 2610.28035）已在 VoxCPM2 上做 RL，全文已核：冻结 stop 头、lr 2e-6、单 seed、无代码、无 th/id/tl/vi 结果；
   复现需自写 rollout + 帧级 advantage，奖励须含长度比与尾部多读惩罚；顺序 SFT→RL，RL 后不再 SFT（Fish 文档警示）。排在 r54 与新开发集之后。
