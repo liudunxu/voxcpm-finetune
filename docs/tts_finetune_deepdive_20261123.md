@@ -6,8 +6,8 @@
 [dots_tts_training_review_20261120.md](dots_tts_training_review_20261120.md)，不重复已覆盖的 MOSS / IndexTTS /
 CosyVoice / Qwen3 / Ming / Confucius4 / k2-fsa OmniVoice / dots / LongCat / Chatterbox / Dia / CSM / OuteTTS。
 本次为联网静态调研 + 本地源码核对，**未训练、未生成音频、未改生产**。
-2026-11-25 增补 FireRedTTS3（§8）：重点是 RedAE 语义监督、身份/语言条件与结构化声学计划的迁移边界，
-不改变前述实验排序，也不新增训练轮。
+2026-11-25 增补 FireRedTTS3（§8）与 Microsoft VibeVoice（§9）：重点是语义表征、身份/语言条件、
+结构化声学计划及长上下文的迁移边界，不改变前述实验排序，也不新增训练轮。
 
 新增最值得做的三件事（按成本排序，均为待验证假设）：
 
@@ -369,3 +369,42 @@ bump 风险一条：新版 `_manifest_features` **按首行推断清单 schema**
    若将来单独研究，编辑后仍须重做文本、身份和声学 QC，不能混入本轮 LoRA。
 6. **不把公开自动分数当微调收益。**MiniMax-MLS 是同语参考且有参考转写，FireRed 表中对手也是 VoxCPM2 基座而非 r50；
    本项目继续同参考、跨语言正文、≥5 seed、按句聚类、母语盲听与任一语种退化即整轮不通过。
+
+## 9. VibeVoice：冻结表征是有效佐证，长播客设计不是短 cue 配方（2026-11-25）
+
+来源：[技术报告](https://arxiv.org/html/2508.19205)、[长文 1.5B 模型卡](https://huggingface.co/microsoft/VibeVoice-1.5B)、
+[Realtime 模型卡与文档](https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B)、[ASR 微调入口](https://github.com/microsoft/VibeVoice/blob/main/finetuning-asr/README.md)。
+早期长文 TTS 代码已移除，当前公开的官方微调脚本属于 **ASR**，不是 TTS；ASR 的 LoRA rank、学习率和长音频标签格式
+不能直接搬到 VoxCPM2 TTS。其 toy dataset 也明确是 TTS 合成音频，仅作演示，不构成可训练数据或配方证据。
+
+### 9.1 公开训练结构与版本边界
+
+- 长文版有独立的 acoustic/semantic 两类连续 tokenizer，均工作在 **7.5Hz**，把 24kHz 音频压缩 3200 倍。
+  Semantic tokenizer 以 ASR proxy task 训练，文本 decoder 在 tokenizer 预训练后移除；生成目标仍是 acoustic latent。
+- 两类 tokenizer 预训练后都冻结，**只训练 LLM 与 diffusion head**。长文上下文课程为 4k→16k→32k→64k，
+  目标是 90 分钟多人对话；Realtime 则移除 semantic tokenizer、课程只到 8k，并以预嵌入音色换取低延迟和滥用防护。
+  不能把长文版的任意声音 prompt、多人对话和 Realtime 的预设声音合并成同一能力。
+- 其 diffusion head 是 DDPM 噪声预测＋DPM-Solver，论文给出 guidance 1.3、10 steps；
+  VoxCPM2 是另一套 flow-matching/CFM 与 patch 生成路径，不能直接复制这些推理数值。
+- 官方明确长文版跨语言迁移是未专门优化的 emergent ability，可能不稳定；Realtime 对三个词以内也提示稳定性下降。
+  因而没有证据把 7.5Hz 或长上下文课程解释成短 cue 质量/停止稳定性的改进。
+
+### 9.2 对当前项目的可迁移结论
+
+| 方法/现象 | 可借鉴或应吸取的教训 | 对 voxcpm_finetune 的处置 |
+|---|---|---|
+| 冻结 acoustic/semantic tokenizer，只训 LLM＋diffusion | 预训练声学表征不一定要随领域数据微调，避免破坏通用重建 | **支持现行冻结 AudioVAE、只适配 LM/DiT 的路线**，是结构佐证而非新增实验；也不能据此证明 LoRA 一定优于所有全量方案 |
+| Semantic tokenizer 的 ASR proxy task | 独立语义表征可帮助长序列内容建模，和 FireRed 的语义教师目标相呼应 | 仅作底层表征长期研究；VibeVoice 是额外 semantic 输入分支，FireRed 是把语义注入同一 RedAE，二者不等价，不能直接加到当前 LoRA |
+| 7.5Hz＋逐步扩到 64K | 低帧率降低长上下文序列成本，课程解决的是长播客可扩展性 | **不降帧、不做 90 分钟训练、不改上下文长度**；当前主要失败是短 cue 出分布，Realtime 超短输入不稳反而要求保留短句回归 |
+| 角色 ID＋声音特征＋分角色文本的混合输入 | 多角色任务需要显式角色—声音—正文绑定 | 若未来做长对话，可借鉴其数据组织原则；当前单 cue/reference-only 不添加 `Speaker 1` 等伪前缀，四说话人上限也不替代 DIS 全局角色映射 |
+| 官方刻意不对训练数据降噪，接受随机 BGM | 不干净目标/参考会把配乐、环境或事件发声带给输出，且生成时不可控 | **作为反面教训**：继续音乐排除、参考/目标分别检查和派生音损伤审计，不为了涌现唱歌/BGM放松干净语料门 |
+| 不做 TN，依赖 LLM 自行处理复杂文本 | 官方同时承认中文发音和特殊符号 corner cases | 不取消 `language_config`/分语种 TN 与数字、专名、Taglish 回归；训练/推理文本形态继续一致，不借“大模型自己会读”的假设 |
+| 跨语言靠重复采样碰好结果 | 采样可能偶尔成功，但不证明跨语言条件训练有效 | 不增加默认生成预算；任何 A/B 固定相同预算并报告逐 seed，不能把多次挑选的最好一次当模型收益 |
+| ASR LoRA 脚本与合成 toy 数据 | ASR 训练可关注长音频角色段、hotwords 和时间戳 | 只属独立 ASR 课题；**不复制其 ASR LoRA 超参，不使用合成 toy/输出补 VoxCPM 语料**，现行合成语料红线不变 |
+
+### 9.3 最终行动
+
+- **没有因 VibeVoice 新增的 LoRA 训练臂。**冻结表征继续；语义分支、7.5Hz、角色混合输入都不是当前短 cue 的直接修复。
+- 若未来另立长播客/长对话项目，先证明确有长上下文需求，再研究其课程与多角色打包；
+  不能用八组长对话的主观成绩或论文 tokenizer 重建分数替代 th/tl/id/vi/en 的生产验收。
+- 当前仍执行既有数据主线、情绪阶段 0、分语种多 seed 与母语盲听；不切换引擎、不新增 ASR/TTS 调用、不启动 GPU。
