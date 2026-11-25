@@ -1,4 +1,4 @@
-# 开源 TTS 微调方法深挖：东南亚语种社区微调、停止/幻觉对齐、官方微调配方（2026-11-23）
+# 开源 TTS 微调方法深挖：东南亚语种社区微调、停止/幻觉对齐、官方微调配方（2026-11-23，2026-11-25 补充）
 
 ## 结论与边界
 
@@ -6,6 +6,8 @@
 [dots_tts_training_review_20261120.md](dots_tts_training_review_20261120.md)，不重复已覆盖的 MOSS / IndexTTS /
 CosyVoice / Qwen3 / Ming / Confucius4 / k2-fsa OmniVoice / dots / LongCat / Chatterbox / Dia / CSM / OuteTTS。
 本次为联网静态调研 + 本地源码核对，**未训练、未生成音频、未改生产**。
+2026-11-25 增补 FireRedTTS3（§8）：重点是 RedAE 语义监督、身份/语言条件与结构化声学计划的迁移边界，
+不改变前述实验排序，也不新增训练轮。
 
 新增最值得做的三件事（按成本排序，均为待验证假设）：
 
@@ -307,3 +309,63 @@ bump 风险一条：新版 `_manifest_features` **按首行推断清单 schema**
 2. 表演语料小比例回注：thai_ser impro（TH）；Basis global-emotions（id/th/fil，gated，待申请）是 id/tl 唯一现货。
 3. 降低朗读占比（与配比再平衡 §6 一起设计，避免同时改两件事）。
 4. 推理侧不改：不启用控制前缀（生产不用）。
+
+## 8. FireRedTTS3：语义表征和条件路径值得研究，不能直接变成下一轮 LoRA（2026-11-25）
+
+来源：[技术报告](https://arxiv.org/html/2608.17492v2)、[官方仓库](https://github.com/FireRedTeam/FireRedTTS3)、
+[Base 推理源码](https://github.com/FireRedTeam/FireRedTTS3/blob/main/fireredtts3/llm/fireredtts3_base.py)。
+公开树是推理实现；[微调入口询问 #13](https://github.com/FireRedTeam/FireRedTTS3/issues/13)仍开放且零答复，
+**没有可直接复用的 FireRedTTS3 官方微调脚本或完整数据配方**。以下为方法迁移分析，未运行其权重或开训练。
+
+### 8.1 先还原其训练结构，避免把“1.7B backbone”误当整个方法
+
+- **RedAE**：24kHz 波形先形成 50Hz 表征，再降到 25Hz continuous latent；训练时以冻结的
+  FireRedAudio Audio Encoder 为语义教师，该教师经过 ASR、说话人验证等理解任务训练，
+  用 MSE 让 RedAE latent 对齐教师特征，同时保留 GAN、Mel 重建与 feature-matching 损失。
+  教师在 tokenizer 训练后移除，不参与 TTS 推理。RedAE 使用 **50 万小时音频、32×H800、55 万步**。
+- **Base**：Qwen3-1.7B-Base 只是 backbone，另有 Aggregator、DiT、RedAE 和 CAM++。
+  CAM++ 说话人向量同时注入 LLM 与 DiT，目标文本前加语言 tag，参考音仍经 RedAE 作为 prompt；
+  训练是 flow loss＋stop loss。第一阶段用 **260 万小时中英、17 万步**，第二阶段再用
+  **56 万小时、24 语＋21 方言**扩展。论文未给 Base 第二阶段步数和分语种数据量。
+- **Instruct**：没有 Base 的显式 speaker embedding 与语言 tag，不能混写两种克隆路径。
+  音色设计/编辑先把自由指令展开成文本计划；音色设计计划含 12 个声学属性，
+  再用 33 万小时音色设计/编辑数据训练 4 万步。论文未公开完整 12 字段清单和可复现数据构造比例。
+- CFG 训练时 backbone 条件丢弃率 0.1；使用 speaker 条件时其丢弃率也是 0.1，clean historical latents 始终保留。
+  这与本项目的 `training_cfg_rate=0.1`、plain/带 ref 混合有理念重合，但条件张量和损失实现不同，
+  **不能拿相同数值证明等价，也不因此把候选 E 提前**。
+- 论文的 MiniMax/Seed 分数是短句自动指标，没有按生成长度报告音色/韵律漂移曲线，
+  也没有单独消融语义蒸馏。[issue #10](https://github.com/FireRedTeam/FireRedTTS3/issues/10)正询问这两点，
+  截至本次核对无官方答复，不能把平均分提升直接归因为“长程误差累积已解决”。
+
+### 8.2 对当前项目真正可借的内容
+
+| 方法 | 可借鉴部分 | 对 voxcpm_finetune 的处置 |
+|---|---|---|
+| RedAE 的冻结语义教师 | 让连续声学表征同时受语音内容与说话人信息约束，而非只优化波形重建 | **仅作独立 tokenizer 长期研究**。若未来自研/重训表征，可在同数据、同下游生成器下做有无语义损失消融；当前 LoRA 不动 AudioVAE，不能靠新增一条 loss 复刻 |
+| CAM++ 同时注入 LLM/DiT | 给身份一条显式、可审计的条件路径，而非只依赖整段参考 latent | **仅作结构假设**，可解释其相似度为何值得研究；VoxCPM2 需新投影层、训练与推理链，非 YAML/LoRA 开关。不得以 `enable_proj=true` 冒充等价实现，r40 旧失败也不能被当成新结构证据 |
+| 目标语言 tag＋多语续训 | 语言元数据须在训练、缓存和推理一致保留；多语能力后接专门阶段 | 本项目继续分语种数据/验收与回放，**不给无槽位的 VoxCPM2 临时加 token/自然语言前缀**。两阶段大规模训练不重演，r51/r54 已否定 TH 同类加量/短段翻倍是杠杆 |
+| CFG/speaker dropout 与 clean history | 保留无条件能力、同时保护连续历史，是条件训练的合理约束 | 现行 cfg 丢弃、可信 plain/ref 混合与 continuation 纪律已经覆盖；不复制数值，不随机丢生产参考，不新增一轮相同 dropout 搜索 |
+| flow＋stop 联合目标 | 内容与停止是不同学习目标，停止头要独立诊断 | 只支持现有“分开测量”的原则。r41 stop 权重 ×2 已失败，2026-11-23 p_stop 探针又否定停止失准，**不借 stop 权重、min 6 patches 或 max 400**；其时间轴、标签和 VoxCPM2 不同 |
+| Instruct 先形成结构化声学计划 | 把自由风格描述变为可审计字段，比从 F0/能量猜表演更可靠 | 仅作情绪阶段 0/1 的标注 schema 参考；不虚构未公开 12 字段，不用自动声学统计伪造标签。生产情绪来自参考且不用控制前缀，**不上线额外 planner/LLM** |
+| Base 的参考音＋参考文本、语言提示 | 应分别测参考文本有无、同语/跨语参考，而不是把 MLS 同语分数外推到生产 | 若未来做引擎 A/B，纳入现有 zh/en/fil ref × th/tl/id/vi target 矩阵，固定 ref、正文、seed、重试预算，并与当前 r50 比较；这是**评测设计，不是给 VoxCPM 新增 ASR 或训练数据** |
+
+**落地结论：近期没有因 FireRedTTS3 新增的 LoRA 训练臂。**最有价值的新假设是底层语义表征和显式身份条件，
+都属于自研底座/结构研究，不能插入 r50 的普通数据轮。当前先完成已中断的 r55 开发集、vi/en 备料、
+情绪阶段 0 与母语评审；FireRedTTS3 只作为 th/vi/id 的局部外部对照，不改变现有计划。
+
+### 8.3 明确不借的做法
+
+1. **不换用其 RedAE 或超参。**RedAE 为 24kHz、25Hz latent；VoxCPM2 是 16kHz 编码器输入、FSQ/AudioVAE 与另一套 patch 条件，
+   权重和表示不能直接互换。其 CFG 2.0、10 steps、停止阈值也不是当前生产 cfg 1.8/自适应步数的替代配方。
+2. **不把 speaker embedding 当身份真值或情绪解耦证明。**CAM++ 仍从同一参考音提取，RedAE prompt 也保留参考风格；
+   它没有自动解决短/噪参考、跨语言口音或身份/情绪解耦。身份配对继续遵守已验证同人、不同 origin_audio 与 split 隔离。
+3. **不照搬预训练规模和课程。**50 万小时 tokenizer＋260 万/56 万小时 TTS 是另一量级的基础训练，
+   与当前 14.47h 的领域 LoRA 不构成“加数据就会同样提升”的证据，也不能覆盖本项目多次加量无收益的实测。
+4. **不使用其输出补 VoxCPM 语料。**项目合成语料红线不变；且其代码/HF 虽标 Apache-2.0，
+   克隆 Usage Disclaimer 又限学术研究用途，[许可询问 #12](https://github.com/FireRedTeam/FireRedTTS3/issues/12)无官方答复，
+   书面澄清前不用于生产或训练。
+5. **不把 Instruct 编辑当作现有配音修复捷径。**语义编辑可以局部保留未编辑区，声学编辑则改变整段属性，
+   两者都是另一模型和独立输入输出契约，不能自动保证字幕窗、角色身份或正文不变；
+   若将来单独研究，编辑后仍须重做文本、身份和声学 QC，不能混入本轮 LoRA。
+6. **不把公开自动分数当微调收益。**MiniMax-MLS 是同语参考且有参考转写，FireRed 表中对手也是 VoxCPM2 基座而非 r50；
+   本项目继续同参考、跨语言正文、≥5 seed、按句聚类、母语盲听与任一语种退化即整轮不通过。
